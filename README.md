@@ -84,7 +84,7 @@ python mfbo.py
 *   **주요 로직:**
     *   **LF 모드:** `Step-GlobalTension` -> `Step-ClampTension` -> `Step-HighTension`.
     *   **HF 모드:** `Step-GlobalTension` -> `Step-ClampTension` -> `Step-Buckle` (모드 추출)
-    *                  & `Step-GlobalTension` -> Imperfection 주입 -> `Step-Postbuckle` (비선형 해석).
+    *   `Step-GlobalTension` -> Imperfection 주입 -> `Step-Postbuckle` (비선형 해석).
 *   **주의:** `*IMPERFECTION` 키워드 삽입 로직(삽입 위치 등)은 Abaqus 버전에 따라 민감할 수 있음.
 
 ### 3. `eval_abaqus.py` (Post-Processing)
@@ -136,5 +136,6 @@ python mfbo.py
 *   **Simulation Model:** "참고논문" 폴더 참조.
 
 *   **Libraries:** [BoTorch Documentation](https://botorch.org/), [Abaqus Scripting Reference](http://130.149.89.49:2080/v2016/books/ker/default.htm)
+
 
 
