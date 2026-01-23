@@ -74,7 +74,7 @@ python mfbo.py
 *   **역할:** 전체 최적화 루프 제어.
 *   **주요 로직:**
     *   `load_checkpoint()`: 중단된 실험 자동 재개.
-    *   `get_abaqus()`: `run_abaqus.py`를 CLI 명령어로 실행하고 결과를 파싱. **값의 부호 반전(-)** 로직이 여기에 포함됨.
+    *   `get_abaqus()`: `run_abaqus.py`를 CLI 명령어로 실행하고 결과를 파싱. 값의 부호 반전(-) 로직이 여기에 포함됨.
     *   **Acquisition Function:** GIBBON (`qMultiFidelityLowerBoundMaxValueEntropy`) 사용.
 *   **수정 포인트:** `N_ITERATIONS`, `LF_INIT`, `HF_INIT` 변수로 실험 규모 조절.
 
@@ -135,6 +135,7 @@ python mfbo.py
 *   **Simulation Model:** "참고논문" 폴더 참조.
 
 *   **Libraries:** [BoTorch Documentation](https://botorch.org/), [Abaqus Scripting Reference](http://130.149.89.49:2080/v2016/books/ker/default.htm)
+
 
 
 
