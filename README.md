@@ -95,6 +95,24 @@ python mfbo.py
 
 ---
 
+## Optical Properties Calculation (Optional)
+
+`eval_abaqus.py`에서 사용되는 추력 모델(SRP Model)의 상수인 반사율($R_0$)과 흡수율($A_0$)은 `RA_calc.py`를 통해 계산되었습니다.
+
+*   **Source Data:**
+    *   `nk_data.csv`: 해당 멤브레인(Kapton 등)의 파장별 굴절률($n$) 및 소멸 계수($k$).
+    *   `sun_data.csv`: 태양 복사 스펙트럼 (Solar Irradiance Spectrum).
+*   **Methodology:**
+    *   Fresnel 방정식을 이용하여 파장별 반사율/흡수율 계산.
+    *   태양 스펙트럼 강도(Irradiance)를 가중치로 하여 전체 파장 대역에 대해 적분(Weighted Integration).
+*   **Usage:**
+    ```bash
+    python RA_calc.py
+    ```
+    *   코드 파일과 동일 폴더에 nk_data.csv, sun_data.csv가 있음을 확인한 후, 코드 실행으로 출력된 $R_0, A_0$ 값을 `eval_abaqus.py`의 상수로 입력하여 사용합니다.
+
+---
+
 ## 주요 Troubleshooting
 
 1.  **"abaqus command not found" 에러**
@@ -115,4 +133,5 @@ python mfbo.py
 
 ## References
 *   **Simulation Model:** "참고논문" 폴더 참조.
+
 *   **Libraries:** [BoTorch Documentation](https://botorch.org/), [Abaqus Scripting Reference](http://130.149.89.49:2080/v2016/books/ker/default.htm)
