@@ -40,6 +40,10 @@ warnings.filterwarnings("ignore")
 #wandb 에 대한 부분은 사용자의 실제 id와 사용하고자 하는 프로젝트명 / id에 따라 수정 가능
 
 CHECKPOINT_FILE = "mfbo_checkpoint.pt"
+
+# 실행 위치(CWD)와 무관하게 run_abaqus.py / 산출물을 찾기 위한 기준 디렉터리
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
 WANDB_PROJECT = "solar-sail-mfbo"
 WANDB_RUN_ID_FILE = "wandb_run_id.txt"
 FAIL = float("nan")
@@ -96,23 +100,24 @@ def get_abaqus(new_x, new_s):
         print(f"--- [MOCK] {mode_str} currin lf={_lf:.6f} hf={_hf:.6f} ---")
         return (_lf, _hf) if mode_str == "HF" else (_lf, None)
 
-    command = f"abaqus cae noGUI=run_abaqus.py -- {mode_str} {x1} {x2}"
+    _script = os.path.join(_HERE, "run_abaqus.py")
+    command = f'abaqus cae noGUI="{_script}" -- {mode_str} {x1} {x2}'
     # [P0-C] HF 는 같은 설계점의 LF 결과와 짝지어야 한다. HF 모델에는 Step-HighTension 이 없어
     #        eval_abaqus.py 의 get_lf(args[-3]) 가 실패한다 -> 먼저 LF 해석을 수행해 둔다.
     #        (stale 산출물 오염 방지를 위해 기존 파일 삭제 후 실행)
     if mode_str == "HF":
-        _stale = ("LF_Analysis.odb", "LF_Analysis.lck", "LF_Analysis.msg", "LF_Analysis.sta",
-                  "LF_Analysis.dat", "LF_Analysis.fil", "LF_Analysis.prt")
-        for _f in _stale:
-            if os.path.exists(_f):
+        _lf_odb = os.path.join(_HERE, "LF_Analysis.odb")
+        for _ext in (".odb", ".lck", ".msg", ".sta", ".dat", ".fil", ".prt"):
+            _p = os.path.join(_HERE, "LF_Analysis" + _ext)
+            if os.path.exists(_p):
                 try:
-                    os.remove(_f)
+                    os.remove(_p)
                 except OSError:
                     pass
         print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
-        subprocess.run(f"abaqus cae noGUI=run_abaqus.py -- LF {x1} {x2}",
-                       shell=True, check=False, capture_output=True, text=True)
-        if not os.path.exists("LF_Analysis.odb"):
+        subprocess.run(f'abaqus cae noGUI="{_script}" -- LF {x1} {x2}',
+                       shell=True, check=False, capture_output=True, text=True, cwd=_HERE)
+        if not os.path.exists(_lf_odb):
             print("!!! HF prerequisite LF run produced no LF_Analysis.odb - aborting this HF point.")
             return FAIL, FAIL
 
@@ -124,7 +129,8 @@ def get_abaqus(new_x, new_s):
             shell=True, 
             check=True, 
             capture_output=True, 
-            text=True  # 문자열로 디코딩
+            text=True,
+            cwd=_HERE   # Abaqus 작업 디렉터리 고정
         )
         
         output_lines = result.stdout.splitlines()
@@ -271,6 +277,9 @@ if train_x is None:
         train_y_list.append(lf_val)
 
     # 텐서 변환
+    if not train_x_list:
+        raise SystemExit("!!! 초기 관측 0건 — Abaqus 환경/PATH/run_abaqus.py 위치를 확인하십시오. (위 로그의 Abaqus Error 참조)")
+
     train_x = torch.stack(train_x_list)
     train_y = torch.tensor(train_y_list, device=device, dtype=dtype).view(-1, 1)
 
