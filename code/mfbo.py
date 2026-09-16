@@ -40,6 +40,10 @@ CHECKPOINT_FILE = "mfbo_checkpoint.pt"
 
 # 실행 위치(CWD)와 무관하게 run_abaqus.py / 산출물을 찾기 위한 기준 디렉터리
 _HERE = os.path.dirname(os.path.abspath(__file__))
+# Abaqus 산출물 전용 디렉터리 (odb·fil·msg·sta·inp·rpy 등이 code/ 를 어지럽히지 않도록)
+_RUN = os.path.join(_HERE, "abaqus")
+os.makedirs(_RUN, exist_ok=True)
+os.chdir(_HERE)      # 체크포인트 등 MFBO 자체 산출물은 code/ 에 고정
 
 FAIL = float("nan")
 
@@ -64,9 +68,9 @@ def load_checkpoint():
     if os.path.exists(CHECKPOINT_FILE):
         print("  [Checkpoint] Found existing checkpoint. Loading...")
         ckpt = torch.load(CHECKPOINT_FILE)
-        return ckpt['train_x'], ckpt['train_y'], ckpt['iteration']#, ckpt['wandb_run_id']
+        return ckpt['train_x'], ckpt['train_y'], ckpt['iteration']
     else:
-        return None, None, 0, None
+        return None, None, 0
 
 # run_abaqus.py 기반으로 작성
 def get_abaqus(new_x, new_s):
@@ -100,9 +104,9 @@ def get_abaqus(new_x, new_s):
     #        eval_abaqus.py 의 get_lf(args[-3]) 가 실패한다 -> 먼저 LF 해석을 수행해 둔다.
     #        (stale 산출물 오염 방지를 위해 기존 파일 삭제 후 실행)
     if mode_str == "HF":
-        _lf_odb = os.path.join(_HERE, "LF_Analysis.odb")
+        _lf_odb = os.path.join(_RUN, "LF_Analysis.odb")
         for _ext in (".odb", ".lck", ".msg", ".sta", ".dat", ".fil", ".prt"):
-            _p = os.path.join(_HERE, "LF_Analysis" + _ext)
+            _p = os.path.join(_RUN, "LF_Analysis" + _ext)
             if os.path.exists(_p):
                 try:
                     os.remove(_p)
@@ -110,7 +114,7 @@ def get_abaqus(new_x, new_s):
                     pass
         print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
         subprocess.run(f'abaqus cae noGUI="{_script}" -- LF {x1} {x2}',
-                       shell=True, check=False, capture_output=True, text=True, cwd=_HERE)
+                       shell=True, check=False, capture_output=True, text=True, cwd=_RUN)
         if not os.path.exists(_lf_odb):
             print("!!! HF prerequisite LF run produced no LF_Analysis.odb - aborting this HF point.")
             return FAIL, FAIL
@@ -124,7 +128,7 @@ def get_abaqus(new_x, new_s):
             check=True, 
             capture_output=True, 
             text=True,
-            cwd=_HERE   # Abaqus 작업 디렉터리 고정
+            cwd=_RUN   # Abaqus 작업 디렉터리 고정
         )
         
         output_lines = result.stdout.splitlines()
@@ -199,7 +203,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 dtype = torch.double
 print(f"Using device: {device}")
 
-train_x, train_y, start_iter, run_id = load_checkpoint()
+train_x, train_y, start_iter = load_checkpoint()
 
 """
 if run_id is None:
@@ -284,7 +288,7 @@ if train_x is None:
     n_hf_total = (train_x[:, -1] == 1.0).sum().item()
     print(f"Total Data Points: {len(train_y)} (LF: {n_lf_total}, HF: {n_hf_total})")
     
-    save_checkpoint(train_x, train_y, 0, run_id)
+    save_checkpoint(train_x, train_y, 0)
     start_iter = 0
 
 # LF로 선형해석, HF로 포스트버클링을 수행하므로 두 충실도간 노이즈 차이를 다르게 설정
@@ -412,7 +416,7 @@ for i in range(N_ITERATIONS):
 
         
         # 매 반복 체크포인트 저장 (크래시 시 진행 보존)
-        save_checkpoint(train_x, train_y, i + 1, run_id)
+        save_checkpoint(train_x, train_y, i + 1)
 
         # WandB 로깅
         """
@@ -428,7 +432,7 @@ for i in range(N_ITERATIONS):
         """
     except Exception as e:
         print(f"!!! CRASH at iteration {i}: {e}")
-        save_checkpoint(train_x, train_y, i, run_id)
+        save_checkpoint(train_x, train_y, i)
         raise e
 
 print("\n--- Optimization Finished ---")
