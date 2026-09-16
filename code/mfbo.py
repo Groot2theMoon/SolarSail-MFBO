@@ -43,6 +43,9 @@ CHECKPOINT_FILE = "mfbo_checkpoint.pt"
 
 # 실행 위치(CWD)와 무관하게 run_abaqus.py / 산출물을 찾기 위한 기준 디렉터리
 _HERE = os.path.dirname(os.path.abspath(__file__))
+# 실행 위치를 스크립트 위치로 고정 -> 체크포인트/wandb/Abaqus 산출물이 모두 code/ 에 모인다.
+# (다른 곳에 모으고 싶으면 이 두 줄을 주석 처리)
+os.chdir(_HERE)
 
 WANDB_PROJECT = "solar-sail-mfbo"
 WANDB_RUN_ID_FILE = "wandb_run_id.txt"
