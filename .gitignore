@@ -1,0 +1,48 @@
+# Abaqus 산출물 전용 디렉터리 (통째로 무시)
+code/abaqus/
+
+# ---------------------------------------------------------------
+# Abaqus 실행 산출물 (매 해석마다 생성 — 커밋 금지)
+# ---------------------------------------------------------------
+code/*.odb
+code/*.odb_*
+code/*.lck
+code/*.msg
+code/*.sta
+code/*.dat
+code/*.fil
+code/*.prt
+code/*.sim
+code/*.simlog
+code/*.cid
+code/*.com
+code/*.log
+code/*.prn
+code/*.env
+code/*.rpy
+code/*.rpy.*
+code/*.rec
+code/*.inp
+code/abaqus* 
+code/Buckle_Analysis*
+code/LF_Analysis*
+code/HF_Postbuckle*
+code/extraction.txt
+code/abaqus.rpy*
+
+# ---------------------------------------------------------------
+# MFBO 산출물
+# ---------------------------------------------------------------
+code/mfbo_checkpoint.pt
+code/wandb_run_id.txt
+code/wandb/
+# wandb 실행 로그 (매 실행마다 바뀜 — 추적하지 않음)
+wandb/
+
+# ---------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------
+__pycache__/
+*.pyc
+.venv/
+venv/
