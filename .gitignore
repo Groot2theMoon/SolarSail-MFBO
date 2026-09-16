@@ -36,8 +36,8 @@ code/abaqus.rpy*
 code/mfbo_checkpoint.pt
 code/wandb_run_id.txt
 code/wandb/
-wandb/offline-run-*/
-wandb/latest-run
+# wandb 실행 로그 (매 실행마다 바뀜 — 추적하지 않음)
+wandb/
 
 # ---------------------------------------------------------------
 # Python
