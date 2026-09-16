@@ -65,10 +65,27 @@ except:
     print("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus.py -- HF x_c d_c")
     sys.exit(1)
 
+# P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
+_JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
+                  'dat', 'res', 'abq', 'ipm', 'mdl', 'stt', 'cid')
+
 def run_job_safely(job_name):
     """
     job 실행 중 .odb, .lck 파일 충돌을 방지하고, 완료까지 대기하는 함수
+
+    P1-3: 제출 전에 이전 실행 산출물을 지운다.
+      - 성공 판정(not os.path.exists(odb))이 '지난 실행의 odb'를 보고 오판하는 것을 막고,
+      - *IMPERFECTION, FILE=Buckle_Analysis 가 stale .fil 을 조용히 읽는 것을 막는다.
     """
+    for _ext in _JOB_ARTIFACTS:
+        _f = '%s.%s' % (job_name, _ext)
+        if os.path.exists(_f):
+            print("Removing stale artifact: %s" % _f)
+            try:
+                os.remove(_f)
+            except OSError as _e:
+                print("  (warning) could not remove %s: %s" % (_f, _e))
+
     lck_file = job_name + '.lck'
     odb_file = job_name + '.odb'
     # 기존 Lock 파일이 있다면 삭제 시도 < 이전 실행 강제 종료 시 남게 됨
@@ -102,6 +119,7 @@ def run_job_safely(job_name):
     return True
 
 sqrt2 = 1.414
+N_EIG = 4      # 좌굴모드 수 (numEigen 과 *NODE FILE 의 LAST MODE 가 같아야 함)
 
 MODEL_NAME = 'SailModel_Triangle'
 INSTANCE_NAME = 'MEMBRANE-1'
@@ -300,7 +318,7 @@ my_model.StaticStep(
     nlgeom=ON,
     stabilizationMagnitude=0.0002,      # Galhofo Reference
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
-    initialInc=0.0001, minInc=1e-15, maxNumInc=1000
+    initialInc=0.0001, minInc=1e-8, maxNumInc=1000    # P1-2: 1e-15 는 발산 시 증분 폭주
 )
 
 # Step Clamp Tension : 클램프에 변위 가하기
@@ -310,7 +328,7 @@ my_model.StaticStep(
     nlgeom=ON,
     stabilizationMagnitude=0.0002,      # Galhofo Reference
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
-    initialInc=0.0001, minInc=1e-15, maxNumInc=1000
+    initialInc=0.0001, minInc=1e-8, maxNumInc=1000    # P1-2: 1e-15 는 발산 시 증분 폭주
 )
 
 # Step Buckle : 버클 모드 찾기. LF에서는 직접적으로 쓰이지 않음. 
@@ -334,16 +352,19 @@ if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
 my_model.BuckleStep(
     name='Step-Buckle',          
     previous='Step-ClampTension',  
-    numEigen=4,
+    numEigen=N_EIG,
     eigensolver=SUBSPACE,
 )
+# *IMPERFECTION, STEP=n 의 n 은 'Buckle_Analysis.fil 안의 스텝 번호'
+# (현재 3 = GlobalTension/ClampTension/Buckle). 스텝 구성이 바뀌면 자동 추종.
+_BUCKLE_STEP_NO = len(my_model.steps)
 
 # R-7: *IMPERFECTION, FILE= 은 results file(.fil) 을 읽는다 -> 좌굴 모드를 .fil 에 기록해야
 #      임퍼펙션이 실제로 주입된다 (미요청 시 조용히 무시됨)
 my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 for _i, _b in enumerate(my_model.keywordBlock.sieBlocks):
     if _b.strip().upper().startswith(('*BUCKLE', '*FREQUENCY')):
-        my_model.keywordBlock.insert(_i + 1, '*NODE FILE, GLOBAL=YES, LAST MODE=4\nU')
+        my_model.keywordBlock.insert(_i + 1, '*NODE FILE, GLOBAL=YES, LAST MODE=%d\nU' % N_EIG)
         break
 # ----
 
@@ -499,8 +520,8 @@ if fidelity == 'LF':
 
 elif fidelity == 'HF':
 
-    run_job_safely('Buckle_Analysis')
-
+    # P0-2: 좌굴모드와 포스트버클 해석이 '같은 초기응력 상태'에서 계산되도록
+    #       초기응력 재생성(500 -> 100 Pa)을 좌굴 잡 제출 '앞'으로 이동.
     if 'Initial_Stiffness' in my_model.predefinedFields:
         del my_model.predefinedFields['Initial_Stiffness']
 
@@ -511,6 +532,8 @@ elif fidelity == 'HF':
         sigma11=100.0, sigma22=100.0, sigma33=0.0, 
         sigma12=0.0, sigma13=0.0, sigma23=0.0
     )
+
+    run_job_safely('Buckle_Analysis')   # P0-2: 100 Pa 상태에서 좌굴모드 산출
 
     # 기존 Step 정리: Post-buckling은 GlobalTension 직후에서 시작하며,
     # 중간 단계(ClampTension)를 건너뛰고 바로 최종 하중으로 Ramping함 (수렴성 향상 전략)
@@ -559,13 +582,20 @@ elif fidelity == 'HF':
             u2=CLAMP_FINAL / sqrt2
         )
     
+
+    my_model.fieldOutputRequests['F-Output-1'].setValues(
+        variables=('S', 'U', 'RF', 'COORD', 'EVOL'),   # R-8: LF 지표(lf1~lf3) 산출에 필요
+        frequency=10   # R-10: odb 크기 절감
+    )
+    
     # Imperfection Injection (Keyword Editing)
     # Buckle_Analysis.odb 파일의 결과(고유모드)를 초기 결함으로 주입
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
     
     imp_scale = THICKNESS * 0.1 # Galhofo Reference
 
-    imp_text = "*IMPERFECTION, FILE=Buckle_Analysis, STEP=3\n1, %e\n2, %e\n3, %e\n4, %e" % (imp_scale, imp_scale, imp_scale, imp_scale)
+    imp_text = ("*IMPERFECTION, FILE=Buckle_Analysis, STEP=%d\n" % _BUCKLE_STEP_NO +
+                "\n".join("%d, %e" % (m, imp_scale) for m in range(1, N_EIG + 1)))
 
     # 키워드 삽입 위치 찾기 : *STEP 블록 직전에 삽입하는 것이 안전함
     inserted = False
@@ -579,11 +609,6 @@ elif fidelity == 'HF':
     if not inserted:
         my_model.keywordBlock.insert(len(my_model.keywordBlock.sieBlocks)-1, imp_text)
 
-    my_model.fieldOutputRequests['F-Output-1'].setValues(
-        variables=('S', 'U', 'RF', 'COORD', 'EVOL'),   # R-8: LF 지표(lf1~lf3) 산출에 필요
-        frequency=10   # R-10: odb 크기 절감
-    )
-    
     run_job_safely('HF_Postbuckle')
     
     cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)   # P0-C: 짝지은 LF odb

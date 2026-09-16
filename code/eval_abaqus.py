@@ -48,6 +48,7 @@ def get_lf(odb_path):
             step_name = 'Step-HighTension'
         else:
             print("LF Error: Target step not found.")
+            odb.close()
             return [None, None, None]
 
         frame = odb.steps[step_name].frames[-1]
@@ -55,6 +56,7 @@ def get_lf(odb_path):
         
         if 'EVOL' not in frame.fieldOutputs.keys():
             print("LF Error: EVOL field not found.")
+            odb.close()
             return [None, None, None]
             
         evol_field = frame.fieldOutputs['EVOL'].getSubset(region=instance)
@@ -64,7 +66,9 @@ def get_lf(odb_path):
             vol_map[val.elementLabel] = val.data
             
         total_vol = sum(vol_map.values())
-        if total_vol == 0: return [None, None, None]
+        if total_vol == 0:
+            odb.close()
+            return [None, None, None]
         
         stress_field = frame.fieldOutputs['S'].getSubset(position=CENTROID, region=instance)
         s_max_field = stress_field.getScalarField(invariant=MAX_INPLANE_PRINCIPAL)
@@ -141,6 +145,8 @@ def get_lf(odb_path):
 
     except Exception as e:
         print("LF Error: " + str(e))
+        try: odb.close()      # P1-1: 열린 odb 핸들이 남으면 다음 실행이 잠긴다
+        except Exception: pass
         return [None, None, None]
 
 def calc_thrust_loss(frame, instance, connectivity, max_node_label):
@@ -241,6 +247,7 @@ def get_hf(odb_path):
         
         if current_time < 0.99:
             print("Warning: Job did not complete (Time = {:.4f}).".format(current_time))
+            odb.close()       # P1-1
             return None
             # 수렴 실패 시 페널티 값을 리턴하거나, 현재 상태라도 계산할지 결정
         
@@ -262,6 +269,8 @@ def get_hf(odb_path):
 
     except Exception as e:
         print("HF Extraction Error: " + str(e))
+        try: odb.close()      # P1-1
+        except Exception: pass
         return None
 def main():
     # 인자 파싱 루틴
@@ -273,19 +282,19 @@ def main():
         if mode == "LF":
             lf_metrics = get_lf(args[-2])
             if any(v is None for v in lf_metrics):
-                print("RESULTS:FAIL"); sys.exit(0)
+                print("RESULTS:FAIL"); sys.exit(1)   # E-7: 0 은 실패를 숨긴다
             results = list(lf_metrics[:3])
         elif mode == "HF":
             hf_metric = get_hf(args[-2])
             lf_metrics = get_lf(args[-3])
             if hf_metric is None or any(v is None for v in lf_metrics):
-                print("RESULTS:FAIL"); sys.exit(0)
+                print("RESULTS:FAIL"); sys.exit(1)   # E-7: 0 은 실패를 숨긴다
             results = list(lf_metrics[:3]) + [hf_metric]
         else:
-            print("RESULTS:FAIL"); sys.exit(0)
+            print("RESULTS:FAIL"); sys.exit(1)   # E-7: 0 은 실패를 숨긴다
     except Exception as e:
         print("eval error:", e)
-        print("RESULTS:FAIL"); sys.exit(0)
+        print("RESULTS:FAIL"); sys.exit(1)   # E-7: 0 은 실패를 숨긴다
 
     output_str = ",".join(map(str, results))
     print("RESULTS:" + output_str)
