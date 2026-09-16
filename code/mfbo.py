@@ -87,8 +87,34 @@ def get_abaqus(new_x, new_s):
     """
     mode_str = "HF" if new_s > 0.5 else "LF"
     x1, x2 = new_x[0], new_x[1]
+    # M-15: Abaqus 없이 배관을 검증하는 mock oracle (MFBO_MOCK=1 일 때만)
+    if os.environ.get("MFBO_MOCK") == "1":
+        import numpy as _np
+        from eval_currin_mf import evaluate_currin_mf
+        _lf = float(_np.ravel(evaluate_currin_mf([[x1, x2]], 0.0))[0])
+        _hf = float(_np.ravel(evaluate_currin_mf([[x1, x2]], 1.0))[0])
+        print(f"--- [MOCK] {mode_str} currin lf={_lf:.6f} hf={_hf:.6f} ---")
+        return (_lf, _hf) if mode_str == "HF" else (_lf, None)
 
     command = f"abaqus cae noGUI=run_abaqus.py -- {mode_str} {x1} {x2}"
+    # [P0-C] HF 는 같은 설계점의 LF 결과와 짝지어야 한다. HF 모델에는 Step-HighTension 이 없어
+    #        eval_abaqus.py 의 get_lf(args[-3]) 가 실패한다 -> 먼저 LF 해석을 수행해 둔다.
+    #        (stale 산출물 오염 방지를 위해 기존 파일 삭제 후 실행)
+    if mode_str == "HF":
+        _stale = ("LF_Analysis.odb", "LF_Analysis.lck", "LF_Analysis.msg", "LF_Analysis.sta",
+                  "LF_Analysis.dat", "LF_Analysis.fil", "LF_Analysis.prt")
+        for _f in _stale:
+            if os.path.exists(_f):
+                try:
+                    os.remove(_f)
+                except OSError:
+                    pass
+        print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
+        subprocess.run(f"abaqus cae noGUI=run_abaqus.py -- LF {x1} {x2}",
+                       shell=True, check=False, capture_output=True, text=True)
+        if not os.path.exists("LF_Analysis.odb"):
+            print("!!! HF prerequisite LF run produced no LF_Analysis.odb - aborting this HF point.")
+            return FAIL, FAIL
 
     print(f"--- Running Abaqus [{mode_str}] x1: {x1:.6f} x2: {x2:.6f} ---")
     
@@ -104,19 +130,27 @@ def get_abaqus(new_x, new_s):
         output_lines = result.stdout.splitlines()
         parsed_data = None
 
-        if data_str.strip().upper() == "FAIL": return FAIL, FAIL
         
         for line in output_lines:
             if line.strip().startswith("RESULTS:"):
                 # "RESULTS:" 뒷부분 파싱 (예: "RESULTS:0.001,0.02")
-                data_str = line.strip().split("RESULTS:")[1]
-                parsed_data = [float(val) for val in data_str.split(',')]
+                data_str = line.strip().split("RESULTS:")[1].strip()
+                if data_str.upper() == "FAIL":        # eval_abaqus.py 의 명시적 실패 신호
+                    print("!!! Simulation reported FAIL.")
+                    return FAIL, FAIL
+                try:
+                    parsed_data = [float(val) for val in data_str.split(',')]
+                except ValueError:
+                    print("!!! Unparsable RESULTS payload: %r" % data_str)
+                    return FAIL, FAIL
                 break
         
         if parsed_data is None:
             print("!!! Error: Could not find 'RESULTS:' tag in output.")
             print("--- Stderr Log ---")
             print(result.stderr) # 에러 로그 출력
+            print("--- Stdout (tail 40) ---")
+            print("\n".join(result.stdout.splitlines()[-40:]))
             return FAIL, FAIL
 
         # 데이터 반환 로직
@@ -205,6 +239,9 @@ if train_x is None:
         print(f"  [Init HF {i+1}/{HF_INIT}] Running HF (and LF)...")
         
         lf_val, hf_val = get_abaqus(real_params, 1.0)
+        if lf_val != lf_val or hf_val != hf_val:      # NaN = 시뮬레이션 실패 -> 관측 미추가
+            print("  !! HF run failed - observation skipped (no data added).")
+            continue
 
         # 최소화를 위해 값을 음수로 변환
         lf_val = -lf_val 
@@ -224,6 +261,9 @@ if train_x is None:
         print(f"  [Init LF {i+1}/{n_pure_lf}] Running LF Only...")
         
         lf_val, _ = get_abaqus(real_params, 0.0)
+        if lf_val != lf_val:      # NaN = 시뮬레이션 실패 -> 관측 미추가
+            print("  !! LF run failed - observation skipped (no data added).")
+            continue
         lf_val = -lf_val
         
         x_lf = torch.cat([x_norm, torch.tensor([0.0], device=device, dtype=dtype)])
@@ -255,9 +295,9 @@ for i in range(N_ITERATIONS):
     try:
         print(f"\nMFBO Iteration {i+1}/{N_ITERATIONS}")
 
-        train_yvar = torch.full_like(train_y, LF_NOISE)
-        train_yvar[(train_x[:,-1] > 0.5)] = HF_NOISE
-
+        train_yvar = None   # M-11: 노이즈를 GP 가 학습 (고정하려면 아래 두 줄 주석 해제)
+        # train_yvar = torch.full_like(train_y, LF_NOISE)
+        # train_yvar[(train_x[:,-1] > 0.5)] = HF_NOISE
         # Surrogate model로 singletask - MF - GP
         model = SingleTaskMultiFidelityGP(
             train_x, 
@@ -307,6 +347,9 @@ for i in range(N_ITERATIONS):
             print(f"-> Running Trace-Aware Simulation (HF runs, LF inferred)")
             
             lf_val, hf_val = get_abaqus(real_params, 1.0)
+            if lf_val != lf_val or hf_val != hf_val:      # NaN = 시뮬레이션 실패 -> 관측 미추가
+                print("  !! HF run failed - observation skipped (no data added).")
+                continue
             
             log_lf, log_hf = lf_val, hf_val 
             lf_val = -lf_val
@@ -327,6 +370,9 @@ for i in range(N_ITERATIONS):
             print(f"-> Running Single Fidelity Simulation (LF only)")
             
             lf_val, _ = get_abaqus(real_params, 0.0)
+            if lf_val != lf_val:      # NaN = 시뮬레이션 실패 -> 관측 미추가
+                print("  !! LF run failed - observation skipped (no data added).")
+                continue
             
             log_lf = lf_val
             lf_val = -lf_val
@@ -359,8 +405,10 @@ for i in range(N_ITERATIONS):
         else:
             print("  -> Status: No High-Fidelity data has been collected yet.")
 
-            save_checkpoint(train_x, train_y, i + 1, run_id)
         
+        # 매 반복 체크포인트 저장 (크래시 시 진행 보존)
+        save_checkpoint(train_x, train_y, i + 1, run_id)
+
         # WandB 로깅
         wandb.log({
             "iteration": i + 1,

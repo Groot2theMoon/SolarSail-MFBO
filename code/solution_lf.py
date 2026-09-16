@@ -47,7 +47,7 @@ def get_abaqus(new_x, new_s):
         if parsed_data is None:
             print("!!! Error: Could not find 'RESULTS:' tag.")
             print(result.stderr)
-            return 1e6, -1e6, -1e6, 1e6
+            return np.nan, np.nan, np.nan, np.nan   # L-2: 실패는 NaN 통일(가드가 isnan)
 
         if mode_str == "HF":
             if len(parsed_data) >= 2:
@@ -55,7 +55,7 @@ def get_abaqus(new_x, new_s):
                 return parsed_data[0], parsed_data[1], parsed_data[2], parsed_data[3]
             else:
                  print("!!! Error: HF result should have at least 2 values.")
-                 return 1e6, -1e6, -1e6, 1e6
+                 return np.nan, np.nan, np.nan, np.nan   # L-2: 실패는 NaN 통일(가드가 isnan)
         else:
             print(f"  >> [Done] LF: {parsed_data[0]:.6e}, {parsed_data[1]:.6e}, {parsed_data[2]:.6e}")
             return parsed_data[0], parsed_data[1], parsed_data[2], None
@@ -63,10 +63,10 @@ def get_abaqus(new_x, new_s):
     except subprocess.CalledProcessError as e:
         print(f"!!! Abaqus execution failed (Return Code {e.returncode})")
         print(e.stderr)
-        return 1e6, -1e6, -1e6, 1e6
+        return np.nan, np.nan, np.nan, np.nan   # L-2: 실패는 NaN 통일(가드가 isnan)
     except Exception as e:
         print(f"!!! System Error: {e}")
-        return 1e6, -1e6, -1e6, 1e6
+        return np.nan, np.nan, np.nan, np.nan   # L-2: 실패는 NaN 통일(가드가 isnan)
 
 # 원하는 x1, x2 범위, 간격 지정
 X1_RANGE = np.linspace(0.65, 0.95, 4)   # Aspect Ratio: 1.5 ~ 2.5

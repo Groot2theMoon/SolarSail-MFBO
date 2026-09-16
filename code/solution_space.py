@@ -48,7 +48,7 @@ def get_abaqus(new_x, new_s):
         if mode_str == "HF":
             if len(parsed_data) >= 2:
                 print(f"  >> [Done] LF: {parsed_data[0]:.6e}, HF: {parsed_data[1]:.6e}")
-                return parsed_data[0], parsed_data[1]
+                return parsed_data[0], parsed_data[3]   # S-1: HF 모드는 4필드(lf1,lf2,lf3,hf)
             else:
                  print("!!! Error: HF result should have at least 2 values.")
                  return -1e6, -1e6

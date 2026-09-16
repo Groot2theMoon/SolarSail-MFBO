@@ -290,7 +290,7 @@ def main():
     output_str = ",".join(map(str, results))
     print("RESULTS:" + output_str)
     
-    with open('extraction_full.txt', 'w') as f:
+    with open('extraction.txt', 'w') as f:
         # LF : lf1, lf2, lf3
         # HF : lf1, lf2, lf3, hf
         full_data = list(lf_metrics)

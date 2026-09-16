@@ -101,7 +101,7 @@ INSTANCE_NAME = 'MEMBRANE-1'
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
 THICKNESS = 2.5e-6 # Galhofo Reference 에서는 2.5e-6
-TARGET_STRESS = 7000.0 # Pa
+TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
 
 # 케이블 파라미터 (Galhofo reference)
 CABLE_RADIUS = 5.0e-4 # m
@@ -308,7 +308,9 @@ my_model.StaticStep(
 # Step Buckle : 버클 모드 찾기. LF에서는 직접적으로 쓰이지 않음. 
 # HF 포스트버클링의 imperfection으로 사용됨.
 # Abacus BuckleStep을 사용하는 것이 정석이고 옳으나, 매우 얇은 solar-sail 자체의 불안정성에 의해 
-# negative eigenvalue만 찾는 경우가 대부분이라, mfbo 적용을 위해 Abaqus FrequencyStep으로 대체.
+# 부적합했음이 확인되어 BuckleStep + subspace iteration 으로 복원 (R-6). LANCZOS 는 강성행렬이
+# indefinite 한 좌굴 해석에서 금지이며(예비하중 초과 시 해석 종료), FREQUENCY 모드는 질량
+# 정규화라 '0.1t' 임퍼펙션 관행이 성립하지 않는다. Galhofo 참조도 BUCKLE+subspace, 최초 4모드.
 # BuckleStep도 아래 주석처리로 남겨놓았음.
 
 """if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
@@ -321,12 +323,20 @@ my_model.BuckleStep(
 )"""
 
 if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
-my_model.FrequencyStep(
+my_model.BuckleStep(
     name='Step-Buckle',          
     previous='Step-ClampTension',  
-    numEigen=10,                   
-    eigensolver=LANCZOS,           
+    numEigen=4,
+    eigensolver=SUBSPACE,
 )
+
+# R-7: *IMPERFECTION, FILE= 은 results file(.fil) 을 읽는다 -> 좌굴 모드를 .fil 에 기록해야
+#      임퍼펙션이 실제로 주입된다 (미요청 시 조용히 무시됨)
+my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
+for _i, _b in enumerate(my_model.keywordBlock.sieBlocks):
+    if _b.strip().upper().startswith(('*BUCKLE', '*FREQUENCY')):
+        my_model.keywordBlock.insert(_i + 1, '*NODE FILE, GLOBAL=YES, LAST MODE=4\nU')
+        break
 # ----
 
 my_model.Stress(
@@ -427,7 +437,8 @@ HF_ODB = 'HF_Postbuckle.odb'
 cmd = ""
 if fidelity == 'LF':
 
-    run_job_safely('Buckle_Analysis') #< lf에서는 버클모드를 굳이 찾을 필요 없음. 테스트 완료 후 주석처리
+    # R-17: LF 는 좌굴모드를 쓰지 않는다(HF 분기가 같은 설계점에서 자체 실행) -> 비용 절감
+    # run_job_safely('Buckle_Analysis')
     
     if 'Initial_Stiffness' in my_model.predefinedFields:
         del my_model.predefinedFields['Initial_Stiffness']
@@ -471,7 +482,7 @@ if fidelity == 'LF':
 
     my_model.fieldOutputRequests['F-Output-1'].setValues(
         variables=('S', 'U', 'COORD', 'EVOL'), 
-        frequency=1
+        frequency=10   # R-10: odb 크기 절감
     )
 
     run_job_safely('LF_Analysis')
@@ -503,20 +514,29 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-GlobalTension',  
         nlgeom=ON, 
-        stabilizationMagnitude=0.05, # 댐핑 계수 Galhofo Reference 0.0002
+        stabilizationMagnitude=0.0002,      # R-4: Galhofo 참조 2e-4 (기존 0.05 = 250배)
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
         adaptiveDampingRatio=0.05,
         initialInc=1e-4,
-        minInc=1e-15,
+        minInc=1e-8,          # R-9: 1e-15 는 발산 시 증분 소진까지 수시간
         maxInc=0.1,
-        maxNumInc=10000
+        maxNumInc=1000        # R-9
     )
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 
     my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Postbuckle')
 
-    # 초기 상태에서 최종 장력(7000 Pa)까지 증가
+    # R-2: Step-Buckle 삭제 시 BC_Edges_Only_Z(prescribed condition)가 함께 삭제되므로
+    #      Postbuckle 스텝에 모서리 z 구속을 재생성한다 (Galhofo 참조: 3개 모서리 u3=0)
+    my_model.DisplacementBC(
+        name='BC_Edges_Only_Z',
+        createStepName='Step-Postbuckle',
+        region=a.sets['All_Edges'],
+        u3=0
+    )
+
+    # 초기 상태에서 최종 장력(목표 7000 Pa, 미검증)까지 증가
     for name, sign in [('Disp_Control_Right', 1), ('Disp_Control_Left', -1)]:
         my_model.boundaryConditions[name].setValuesInStep(
             stepName='Step-Postbuckle',
@@ -552,19 +572,21 @@ elif fidelity == 'HF':
         my_model.keywordBlock.insert(len(my_model.keywordBlock.sieBlocks)-1, imp_text)
 
     my_model.fieldOutputRequests['F-Output-1'].setValues(
-        variables=('S', 'U', 'RF', 'COORD'),
-        frequency=1
+        variables=('S', 'U', 'RF', 'COORD', 'EVOL'),   # R-8: LF 지표(lf1~lf3) 산출에 필요
+        frequency=10   # R-10: odb 크기 절감
     )
     
     run_job_safely('HF_Postbuckle')
     
-    cmd = "abaqus python eval_abaqus.py %s %s HF" % (HF_ODB, HF_ODB)
+    cmd = "abaqus python eval_abaqus.py %s %s HF" % (LF_ODB, HF_ODB)   # P0-C: 짝지은 LF odb
 
 try:
     print("Calling extraction script: %s" % cmd)
     # shell=True로 eval_abaqus.py 실행
     p = subprocess.Popen(cmd, shell=True)
-    p.wait()
+    rc = p.wait()
+    if rc != 0:
+        print("!!! ERROR: eval_abaqus.py exited with code %d" % rc)
     
     # 추출 스크립트가 출력한 "RESULTS:..." 라인을 찾아 전달
     if os.path.exists('extraction.txt'):
@@ -572,6 +594,7 @@ try:
             print("RESULTS:" + f.read().strip())
     else:
         print("!!! ERROR: Extraction failed. 'extraction.txt' not found.") 
+        print("RESULTS:FAIL")   # 상위(mfbo)가 원인을 식별하도록 명시적 실패 신호
 
 except Exception as err:
     print("Error during data extraction: %s" % str(err))
