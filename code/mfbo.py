@@ -33,25 +33,17 @@ from botorch.acquisition.max_value_entropy_search import  qMultiFidelityLowerBou
 from botorch.acquisition.cost_aware import InverseCostWeightedUtility
 from botorch.models.cost import AffineFidelityCostModel
 from botorch.optim import optimize_acqf_mixed
-import wandb
 
 warnings.filterwarnings("ignore")
-
-#wandb 에 대한 부분은 사용자의 실제 id와 사용하고자 하는 프로젝트명 / id에 따라 수정 가능
 
 CHECKPOINT_FILE = "mfbo_checkpoint.pt"
 
 # 실행 위치(CWD)와 무관하게 run_abaqus.py / 산출물을 찾기 위한 기준 디렉터리
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# 실행 위치를 스크립트 위치로 고정 -> 체크포인트/wandb/Abaqus 산출물이 모두 code/ 에 모인다.
-# (다른 곳에 모으고 싶으면 이 두 줄을 주석 처리)
-os.chdir(_HERE)
 
-WANDB_PROJECT = "solar-sail-mfbo"
-WANDB_RUN_ID_FILE = "wandb_run_id.txt"
 FAIL = float("nan")
 
-def save_checkpoint(train_x, train_y, iteration, wandb_run_id):
+def save_checkpoint(train_x, train_y, iteration):
     """
     현재 상태를 파일로 저장
     시스템 크래시나 중단 시, 이 파일을 통해 이어서 학습가능
@@ -60,7 +52,6 @@ def save_checkpoint(train_x, train_y, iteration, wandb_run_id):
         'train_x': train_x,
         'train_y': train_y,
         'iteration': iteration, # 몇 번째 루프까지 돌았는지
-        'wandb_run_id': wandb_run_id
     }, CHECKPOINT_FILE)
     print(f"  [Checkpoint] Saved at iteration {iteration}")
 
@@ -68,12 +59,12 @@ def load_checkpoint():
     """
     체크포인트 파일이 있으면 로드
     Returns:
-        tuple: (train_x, train_y, iteration, wandb_run_id) or (None...)
+        tuple: (train_x, train_y, iteration) or (None...)
     """
     if os.path.exists(CHECKPOINT_FILE):
         print("  [Checkpoint] Found existing checkpoint. Loading...")
         ckpt = torch.load(CHECKPOINT_FILE)
-        return ckpt['train_x'], ckpt['train_y'], ckpt['iteration'], ckpt['wandb_run_id']
+        return ckpt['train_x'], ckpt['train_y'], ckpt['iteration']#, ckpt['wandb_run_id']
     else:
         return None, None, 0, None
 
@@ -210,6 +201,7 @@ print(f"Using device: {device}")
 
 train_x, train_y, start_iter, run_id = load_checkpoint()
 
+"""
 if run_id is None:
     # 처음 시작하는 경우
     run = wandb.init(project=WANDB_PROJECT, resume="allow")
@@ -217,6 +209,7 @@ if run_id is None:
 else:
     print(f"  [WandB] Resuming run {run_id}...")
     run = wandb.init(project=WANDB_PROJECT, id=run_id, resume="must")
+"""
 
 if train_x is None:
     print("--- Initializing New Experiment (Independent LHS Strategy) ---")
@@ -422,6 +415,7 @@ for i in range(N_ITERATIONS):
         save_checkpoint(train_x, train_y, i + 1, run_id)
 
         # WandB 로깅
+        """
         wandb.log({
             "iteration": i + 1,
             "current_x1": new_x[0],
@@ -431,10 +425,10 @@ for i in range(N_ITERATIONS):
             "best_hf_value_minimized": real_best_val,
             "current_fidelity": new_s
         })
+        """
     except Exception as e:
         print(f"!!! CRASH at iteration {i}: {e}")
         save_checkpoint(train_x, train_y, i, run_id)
         raise e
 
 print("\n--- Optimization Finished ---")
-wandb.finish()
