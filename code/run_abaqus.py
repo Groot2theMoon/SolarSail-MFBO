@@ -44,6 +44,13 @@ import os
 import subprocess
 import time
 import numpy as np
+
+# 이 스크립트가 위치한 디렉터리 (Abaqus CWD와 무관하게 eval_abaqus.py 를 찾기 위함)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# Abaqus 작업 디렉터리(=산출물 위치)를 code/abaqus 로 고정 (직접 실행해도 동일)
+_RUN = os.path.join(_HERE, "abaqus")
+os.makedirs(_RUN, exist_ok=True)
+os.chdir(_RUN)
  
 print("DEBUG: All sys.argv: " + str(sys.argv))
 
@@ -487,7 +494,7 @@ if fidelity == 'LF':
 
     run_job_safely('LF_Analysis')
 
-    cmd = "abaqus python eval_abaqus.py %s LF" % LF_ODB
+    cmd = 'abaqus python "%s" %s LF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB)
 
 elif fidelity == 'HF':
 
@@ -578,7 +585,7 @@ elif fidelity == 'HF':
     
     run_job_safely('HF_Postbuckle')
     
-    cmd = "abaqus python eval_abaqus.py %s %s HF" % (LF_ODB, HF_ODB)   # P0-C: 짝지은 LF odb
+    cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)   # P0-C: 짝지은 LF odb
 
 try:
     print("Calling extraction script: %s" % cmd)
