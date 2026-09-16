@@ -45,13 +45,46 @@ import subprocess
 import time
 import numpy as np
 
-# 이 스크립트가 위치한 디렉터리 (Abaqus CWD와 무관하게 eval_abaqus.py 를 찾기 위함)
-_HERE = os.path.dirname(os.path.abspath(__file__))
-# Abaqus 작업 디렉터리(=산출물 위치)를 code/aba 로 고정.
+# ---- 스크립트 위치(_HERE) / Abaqus 작업 디렉터리(_RUN) 결정 ----
+# 주의: `abaqus cae noGUI=script.py` 로 실행하면 스크립트가 execfile 로 로드되어
+#       __file__ 이 정의되지 않는다(NameError). 아래처럼 우선순위를 둔다.
+#   (1) mfbo.py 가 주입한 MFBO_CODE_DIR  -> 가장 확실
+#   (2) __file__ (abaqus python 등으로 직접 실행될 때)
+#   (3) sys.argv[0] / cwd / cwd\code 중 eval_abaqus.py 가 실제로 있는 곳
+def _resolve_here():
+    def _ok(d):
+        return bool(d) and os.path.exists(os.path.join(d, "eval_abaqus.py"))
+    env_dir = os.environ.get("MFBO_CODE_DIR")
+    if _ok(env_dir):
+        return os.path.abspath(env_dir)
+    try:
+        d = os.path.dirname(os.path.abspath(__file__))
+        if _ok(d):
+            return d
+    except NameError:
+        pass
+    cand = []
+    try:
+        if sys.argv and sys.argv[0]:
+            cand.append(os.path.dirname(os.path.abspath(sys.argv[0])))
+    except Exception:
+        pass
+    cand.append(os.getcwd())
+    cand.append(os.path.join(os.getcwd(), "code"))
+    for c in cand:
+        if _ok(c):
+            return os.path.abspath(c)
+    print("!!! WARNING: eval_abaqus.py 위치를 찾지 못했습니다. cwd=%s" % os.getcwd())
+    return os.getcwd()
+
+_HERE = _resolve_here()
+# Abaqus 작업 디렉터리(=산출물 위치) = code/aba.
 # mfbo.py 가 MFBO_RUN_DIR 를 넘겨주면 그 값을 그대로 사용 (직접 실행해도 동일하게 동작)
 _RUN = os.path.abspath(os.environ.get("MFBO_RUN_DIR") or os.path.join(_HERE, "aba"))
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_RUN)
+print("[run_abaqus] _HERE = %s" % _HERE)
+print("[run_abaqus] _RUN  = %s" % _RUN)
  
 print("DEBUG: All sys.argv: " + str(sys.argv))
 

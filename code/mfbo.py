@@ -116,7 +116,7 @@ def get_abaqus(new_x, new_s):
         print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
         subprocess.run(f'abaqus cae noGUI="{_script}" -- LF {x1} {x2}',
                        shell=True, check=False, capture_output=True, text=True, cwd=_RUN,
-                       env=dict(os.environ, MFBO_RUN_DIR=_RUN))
+                       env=dict(os.environ, MFBO_RUN_DIR=_RUN, MFBO_CODE_DIR=_HERE))
         if not os.path.exists(_lf_odb):
             print("!!! HF prerequisite LF run produced no LF_Analysis.odb - aborting this HF point.")
             return FAIL, FAIL
@@ -131,7 +131,7 @@ def get_abaqus(new_x, new_s):
             capture_output=True, 
             text=True,
             cwd=_RUN,
-            env=dict(os.environ, MFBO_RUN_DIR=_RUN)   # Abaqus 작업 디렉터리 고정
+            env=dict(os.environ, MFBO_RUN_DIR=_RUN, MFBO_CODE_DIR=_HERE)   # Abaqus 작업 디렉터리 고정
         )
         
         output_lines = result.stdout.splitlines()
