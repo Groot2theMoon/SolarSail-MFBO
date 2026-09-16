@@ -40,7 +40,7 @@ def get_lf(odb_path):
     try:
         if not os.path.exists(odb_path):
             print("LF Error: File not found (%s)" % odb_path)
-            return [0.0, 0.0, 0.0]
+            return [None, None, None]
 
         odb = openOdb(path=odb_path, readOnly=True)
         
@@ -48,14 +48,14 @@ def get_lf(odb_path):
             step_name = 'Step-HighTension'
         else:
             print("LF Error: Target step not found.")
-            return [0.0, 0.0, 0.0]
+            return [None, None, None]
 
         frame = odb.steps[step_name].frames[-1]
         instance = odb.rootAssembly.instances['MEMBRANE-1'] 
         
         if 'EVOL' not in frame.fieldOutputs.keys():
             print("LF Error: EVOL field not found.")
-            return [0.0, 0.0, 0.0]
+            return [None, None, None]
             
         evol_field = frame.fieldOutputs['EVOL'].getSubset(region=instance)
         
@@ -64,7 +64,7 @@ def get_lf(odb_path):
             vol_map[val.elementLabel] = val.data
             
         total_vol = sum(vol_map.values())
-        if total_vol == 0: return [0.0, 0.0, 0.0]
+        if total_vol == 0: return [None, None, None]
         
         stress_field = frame.fieldOutputs['S'].getSubset(position=CENTROID, region=instance)
         s_max_field = stress_field.getScalarField(invariant=MAX_INPLANE_PRINCIPAL)
@@ -141,7 +141,7 @@ def get_lf(odb_path):
 
     except Exception as e:
         print("LF Error: " + str(e))
-        return [1e6, -1e6, -1e6]
+        return [None, None, None]
 
 def calc_thrust_loss(frame, instance, connectivity, max_node_label):
     """
@@ -232,7 +232,7 @@ def get_hf(odb_path):
         if 'Step-Postbuckle' not in odb.steps:
             print("Error: 'Step-Postbuckle' not found in ODB.")
             odb.close()
-            return 1e6
+            return None
             
         step = odb.steps['Step-Postbuckle']
         
@@ -241,8 +241,8 @@ def get_hf(odb_path):
         
         if current_time < 0.99:
             print("Warning: Job did not complete (Time = {:.4f}).".format(current_time))
+            return None
             # 수렴 실패 시 페널티 값을 리턴하거나, 현재 상태라도 계산할지 결정
-            # 일단 계산은 하되 경고를 띄우는 방식
         
         instance = odb.rootAssembly.instances['MEMBRANE-1']
         
@@ -262,8 +262,7 @@ def get_hf(odb_path):
 
     except Exception as e:
         print("HF Extraction Error: " + str(e))
-        return 1e6 # 에러 발생시 아주 큰 값 < 최소화 문제에서 페널티
-
+        return None
 def main():
     # 인자 파싱 루틴
     args = sys.argv
@@ -272,23 +271,21 @@ def main():
     try:
         mode = args[-1].upper()
         if mode == "LF":
-            path_lf = args[-2]
-            # 모든 LF 지표(lf1, lf2, lf3)를 계산함
-            lf_metrics = get_lf(path_lf)
-            results = [lf_metrics[0], lf_metrics[1], lf_metrics[2]] 
-            
+            lf_metrics = get_lf(args[-2])
+            if any(v is None for v in lf_metrics):
+                print("RESULTS:FAIL"); sys.exit(0)
+            results = list(lf_metrics[:3])
         elif mode == "HF":
-            path_hf = args[-2]
-            path_lf = args[-3]
-            
-            lf_metrics = get_lf(path_lf)
-            hf_metric = get_hf(path_hf) 
-            # Trace-aware를 위해 lf, hf를 모두 반환
-            results = [lf_metrics[0], lf_metrics[1], lf_metrics[2], hf_metric]
+            hf_metric = get_hf(args[-2])
+            lf_metrics = get_lf(args[-3])
+            if hf_metric is None or any(v is None for v in lf_metrics):
+                print("RESULTS:FAIL"); sys.exit(0)
+            results = list(lf_metrics[:3]) + [hf_metric]
         else:
-            sys.exit(1)
-    except:
-        sys.exit(1)
+            print("RESULTS:FAIL"); sys.exit(0)
+    except Exception as e:
+        print("eval error:", e)
+        print("RESULTS:FAIL"); sys.exit(0)
 
     output_str = ",".join(map(str, results))
     print("RESULTS:" + output_str)

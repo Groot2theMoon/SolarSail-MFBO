@@ -1,0 +1,40 @@
+{
+  "os":  "Windows-10-10.0.26200-SP0",
+  "python":  "CPython 3.10.16",
+  "startedAt":  "2026-09-16T07:02:12.074588Z",
+  "program":  "c:\\Users\\user\\Desktop\\Seungwon\\solarsail\\2026\\SolarSail-MFBO\\code\\mfbo.py",
+  "codePath":  "code\\mfbo.py",
+  "codePathLocal":  "code\\mfbo.py",
+  "git":  {
+    "remote":  "https://github.com/Groot2theMoon/SolarSail-MFBO.git",
+    "commit":  "08d4cbc10e055fc25b47e95adda44985a1a0e188"
+  },
+  "email":  "0602jae@gmail.com",
+  "root":  "C:\\Users\\user\\Desktop\\Seungwon\\solarsail\\2026\\SolarSail-MFBO",
+  "host":  "DESKTOP-6PAE7MV",
+  "executable":  "C:\\Users\\user\\anaconda3\\envs\\Seungwon\\python.exe",
+  "cpu_count":  16,
+  "cpu_count_logical":  32,
+  "gpu":  "NVIDIA GeForce RTX 4090",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "1999363895296",
+      "used":  "1436305817600"
+    }
+  },
+  "memory":  {
+    "total":  "134813700096"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA GeForce RTX 4090",
+      "memoryTotal":  "25757220864",
+      "cudaCores":  16384,
+      "architecture":  "Ada",
+      "uuid":  "GPU-45d696a2-df30-6c85-f6f6-baf9a1649609"
+    }
+  ],
+  "cudaVersion":  "13.1",
+  "writerId":  "b9dm8qcjpk4zzil5pder1qh6ky6945qm"
+}

@@ -78,6 +78,7 @@ def run_job_safely(job_name):
     
     job = mdb.Job(name=job_name, model=MODEL_NAME, numCpus=1, numDomains=1)
     print("Submitting Job: %s" % job_name)
+    job.writeInput(consistencyChecking=OFF)
     job.submit(consistencyChecking=OFF)
     
     job.waitForCompletion()

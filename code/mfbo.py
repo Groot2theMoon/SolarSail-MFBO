@@ -42,6 +42,7 @@ warnings.filterwarnings("ignore")
 CHECKPOINT_FILE = "mfbo_checkpoint.pt"
 WANDB_PROJECT = "solar-sail-mfbo"
 WANDB_RUN_ID_FILE = "wandb_run_id.txt"
+FAIL = float("nan")
 
 def save_checkpoint(train_x, train_y, iteration, wandb_run_id):
     """
@@ -102,6 +103,8 @@ def get_abaqus(new_x, new_s):
         
         output_lines = result.stdout.splitlines()
         parsed_data = None
+
+        if data_str.strip().upper() == "FAIL": return FAIL, FAIL
         
         for line in output_lines:
             if line.strip().startswith("RESULTS:"):
@@ -114,17 +117,17 @@ def get_abaqus(new_x, new_s):
             print("!!! Error: Could not find 'RESULTS:' tag in output.")
             print("--- Stderr Log ---")
             print(result.stderr) # 에러 로그 출력
-            return -1e6
+            return FAIL, FAIL
 
         # 데이터 반환 로직
         if mode_str == "HF":
             # HF는 lf1, lf2, lf3, hf 4개를 반환
-            if len(parsed_data) >= 2:
+            if len(parsed_data) >= 4:
                 print(f"  >> [Done] LF: {parsed_data[0]:.6e}, HF: {parsed_data[1]:.6e}")
                 return parsed_data[0], parsed_data[3]
             else:
                  print("!!! Error: HF result should have at least 2 values.")
-                 return -1e6
+                 return FAIL, FAIL
         else:
             # LF는 lf1, lf2, lf3 총 3개
             print(f"  >> [Done] LF: {parsed_data[0]:.6e}")
@@ -133,11 +136,11 @@ def get_abaqus(new_x, new_s):
     except subprocess.CalledProcessError as e:
         print(f"!!! Abaqus execution failed (Return Code {e.returncode})")
         print(e.stderr)
-        return 1e6
+        return FAIL, FAIL
     except Exception as e:
         print(f"!!! System Error: {e}")
-        return 1e6
-    
+        return FAIL, FAIL
+
 def unnormalize_params(norm_x):
     """
     Unit Hypercube [0, 1] 상의 정규화된 파라미터를 실제 물리적 범위로 변환.
@@ -146,11 +149,11 @@ def unnormalize_params(norm_x):
         x2: [0, 1] -> [1e-4, 1] (꼭짓점 케이블에 대한 클램프 케이블의 변위비율)
     """
     
-    x1_min, x1_max = 0, 1
-    x2_min, x2_max = 1e-4, 1
+    x1_min, x1_max = 0.05, 0.95
+    x2_min, x2_max = 1e-4, 1.0
     
     real_x1 = x1_min + norm_x[0] * (x1_max - x1_min)
-    real_x2 = x2_min + norm_x[1] * (x2_max - x2_min)
+    real_x2 = x2_min * (x2_max / x2_min) ** norm_x[1] # 지수적 스케일링
     
     return [real_x1, real_x2]
 
@@ -247,7 +250,7 @@ HF_NOISE = 1e-3
 # Cost Model 설정: HF 해석이 LF 해석보다 약 10배 비싸다고 가정 (9.0 + 1.0)
 cost_model = AffineFidelityCostModel(fidelity_weights={2: 9.0}, fixed_cost=1.0)
 cost_utility = InverseCostWeightedUtility(cost_model=cost_model)
-
+new_hf = new_lf = log_hf = log_lf = real_best_val = None
 for i in range(N_ITERATIONS):
     try:
         print(f"\nMFBO Iteration {i+1}/{N_ITERATIONS}")
@@ -304,8 +307,6 @@ for i in range(N_ITERATIONS):
             print(f"-> Running Trace-Aware Simulation (HF runs, LF inferred)")
             
             lf_val, hf_val = get_abaqus(real_params, 1.0)
-            
-            if hf_val is None: hf_val = 1e6 # 에러 시 큰 양수(패널티)
             
             log_lf, log_hf = lf_val, hf_val 
             lf_val = -lf_val

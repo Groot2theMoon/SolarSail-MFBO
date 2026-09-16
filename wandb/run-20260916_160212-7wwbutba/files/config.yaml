@@ -1,0 +1,49 @@
+_wandb:
+    value:
+        cli_version: 0.23.1
+        e:
+            b9dm8qcjpk4zzil5pder1qh6ky6945qm:
+                codePath: code\mfbo.py
+                codePathLocal: code\mfbo.py
+                cpu_count: 16
+                cpu_count_logical: 32
+                cudaVersion: "13.1"
+                disk:
+                    /:
+                        total: "1999363895296"
+                        used: "1436305817600"
+                email: 0602jae@gmail.com
+                executable: C:\Users\user\anaconda3\envs\Seungwon\python.exe
+                git:
+                    commit: 08d4cbc10e055fc25b47e95adda44985a1a0e188
+                    remote: https://github.com/Groot2theMoon/SolarSail-MFBO.git
+                gpu: NVIDIA GeForce RTX 4090
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Ada
+                      cudaCores: 16384
+                      memoryTotal: "25757220864"
+                      name: NVIDIA GeForce RTX 4090
+                      uuid: GPU-45d696a2-df30-6c85-f6f6-baf9a1649609
+                host: DESKTOP-6PAE7MV
+                memory:
+                    total: "134813700096"
+                os: Windows-10-10.0.26200-SP0
+                program: c:\Users\user\Desktop\Seungwon\solarsail\2026\SolarSail-MFBO\code\mfbo.py
+                python: CPython 3.10.16
+                root: C:\Users\user\Desktop\Seungwon\solarsail\2026\SolarSail-MFBO
+                startedAt: "2026-09-16T07:02:12.074588Z"
+                writerId: b9dm8qcjpk4zzil5pder1qh6ky6945qm
+        m: []
+        python_version: 3.10.16
+        t:
+            "1":
+                - 1
+            "2":
+                - 1
+            "4": 3.10.16
+            "5": 0.23.1
+            "8":
+                - 3
+            "12": 0.23.1
+            "13": windows-amd64
