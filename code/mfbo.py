@@ -41,7 +41,8 @@ CHECKPOINT_FILE = "mfbo_checkpoint.pt"
 # 실행 위치(CWD)와 무관하게 run_abaqus.py / 산출물을 찾기 위한 기준 디렉터리
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # Abaqus 산출물 전용 디렉터리 (odb·fil·msg·sta·inp·rpy 등이 code/ 를 어지럽히지 않도록)
-_RUN = os.path.join(_HERE, "abaqus")
+# 이름을 바꾸려면:  PowerShell  $env:MFBO_RUN_DIR="D:\경로"  (기본값: code/aba)
+_RUN = os.path.abspath(os.environ.get("MFBO_RUN_DIR") or os.path.join(_HERE, "aba"))
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_HERE)      # 체크포인트 등 MFBO 자체 산출물은 code/ 에 고정
 
@@ -114,7 +115,8 @@ def get_abaqus(new_x, new_s):
                     pass
         print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
         subprocess.run(f'abaqus cae noGUI="{_script}" -- LF {x1} {x2}',
-                       shell=True, check=False, capture_output=True, text=True, cwd=_RUN)
+                       shell=True, check=False, capture_output=True, text=True, cwd=_RUN,
+                       env=dict(os.environ, MFBO_RUN_DIR=_RUN))
         if not os.path.exists(_lf_odb):
             print("!!! HF prerequisite LF run produced no LF_Analysis.odb - aborting this HF point.")
             return FAIL, FAIL
@@ -128,7 +130,8 @@ def get_abaqus(new_x, new_s):
             check=True, 
             capture_output=True, 
             text=True,
-            cwd=_RUN   # Abaqus 작업 디렉터리 고정
+            cwd=_RUN,
+            env=dict(os.environ, MFBO_RUN_DIR=_RUN)   # Abaqus 작업 디렉터리 고정
         )
         
         output_lines = result.stdout.splitlines()

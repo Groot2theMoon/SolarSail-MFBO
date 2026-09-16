@@ -47,8 +47,9 @@ import numpy as np
 
 # 이 스크립트가 위치한 디렉터리 (Abaqus CWD와 무관하게 eval_abaqus.py 를 찾기 위함)
 _HERE = os.path.dirname(os.path.abspath(__file__))
-# Abaqus 작업 디렉터리(=산출물 위치)를 code/abaqus 로 고정 (직접 실행해도 동일)
-_RUN = os.path.join(_HERE, "abaqus")
+# Abaqus 작업 디렉터리(=산출물 위치)를 code/aba 로 고정.
+# mfbo.py 가 MFBO_RUN_DIR 를 넘겨주면 그 값을 그대로 사용 (직접 실행해도 동일하게 동작)
+_RUN = os.path.abspath(os.environ.get("MFBO_RUN_DIR") or os.path.join(_HERE, "aba"))
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_RUN)
  
