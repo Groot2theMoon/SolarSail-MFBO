@@ -543,7 +543,7 @@ if fidelity == 'LF':
         )
 
     my_model.fieldOutputRequests['F-Output-1'].setValues(
-        variables=('S', 'U', 'COORD', 'EVOL'), 
+        variables=('S', 'E', 'U', 'COORD', 'EVOL'), 
         frequency=10   # R-10: odb 크기 절감
     )
 
@@ -617,7 +617,7 @@ elif fidelity == 'HF':
     
 
     my_model.fieldOutputRequests['F-Output-1'].setValues(
-        variables=('S', 'U', 'RF', 'COORD', 'EVOL'),   # R-8: LF 지표(lf1~lf3) 산출에 필요
+        variables=('S', 'E', 'U', 'RF', 'COORD', 'EVOL'),   # R-8: LF 지표(lf1~lf3) 산출에 필요
         frequency=10   # R-10: odb 크기 절감
     )
     
