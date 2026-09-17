@@ -510,7 +510,7 @@ if fidelity == 'LF':
         name='Initial_Stiffness',
         region=inst_memb.sets['All'],
         distributionType=UNIFORM,
-        sigma11=100.0, sigma22=100.0, sigma33=0.0, 
+        sigma11=500.0, sigma22=500.0, sigma33=0.0, 
         sigma12=0.0, sigma13=0.0, sigma23=0.0
     )
     if 'Step-Buckle' in my_model.steps:
@@ -562,11 +562,11 @@ elif fidelity == 'HF':
         name='Initial_Stiffness',
         region=inst_memb.sets['All'],
         distributionType=UNIFORM,
-        sigma11=100.0, sigma22=100.0, sigma33=0.0, 
+        sigma11=500.0, sigma22=500.0, sigma33=0.0, 
         sigma12=0.0, sigma13=0.0, sigma23=0.0
     )
 
-    run_job_safely('Buckle_Analysis')   # P0-2: 100 Pa 상태에서 좌굴모드 산출
+    run_job_safely('Buckle_Analysis')   # P0-2: 500 Pa 상태에서 좌굴모드 산출
 
     # 기존 Step 정리: Post-buckling은 GlobalTension 직후에서 시작하며,
     # 중간 단계(ClampTension)를 건너뛰고 바로 최종 하중으로 Ramping함 (수렴성 향상 전략)
