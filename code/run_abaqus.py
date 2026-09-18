@@ -152,7 +152,8 @@ def run_job_safely(job_name):
     return True
 
 sqrt2 = 1.414
-N_EIG = 4      # 좌굴모드 수 (numEigen 과 *NODE FILE 의 LAST MODE 가 같아야 함)
+N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
+N_EIG_BUCKLE = 40  # A: 추출 요청 고유값 수 (음수모드 우회 여유; run_abaqus_cable 은 100)
 
 MODEL_NAME = 'SailModel_Triangle'
 INSTANCE_NAME = 'MEMBRANE-1'
@@ -182,11 +183,15 @@ V_CL = clamp_coord_L(x_c)
 V_CR = clamp_coord_R(x_c)
 
 # ---- 
-DISP_GLOBAL = 0.000005
+# ---- C: 사전 장력(prestrain) 캘리브레이션 ----
+# 버클 base state(Step-ClampTension)의 장력을 키워 시스템행렬 부정정(음수 고유값)을 해소.
+# 1.0 = 기존값.  조정:  PowerShell  $env:MFBO_PRETENSION_SCALE="30"
+PRETENSION_SCALE = float(os.environ.get("MFBO_PRETENSION_SCALE", "10"))
+DISP_GLOBAL = 0.000005 * PRETENSION_SCALE
 CLAMP_PULL = DISP_GLOBAL * d_c
 PERTURBATION = 0.0005
 CLAMP_PERT = PERTURBATION * d_c
-GLOBAL_FINAL = 0.0001
+GLOBAL_FINAL = 0.0001 * PRETENSION_SCALE
 CLAMP_FINAL = GLOBAL_FINAL * d_c
 
 
@@ -385,8 +390,9 @@ if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
 my_model.BuckleStep(
     name='Step-Buckle',          
     previous='Step-ClampTension',  
-    numEigen=N_EIG,
-    eigensolver=SUBSPACE,
+    numEigen=N_EIG_BUCKLE,        # A: 음수모드 건너뛰기 위해 여유있게
+    eigensolver=LANCZOS,          # A: SUBSPACE -> LANCZOS (부정정 대응)
+    maxBlocks=DEFAULT,
 )
 # *IMPERFECTION, STEP=n 의 n 은 'Buckle_Analysis.fil 안의 스텝 번호'
 # (현재 3 = GlobalTension/ClampTension/Buckle). 스텝 구성이 바뀌면 자동 추종.
