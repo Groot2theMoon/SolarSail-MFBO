@@ -160,7 +160,7 @@ INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
-THICKNESS = 2.5e-6 # Galhofo Reference 에서는 2.5e-6
+THICKNESS = 5.0e-6 # F2: 2.5e-6 -> 5.0e-6 (cable 변형, 2.5um는 수렴 매우 어려움)
 TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
 
 # 케이블 파라미터 (Galhofo reference)
@@ -301,12 +301,8 @@ def connect_cable(name, part, coord, vector_dir):
 
 p.seedPart(size=BASE/200.0, deviationFactor=0.1) # 약 1만개
 p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-elemTypeQuad = ElemType(
-    elemCode=S4R,
-    elemLibrary=STANDARD,
-    kinematicSplit=AVERAGE_STRAIN,
-    hourglassControl=ENHANCED
-)
+# F2: 감차적분 S4R(아워글래싱) -> 완전적분 S4 (cable 변형과 동일)
+elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
 elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)  
 p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
 p.generateMesh()
