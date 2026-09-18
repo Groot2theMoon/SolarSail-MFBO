@@ -584,7 +584,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-GlobalTension',  
         nlgeom=ON, 
-        stabilizationMagnitude=0.0002,      # R-4: Galhofo 참조 2e-4 (기존 0.05 = 250배)
+        stabilizationMagnitude=0.0002,      # R-4: Galhofo 참조 2e-4 
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
         adaptiveDampingRatio=0.05,

@@ -22,7 +22,7 @@ try:
 
     #edge_id = float(sys.argv[-3])
     #x_c = float(sys.argv[-2])
-    #r_c = float(sys.argv[-1])
+    #d_c = float(sys.argv[-1])
     
 except:
     print("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus.py -- HF id x_c d_c")
