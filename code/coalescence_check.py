@@ -187,8 +187,12 @@ def cmd_record(args):
             print("[record] --dat 또는 --values 중 하나가 필요합니다.", file=sys.stderr)
             return 2
         if not os.path.exists(path):
-            print("[record] 파일 없음: %s (좌굴 해석이 실패했을 수 있음)" % path, file=sys.stderr)
-            return 1
+            if args.msg and os.path.exists(args.msg):
+                path = args.msg          # .dat 미생성 환경 대비: .msg 로 폴백
+                print("[record] .dat 없음 → .msg 로 폴백: %s" % path)
+            else:
+                print("[record] 파일 없음: %s (좌굴 해석이 실패했을 수 있음)" % path, file=sys.stderr)
+                return 1
         with open(path, "r", errors="replace") as f:
             text = f.read()
         vals = parse_eigenvalues(text)

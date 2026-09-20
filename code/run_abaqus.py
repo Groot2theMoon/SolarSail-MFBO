@@ -580,15 +580,16 @@ elif fidelity == 'HF':
         if os.environ.get('MFBO_EIG_RECORD', '1') != '0':
             _rec = os.path.join(_HERE, 'coalescence_check.py')
             _dat = os.path.join(os.getcwd(), 'Buckle_Analysis.dat')
+            _msg = os.path.join(os.getcwd(), 'Buckle_Analysis.msg')
             _hist = os.path.join(os.getcwd(), 'eig_history.jsonl')
-            if os.path.exists(_rec) and os.path.exists(_dat):
-                _cmd = ('abaqus python "%s" record --dat "%s" --history "%s" '
-                        '--x %s --d %s --fidelity HF' % (_rec, _dat, _hist, x_c, d_c))
+            if os.path.exists(_rec) and (os.path.exists(_dat) or os.path.exists(_msg)):
+                _cmd = ('abaqus python "%s" record --dat "%s" --msg "%s" --history "%s" '
+                        '--x %s --d %s --fidelity HF' % (_rec, _dat, _msg, _hist, x_c, d_c))
                 _rc = subprocess.call(_cmd, shell=True)
                 print("[N-6] coalescence record rc=%d (x_c=%s, d_c=%s)" % (_rc, x_c, d_c))
             else:
-                print("[N-6] 고유치 기록 건너뜀 (script=%s, dat=%s)"
-                      % (os.path.exists(_rec), os.path.exists(_dat)))
+                print("[N-6] 고유치 기록 건너뜀 (script=%s, dat=%s, msg=%s)"
+                      % (os.path.exists(_rec), os.path.exists(_dat), os.path.exists(_msg)))
     except Exception as _eig_err:
         print("[N-6] coalescence record 실패(무시): %s" % _eig_err)
 
