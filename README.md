@@ -113,6 +113,62 @@ python mfbo.py
 
 ---
 
+## 좌굴 모드 병합(Coalescence) 진단 (N-6)
+
+좌굴 고유치 λ₁·λ₂ 가 서로 접근하는 설계점에서는 **어느 모드로 좌굴될지가 구조가 아니라
+불완전성·메시·솔버 경로가 결정**합니다. 그래서 그 지점의 HF(포스트버클링) 응답은 노이즈가 큰 것이
+아니라 애초에 하나로 정의되지 않으며, LF–HF 상관 가설도 그 구간에서 깨질 수 있습니다.
+`coalescence_check.py` 는 고유치 **상대 간극 g = (λ₂-λ₁)/λ₁** 을 이 위험의 진단 지표로 기록·분석합니다.
+(배경: arXiv:2609.19603, Prabha & Kumar 2026 — adaptive eigenvalue aggregation / modality identification)
+
+### 1. 자동 기록 (기본 ON)
+`run_abaqus.py` 는 HF 해석의 `Buckle_Analysis` 직후 아래를 자동 실행합니다 (실패해도 해석에 영향 없음).
+
+```
+abaqus python code/coalescence_check.py record --dat <run>/Buckle_Analysis.dat \
+    --history <run>/eig_history.jsonl --x <x_c> --d <d_c> --fidelity HF
+```
+
+* 기록 위치: `code/aba/` (= `MFBO_RUN_DIR`). gitignore 대상이라 커밋되지 않습니다.
+* **과거 HF 결과에는 소급 적용되지 않습니다** — `Buckle_Analysis.dat` 는 다음 설계점의 좌굴 잡이 시작될 때
+  삭제되므로, 이력은 앞으로의 실행부터 축적됩니다.
+* 끄기(PowerShell): `$env:MFBO_EIG_RECORD="0"`
+
+### 2. 회고 분석 (Abaqus 불필요)
+
+```
+python code/coalescence_check.py analyze --history code/aba/eig_history.jsonl \
+    --hf-csv hf_points.csv --out coalescence_report.csv --plot coalescence.png
+```
+
+* CSV 형식(헤더 자동 인식): `x_c,d_c,lf,hf` — 같은 `(x_c,d_c)` 행이 여러 개면 **반복 실행 산포**를,
+  한 행뿐이면 **|LF−HF| 잔차**를 HF 신뢰도 대용 지표로 씁니다.
+* 체크포인트 입력도 가능: `--checkpoint mfbo_checkpoint.pt` (mfbo.py 규약대로 정규화·부호를 복원, torch 필요)
+
+### 3. 판정 기준 (기본값)
+
+| 옵션 | 기본 | 의미 |
+|:--|:--:|:--|
+| `--gap-thresh` | `1e-2` | 이 값 이하를 "병합 위험 밴드"로 표시 |
+| `--ratio-thresh` | `1.5` | 밴드 내/외 중앙값 비율이 이 값 이상이면 "가설 지지" |
+| `--min-points` | `8` | 표본이 이보다 적으면 경고만 출력 (탐색적 결과로 취급) |
+
+스피어만 ρ(gap, 지표)는 **음수**일 때 가설이 지지됩니다 (간극이 작을수록 불안정해야 하므로).
+
+### 4. 한계 (정직하게)
+
+* 고유치 간극 **크기만으로는 참 병합을 판정할 수 없습니다**(fake coalescence). 원 논문은 차이 최소화
+  최적화로 판정하지만 여기서는 근사 지표만 사용하므로, 간극과 함께 **고유벡터 형상 변화**를 볼 것을 권합니다.
+* 선형 좌굴 고유치는 비선형 포스트버클링의 **프록시**입니다 (박막 주름은 인장장 문제로, 같은 분기 계열이되 동일 방정식은 아님).
+* 결과는 가설 검정이 아니라 **탐색적 진단**입니다. 상관이 보여도 표본 규모와 물리 검토가 함께 필요합니다.
+
+### 5. 동작 확인 (Abaqus·데이터 불필요)
+
+```
+python code/coalescence_check.py selftest
+```
+
+---
 ## 주요 Troubleshooting
 
 1.  **"abaqus command not found" 에러**

@@ -571,6 +571,27 @@ elif fidelity == 'HF':
 
     run_job_safely('Buckle_Analysis')   # P0-2: 500 Pa 상태에서 좌굴모드 산출
 
+    # [N-6] 좌굴 모드 병합(coalescence) 진단용 고유치 기록
+    #   - 이유: Buckle_Analysis.dat 는 '다음 설계점'의 좌굴 잡이 시작될 때 삭제되므로
+    #           여기서 고유치를 뽑아 이력(JSONL)에 남기지 않으면 회고 분석이 불가능하다.
+    #   - 기록 전용: 실패해도 해석에는 전혀 영향을 주지 않는다 (예외 전부 삼킴).
+    #   - 끄려면 환경변수 MFBO_EIG_RECORD=0
+    try:
+        if os.environ.get('MFBO_EIG_RECORD', '1') != '0':
+            _rec = os.path.join(_HERE, 'coalescence_check.py')
+            _dat = os.path.join(os.getcwd(), 'Buckle_Analysis.dat')
+            _hist = os.path.join(os.getcwd(), 'eig_history.jsonl')
+            if os.path.exists(_rec) and os.path.exists(_dat):
+                _cmd = ('abaqus python "%s" record --dat "%s" --history "%s" '
+                        '--x %s --d %s --fidelity HF' % (_rec, _dat, _hist, x_c, d_c))
+                _rc = subprocess.call(_cmd, shell=True)
+                print("[N-6] coalescence record rc=%d (x_c=%s, d_c=%s)" % (_rc, x_c, d_c))
+            else:
+                print("[N-6] 고유치 기록 건너뜀 (script=%s, dat=%s)"
+                      % (os.path.exists(_rec), os.path.exists(_dat)))
+    except Exception as _eig_err:
+        print("[N-6] coalescence record 실패(무시): %s" % _eig_err)
+
     # 기존 Step 정리: Post-buckling은 GlobalTension 직후에서 시작하며,
     # 중간 단계(ClampTension)를 건너뛰고 바로 최종 하중으로 Ramping함 (수렴성 향상 전략)
     if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
