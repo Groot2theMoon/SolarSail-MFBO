@@ -279,7 +279,10 @@ TRIG_ON = False                  # seed 없이 안정화만 바꾸는 '한 변�
 #   예:  PowerShell  $env:MFBO_STAB="0.001"   (5배)   /   "0.01" (50배)
 #   검증: .sta 의 ALLSD/ALLIE (누적 소산/변형 에너지 비율) 가 작아야 물리적으로 유효.
 #   GlobalTension 스텝은 기존 2e-4 고정 (프리텐션 상태를 바꾸지 않기 위함).
-STAB = 0.001                     # 2e-4 는 주름 발생 직후 분기에서 실패 (2026-09-21 실측)
+# 2026-09-21 실측: 2e-4 -> 주름 발생(26t) 후 분기에서 사망 / 1e-3 -> 주름이 죽었다
+#   (max|u3| = 0.008t). 즉 안정화 계수는 "주름 보존"과 "분기 통과"가 상충한다.
+#   => 작은 기저값 + 적응 감쇠(아래 ClampTension)로 간다. Postbuckle 과 동일한 조합.
+STAB = 0.0002
 print("[run_abaqus_new] STAB=%g (코드 상수) / TRIG_ON=%s / TRIG_MAG=%.3e m / TRIG_MARGIN=%.3g"
       % (STAB, TRIG_ON, TRIG_MAG, TRIG_MARGIN))
 
@@ -466,8 +469,10 @@ my_model.StaticStep(
     name='Step-ClampTension',
     previous=_PREV_CLAMP,
     nlgeom=ON,
-    stabilizationMagnitude=STAB,      # MFBO_STAB (기본 1e-3)
+    stabilizationMagnitude=STAB,      # 코드 상수: 2e-4 (주름을 죽이지 않는 기저값)
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
+    continueDampingFactors=False,     # 스텝마다 감쇠 초기화
+    adaptiveDampingRatio=0.05,        # 적응 감쇠: 수렴이 어려울 때만 Abaqus 가 자동으로 키운다
     initialInc=0.0001, minInc=1e-8, maxNumInc=1000    # P1-2: 1e-15 는 발산 시 증분 폭주
 )
 
