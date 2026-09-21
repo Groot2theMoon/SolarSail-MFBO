@@ -473,7 +473,14 @@ a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
 def join_link(name, rp_set, node_set):
     """논문의 'basic translational type (Join)' 커넥터 등가물.
     병진 u1,u2,u3 만 강체 구속, 회전 ur1..ur3 은 자유."""
-    n_node = len(node_set.nodes)
+    # 주의: CAE 의 Set 객체에는 .name 속성이 없다 (AttributeError 확인됨, 2026-09-21).
+    #       그래서 셋 '이름'은 인자로 받지 않고 링크 이름만 로그에 남긴다.
+    #       실제 결합 내용은 .inp 의 *Coupling 카드로 검증한다.
+    try:
+        n_node = len(node_set.nodes)
+    except Exception as _e:
+        raise RuntimeError('[JOIN] %s: 노드셋에서 nodes 를 읽을 수 없음 (%s). '
+                           '침묵 실패 방지용 검사.' % (name, _e))
     if n_node != 1:
         raise RuntimeError('[JOIN] %s: 케이블 시작 노드셋 크기가 %d (기대 1). '
                            '침묵 실패 방지용 검사.' % (name, n_node))
@@ -482,8 +489,8 @@ def join_link(name, rp_set, node_set):
         influenceRadius=WHOLE_SURFACE, couplingType=KINEMATIC,
         u1=ON, u2=ON, u3=ON, ur1=OFF, ur2=OFF, ur3=OFF
     )
-    print('  [JOIN] %s: RP=%s  surface=%s (nodes=%d)  병진강체/회전자유'
-          % (name, rp_set.name, node_set.name, n_node))
+    print('  [JOIN] %s 생성: surface nodes=%d (병진강체 u1u2u3 / 회전자유 ur1ur2ur3)'
+          % (name, n_node))
 
 join_link('Join_Top',   a.sets['RP_Top_Set'],   start_c1)
 join_link('Join_Right', a.sets['RP_Right_Set'], start_c2)
