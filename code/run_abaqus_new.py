@@ -47,6 +47,7 @@ import interaction
 import sys
 import os
 import subprocess
+import math
 import time
 import numpy as np
 
@@ -264,12 +265,16 @@ CLAMP_FINAL = GLOBAL_FINAL * d_c
 # 기하 trigger 진폭. 기본 = 막 두께의 10% (Galhofo 관행 0.1t)
 TRIG_MAG = THICKNESS * 0.1       # 0.1t = 5e-7 m (Galhofo 관행)
 # trigger 를 적용할 '내부' 노드의 경계 여유 [m]. 요소 크기 0.1 m -> 3요소 여유
-TRIG_MARGIN = 0.3                # 스케일 밖 값이면 폭의 5% 로 자동 대체된다
+TRIG_MARGIN = 0.05               # 삼각형 빗변에서 띄울 여유 (모델 폭 W 대비 비율)
+#   이전 값 0.3 은 모델 스케일(폭 0.15) 밖이라 내부 노드가 0개가 되는 원인이었다.
 # 0 이면 기하 trigger 없이 u3 해제만 한다 (trigger 민감도 비교용).
 #   2026-09-21: 다음 실행 기준값으로 0 을 기본에 둔다 -> 안정화(STAB)만 바꿔 주름 분기를
 #   넘는지 보는 한 변수 대조 런. seed 까지 켜는 런(민감도/생산)은
 #   $env:MFBO_TRIG_ON="1" 로 덮어쓴다. 실행 첫 줄이 실제 값을 항상 찍는다.
-TRIG_ON = False                  # seed 없이 안정화만 바꾸는 '한 변수' 대조 런. seed 런은 True 로.
+TRIG_ON = True                   # 2026-09-21: seed 를 켠다.
+#   seed=0 런들은 'seed 민감도' 데이터로 보존 (주름은 자연발생했지만 분기 통과에
+#   증분 2000+ 소요 -> 참조 모델이 20분인 이유는 모드를 심고 시작하기 때문).
+#   끄려면 False 로 바꾸고 커밋 (환경변수 아님).
 # 비선형 스텝(Trigger/ClampTension/Postbuckle)의 안정화 계수
 #   2026-09-21 실측: 2e-4(Galhofo 참조값) 로는 Step-ClampTension 이 주름 발생 직후
 #   증분 444 에서 TOO MANY ATTEMPTS 로 죽었다 (증분 2.7e-4 -> 2.1e-6, 100배 축소에도
@@ -559,55 +564,48 @@ if fidelity == 'HF':
         u3=0
     )
 
-    # ---- trigger : 내부 노드를 +-TRIG_MAG 로 교란 (광대역 seed) ----
-    #   자유메쉬 노드 순서대로 홀/짝을 나눠 부호를 교대시킨다 -> 여러 파장이 섞인 seed.
-    #   모서리/꼭짓점 노드는 제외한다(BC_Edges_Only_Z, 케이블 RP 와 충돌 방지).
-    #   [FIX 2026-09-21] 이전 필터는 모델 스케일과 맞지 않아 내부 노드가 0개였다:
-    #     조건  y > TRIG_MARGIN(0.3)  /  y < 20 - x - 0.3  vs  실제 노드 범위
-    #     x in [-0.075, 0.075], y in [-0.041, 0.041]  ->  교집합 공집합.
-    #   빈 노드셋에 BC 를 만들면 Abaqus 는 오류 없이 '아무 일도 하지 않는다'
-    #   -> trigger 가 조용히 무효였고(프로브 실측 max|u3| = 5.8e-16 m), 주름은 반올림
-    #      노이즈가 seed 역할을 해서 났다(진폭 131.6 um = 26t).
-    #   -> 하드코딩 대신 노드 좌표 범위로 삼각형 3변을 복원해 '변에서 MG 이상 떨어진' 노드를 쓴다.
+    # ---- trigger : 삼각형 내부를 해석적 사인 패턴으로 교란 (명시적 seed) ----
+    #   왜 이렇게 하는가(Abaqus 제약): 공간적으로 변하는 처방변위는 '노드셋'으로만 줄 수 있다.
+    #     -> 어떤 노드에 +, 어떤 노드에 - 를 줄지가 곧 패턴의 정의가 된다.
+    #   왜 노드순서 홀/짝이 아니라 해석식인가:
+    #     노드 리스트 순서는 메쉬 생성 순서라 공간적 의미가 없다(문서화/재현 불가).
+    #     sin(pi*(x-x0)/W) * sin(2*pi*(y-y0)/H) 의 부호는 메쉬와 무관한 결정론적 패턴이다.
+    #   영역은 삼각형 '안쪽'만: BC_Edges_Only_Z(u3=0)나 케이블 RP 를 건드리면 모서리
+    #     지지가 깨진다. 아래 y-밴드/여유는 보수적이라 변과 절대 겹치지 않는다.
+    #   [2026-09-21] seed 없는 런은 주름 자연발생(26t/400t)은 되지만 분기 통과를 증분으로
+    #     버텨 ClampTension 에 증분 2000+ 가 필요했다. 클램프 없는 참조 모델이 20분인
+    #     이유는 *IMPERFECTION 으로 모드를 심고 시작하기 때문 -> 같은 원리로 seed 를 준다.
     _mn = inst_memb.nodes
-    _allc = [n.coordinates for n in _mn]
-    _xmin = min(c[0] for c in _allc); _xmax = max(c[0] for c in _allc)
-    _ymin = min(c[1] for c in _allc); _ymax = max(c[1] for c in _allc)
-    _apex = max(_allc, key=lambda c: c[1])          # 꼭짓점 = y 최대 노드
-    _W = _xmax - _xmin
-    # TRIG_MARGIN 이 스케일 범위 안이면 그 값, 아니면 폭의 5% 로 자동 스케일
-    _MG = TRIG_MARGIN if (0.0 < TRIG_MARGIN < 0.2 * _W) else 0.05 * _W
+    _x0 = min(n.coordinates[0] for n in _mn); _x1 = max(n.coordinates[0] for n in _mn)
+    _y0 = min(n.coordinates[1] for n in _mn); _y1 = max(n.coordinates[1] for n in _mn)
+    _W, _H = _x1 - _x0, _y1 - _y0
+    _xc = 0.5 * (_x0 + _x1)
 
-    def _dist_seg(px, py, ax, ay, bx, by):
-        _dx, _dy = bx - ax, by - ay
-        _L2 = _dx * _dx + _dy * _dy
-        _t = 0.0 if _L2 == 0.0 else max(0.0, min(1.0, ((px - ax) * _dx + (py - ay) * _dy) / _L2))
-        _qx, _qy = ax + _t * _dx, ay + _t * _dy
-        return ((px - _qx) ** 2 + (py - _qy) ** 2) ** 0.5
+    def _trig_sign(c):
+        _t = (c[1] - _y0) / _H                    # 0 = 밑변, 1 = 꼭짓점
+        if not (0.30 < _t < 0.65):
+            return None                           # 밑변/꼭짓점에서 충분히 안쪽
+        _half = 0.5 * _W * (1.0 - _t)             # 삼각형 반폭
+        if abs(c[0] - _xc) > _half - TRIG_MARGIN * _W:
+            return None                           # 빗변에서 TRIG_MARGIN*W 이상 안쪽
+        return math.sin(math.pi * (c[0] - _x0) / _W) * math.sin(2.0 * math.pi * (c[1] - _y0) / _H) >= 0.0
 
-    _n_int = []
-    for _i in range(len(_mn)):
-        _c = _mn[_i].coordinates
-        if (_c[1] - _ymin) < _MG:
-            continue
-        if _dist_seg(_c[0], _c[1], _xmin, _ymin, _apex[0], _apex[1]) < _MG:
-            continue
-        if _dist_seg(_c[0], _c[1], _xmax, _ymin, _apex[0], _apex[1]) < _MG:
-            continue
-        _n_int.append(_mn[_i])
-    print("[run_abaqus_new] 노드 범위 x[%.4f, %.4f] y[%.4f, %.4f] apex=(%.4f, %.4f) margin=%.4g m"
-          % (_xmin, _xmax, _ymin, _ymax, _apex[0], _apex[1], _MG))
-    print("[run_abaqus_new] trigger 내부 노드 %d / 전체 %d (mag=%.3e m, on=%s)"
-          % (len(_n_int), len(_mn), TRIG_MAG, TRIG_ON))
+    _n_p = [n for n in _mn if _trig_sign(n.coordinates) is True]
+    _n_m = [n for n in _mn if _trig_sign(n.coordinates) is False]
+    _n_int = _n_p + _n_m
+    print("[run_abaqus_new] 노드 범위 x[%.4f, %.4f] y[%.4f, %.4f] W=%.4f H=%.4f"
+          % (_x0, _x1, _y0, _y1, _W, _H))
+    print("[run_abaqus_new] trigger 내부 노드 %d / 전체 %d  (+, -)=(%d, %d)  mag=%.3e m  on=%s"
+          % (len(_n_int), len(_mn), len(_n_p), len(_n_m), TRIG_MAG, TRIG_ON))
     if TRIG_ON and len(_n_int) < 50:
         raise RuntimeError(
             "trigger 내부 노드가 %d개뿐입니다 (전체 %d). 빈/과소 노드셋에 BC 를 만들면 "
-            "trigger 가 조용히 무효가 됩니다 - 좌표 필터와 MFBO_TRIG_MARGIN 을 확인하세요."
+            "trigger 가 조용히 무효가 됩니다 - 영역 조건(_trig_sign)을 확인하세요."
             % (len(_n_int), len(_mn)))
     _TRIG_OK = False
     try:
-        a.Set(name='NS_TRIG_P', nodes=_n_int[0::2])
-        a.Set(name='NS_TRIG_M', nodes=_n_int[1::2])
+        a.Set(name='NS_TRIG_P', nodes=_n_p)
+        a.Set(name='NS_TRIG_M', nodes=_n_m)
         if TRIG_ON:
             my_model.DisplacementBC(name='BC_Trig_P', createStepName='Step-Trigger',
                                     region=a.sets['NS_TRIG_P'], u3=TRIG_MAG)
