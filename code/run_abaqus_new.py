@@ -468,10 +468,16 @@ if fidelity == 'HF':
 _PREV_CLAMP = 'Step-Trigger' if fidelity == 'HF' else 'Step-GlobalTension'
 
 # Step Clamp Tension : 클램프에 변위 가하기
-#   [역할 명시 2026-09-21] u3 는 Step-Trigger 에서 해제되므로, 이 스텝부터가
-#   사실상 포스트버클링 구간이다(프리텐션 상태가 이미 분기 위 -> 해제 즉시 주름 발생).
-#   ClampTension(0 -> CLAMP_PULL) 과 Postbuckle(CLAMP_PULL -> CLAMP_FINAL) 은
-#   하나의 연속 램프를 수치 스테이징 목적으로 1:20 으로 나눈 것.
+#   [역할 명시 2026-09-21] u3 는 Step-Trigger 에서 해제되므로 이 스텝부터가 사실상
+#   포스트버클링 구간이다 (프리텐션 상태가 이미 분기 위 -> 해제 즉시 주름 발생).
+#   분할 이유는 두 가지이고, 둘 다 유지가 유리하다:
+#     (1) 물리적 스테이징 : GlobalTension 이 '운용 프리텐션' 수준(DISP_GLOBAL)을 만들고,
+#         이 스텝에서 설계변수 클램프(d_c)를 결합하고, Postbuckle 이 최종 하중까지 올린다.
+#         -> 코너·클램프를 동시에 램프하는 단일 스텝과는 *하중경로가 다르다*.
+#            (경로 민감도: merged vs split 비교는 아직 미검증 항목)
+#     (2) 수치적 스테이징 : 분기 핵생성과 20배 램프를 한 스텝에 몰면 수렴이 나빠진다
+#         (실측: 핵생성 구간에서 증분이 1.25e-4 까지 붕괴).
+#   LF 도 동일 스텝 구조를 쓴다 (하중경로 동일화 -> LF->HF 보정이 '주름 효과'만 학습).
 #   코너 처방변위는 이 스텝에서 DISP_GLOBAL 로 고정 유지된다.
 my_model.StaticStep(
     name='Step-ClampTension',
