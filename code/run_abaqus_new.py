@@ -280,7 +280,7 @@ TRIG_ON = False                  # seed 없이 안정화만 바꾸는 '한 변�
 #   검증: .sta 의 ALLSD/ALLIE (누적 소산/변형 에너지 비율) 가 작아야 물리적으로 유효.
 #   GlobalTension 스텝은 기존 2e-4 고정 (프리텐션 상태를 바꾸지 않기 위함).
 STAB = 0.001                     # 2e-4 는 주름 발생 직후 분기에서 실패 (2026-09-21 실측)
-print("[run_abaqus_new] STAB=%g (MFBO_STAB) / TRIG_ON=%s / TRIG_MAG=%.3e m / TRIG_MARGIN=%.3g"
+print("[run_abaqus_new] STAB=%g (코드 상수) / TRIG_ON=%s / TRIG_MAG=%.3e m / TRIG_MARGIN=%.3g"
       % (STAB, TRIG_ON, TRIG_MAG, TRIG_MARGIN))
 
 
@@ -610,7 +610,7 @@ if fidelity == 'HF':
                                     region=a.sets['NS_TRIG_M'], u3=-TRIG_MAG)
             _TRIG_OK = True
         else:
-            print("[run_abaqus_new] MFBO_TRIG_ON=0 : trigger 없이 u3 해제만")
+            print("[run_abaqus_new] TRIG_ON=False : trigger 없이 u3 해제만")
     except Exception as _trig_err:
         # trigger 생성 실패는 치명적이지 않다: u3 해제만으로도 불안정 상태는 드러난다.
         print("!!! WARNING: trigger 생성 실패(무시하고 'u3 해제만'으로 진행): %s" % _trig_err)
