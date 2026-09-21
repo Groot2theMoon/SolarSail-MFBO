@@ -442,18 +442,35 @@ my_model.BuckleStep(
 )"""
 
 if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
-my_model.BuckleStep(
-    name='Step-Buckle',          
-    # (B) base state = '클램프 없는(GlobalTension 말단)' 상태.
-    #   ClampTension 말단을 base 로 쓰면 시스템행렬이 부정정(음수 고유값 수천 개)이 되어
-    #   좌굴모드 0개 -> 임퍼펙션 seed 없음 -> 포스트버클 불가.
-    #   어떻게 잘 하면 가능할 것 같기도 한데...과연?
-    previous='Step-GlobalTension',
-    numEigen=N_EIG_BUCKLE,
-    eigensolver=SUBSPACE,
-    vectors=BUCKLE_VECTORS,      # A: 기본 8 -> 250 (MFBO_VECTORS 로 조정)
-    maxIterations=5000,
-)
+# A: 좌굴 고유값 추출 솔버. 기본 SUBSPACE(= 성공한 cable 변형과 동일).
+#   단, SUBSPACE 는 '작은 모델에서 많은 모드'용이다. 이 모델은 요소 ~1만 개 / DOF ~4만 개로
+#   크고 두께 5um 라 강성행렬 조건수가 극단적이라, 100개 모드를 요청하면
+#   'EIGENVALUES CANNOT BE FOUND' (0 CONVERGED) 로 실패하기 쉽다.
+#   LANCZOS 는 대형 희소행렬용이라 이 경우 훨씬 강건하다.
+#   스윕: PowerShell  $env:MFBO_EIGENSOLVER="LANCZOS"
+_EIGENSOLVER = os.environ.get("MFBO_EIGENSOLVER", "SUBSPACE").strip().upper()
+print("[run_abaqus] buckle eigensolver=%s numEigen=%d vectors=%s"
+      % (_EIGENSOLVER, N_EIG_BUCKLE, (BUCKLE_VECTORS if _EIGENSOLVER != 'LANCZOS' else 'n/a')))
+if _EIGENSOLVER == 'LANCZOS':
+    my_model.BuckleStep(
+        name='Step-Buckle',
+        # (B) base state = '클램프 없는(GlobalTension 말단)' 상태.
+        #   ClampTension 말단을 base 로 쓰면 시스템행렬이 부정정(음수 고유값 수천 개)이 되어
+        #   좌굴모드 0개 -> 임퍼펙션 seed 없음 -> 포스트버클 불가.
+        previous='Step-GlobalTension',
+        numEigen=N_EIG_BUCKLE,
+        eigensolver=LANCZOS,
+        maxBlocks=DEFAULT,
+    )
+else:
+    my_model.BuckleStep(
+        name='Step-Buckle',
+        previous='Step-GlobalTension',
+        numEigen=N_EIG_BUCKLE,
+        eigensolver=SUBSPACE,
+        vectors=BUCKLE_VECTORS,      # A: 기본 8 -> 250 (MFBO_VECTORS 로 조정)
+        maxIterations=5000,
+    )
 # *IMPERFECTION, STEP=n 의 n 은 'Buckle_Analysis.fil 안의 스텝 번호'
 # (현재 2 = GlobalTension/Buckle/ClampTension). 스텝 순서가 바뀌어도 자동 추종.
 #   n 은 'Initial 을 제외한' 1-based 스텝 번호 (len() 은 Initial 포함해 1 크다 — NEW-1).
