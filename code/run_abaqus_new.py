@@ -259,15 +259,23 @@ CLAMP_FINAL = GLOBAL_FINAL * d_c
 TRIG_MAG = float(os.environ.get("MFBO_TRIG_MAG", str(THICKNESS * 0.1)))
 # trigger 를 적용할 '내부' 노드의 경계 여유 [m]. 요소 크기 0.1 m -> 3요소 여유
 TRIG_MARGIN = float(os.environ.get("MFBO_TRIG_MARGIN", "0.3"))
-# 0 이면 기하 trigger 없이 'u3 해제'만 한다 (trigger 민감도 비교용)
-TRIG_ON = os.environ.get("MFBO_TRIG_ON", "1") not in ("0", "", "false", "False")
+# 0 이면 기하 trigger 없이 u3 해제만 한다 (trigger 민감도 비교용).
+#   2026-09-21: 다음 실행 기준값으로 0 을 기본에 둔다 -> 안정화(STAB)만 바꿔 주름 분기를
+#   넘는지 보는 한 변수 대조 런. seed 까지 켜는 런(민감도/생산)은
+#   $env:MFBO_TRIG_ON="1" 로 덮어쓴다. 실행 첫 줄이 실제 값을 항상 찍는다.
+TRIG_ON = os.environ.get("MFBO_TRIG_ON", "0") not in ("0", "", "false", "False")
 # 비선형 스텝(Trigger/ClampTension/Postbuckle)의 안정화 계수
-#   (DISSIPATED_ENERGY_FRACTION). 기본 2e-4 = Galhofo 참조값.
+#   2026-09-21 실측: 2e-4(Galhofo 참조값) 로는 Step-ClampTension 이 주름 발생 직후
+#   증분 444 에서 TOO MANY ATTEMPTS 로 죽었다 (증분 2.7e-4 -> 2.1e-6, 100배 축소에도
+#   복구 불가 = 증분 제어로 넘을 수 없는 분기). 그래서 기본값을 1e-3 으로 올려 둔다.
+#   스윕은 환경변수로 덮어쓴다:  $env:MFBO_STAB="0.01" (평상시 실행엔 입력 불필요)
 #   불안정(주름) 분기에서 증분이 컷백으로도 복구되지 않고 죽으면 이 값을 키운다.
 #   예:  PowerShell  $env:MFBO_STAB="0.001"   (5배)   /   "0.01" (50배)
 #   검증: .sta 의 ALLSD/ALLIE (누적 소산/변형 에너지 비율) 가 작아야 물리적으로 유효.
 #   GlobalTension 스텝은 기존 2e-4 고정 (프리텐션 상태를 바꾸지 않기 위함).
-STAB = float(os.environ.get("MFBO_STAB", "0.0002"))
+STAB = float(os.environ.get("MFBO_STAB", "0.001"))
+print("[run_abaqus_new] STAB=%g (MFBO_STAB) / TRIG_ON=%s / TRIG_MAG=%.3e m / TRIG_MARGIN=%.3g"
+      % (STAB, TRIG_ON, TRIG_MAG, TRIG_MARGIN))
 
 
 # 하중 각도 (28.6도)
@@ -441,7 +449,7 @@ if fidelity == 'HF':
         name='Step-Trigger',
         previous='Step-GlobalTension',
         nlgeom=ON,
-        stabilizationMagnitude=STAB,      # MFBO_STAB (기본 = Galhofo 2e-4)
+        stabilizationMagnitude=STAB,      # MFBO_STAB (기본 1e-3)
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         initialInc=0.1, minInc=1e-8, maxInc=1.0, maxNumInc=50
     )
@@ -452,7 +460,7 @@ my_model.StaticStep(
     name='Step-ClampTension',
     previous=_PREV_CLAMP,
     nlgeom=ON,
-    stabilizationMagnitude=STAB,      # MFBO_STAB (기본 = Galhofo 2e-4)
+    stabilizationMagnitude=STAB,      # MFBO_STAB (기본 1e-3)
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
     initialInc=0.0001, minInc=1e-8, maxNumInc=1000    # P1-2: 1e-15 는 발산 시 증분 폭주
 )
@@ -694,7 +702,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-ClampTension',   # B안: ClampTension 을 체인에 유지
         nlgeom=ON, 
-        stabilizationMagnitude=STAB,      # MFBO_STAB (기본 = Galhofo 참조 2e-4) 
+        stabilizationMagnitude=STAB,      # MFBO_STAB (기본 1e-3) 
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
         adaptiveDampingRatio=0.05,
