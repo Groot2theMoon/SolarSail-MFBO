@@ -458,12 +458,38 @@ a.Set(name='RP_Left_Set', referencePoints=(a.referencePoints[rp3_obj.id],))
 a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
 a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
 
-my_model.Tie(name='Tie_Top', main=a.sets['RP_Top_Set'], secondary=start_c1, positionToleranceMethod=COMPUTED)
-my_model.Tie(name='Tie_Right', main=a.sets['RP_Right_Set'], secondary=start_c2, positionToleranceMethod=COMPUTED)
-my_model.Tie(name='Tie_Left', main=a.sets['RP_Left_Set'], secondary=start_c3, positionToleranceMethod=COMPUTED)
+# 2026-09-21: 노드기반 *Tie(adjust=yes) -> Join 등가 링크 (병진 강체 / 회전 자유).
+#   근거(논문 원문 §3.2): 케이블-막 부착을
+#     "connectors with a basic translational type (Join) section"
+#   으로 모델링했다. 즉 병진 3성분만 강체 구속하고 회전은 구속하지 않는다.
+#   우리의 기존 *Tie 는 두 가지 문제가 있었다:
+#     (a) adjust=yes -> 2차(케이블) 노드를 1차(RP)로 '이동'시킨다. .dat 이
+#         "NODAL ADJUSTMENTS ARISING FROM CONTACT INTERACTIONS AND/OR TIE CONSTRAINTS
+#          CAN CAUSE SEVERE ELEMENT DISTORTION" 을 출력한 직접 원인이다.
+#     (b) 노드-노드 tie 라 점 부착 국소 힘불평형(잔차 ±2-cycle at RP in-plane dof)을 만든다.
+#   Join 등가 = Coupling(KINEMATIC, u1=u2=u3=ON, ur1=ur2=ur3=OFF)  (노드 1개짜리 surface).
+#   참고: 케이블은 T3D2(트러스)라 노드에 회전 자유도가 없으므로 '회전 구속 여부' 자체는
+#         차이가 없다. 실질 이득은 (i) 노드 adjust 제거, (ii) tie 대신 제약방정식 사용이다.
+def join_link(name, rp_set, node_set):
+    """논문의 'basic translational type (Join)' 커넥터 등가물.
+    병진 u1,u2,u3 만 강체 구속, 회전 ur1..ur3 은 자유."""
+    n_node = len(node_set.nodes)
+    if n_node != 1:
+        raise RuntimeError('[JOIN] %s: 케이블 시작 노드셋 크기가 %d (기대 1). '
+                           '침묵 실패 방지용 검사.' % (name, n_node))
+    my_model.Coupling(
+        name=name, controlPoint=rp_set, surface=node_set,
+        influenceRadius=WHOLE_SURFACE, couplingType=KINEMATIC,
+        u1=ON, u2=ON, u3=ON, ur1=OFF, ur2=OFF, ur3=OFF
+    )
+    print('  [JOIN] %s: RP=%s  surface=%s (nodes=%d)  병진강체/회전자유'
+          % (name, rp_set.name, node_set.name, n_node))
 
-my_model.Tie(name='Tie_CL', main=a.sets['RP_CL_Set'], secondary=start_cl, positionToleranceMethod=COMPUTED)
-my_model.Tie(name='Tie_CR', main=a.sets['RP_CR_Set'], secondary=start_cr, positionToleranceMethod=COMPUTED)
+join_link('Join_Top',   a.sets['RP_Top_Set'],   start_c1)
+join_link('Join_Right', a.sets['RP_Right_Set'], start_c2)
+join_link('Join_Left',  a.sets['RP_Left_Set'],  start_c3)
+join_link('Join_CL',    a.sets['RP_CL_Set'],    start_cl)
+join_link('Join_CR',    a.sets['RP_CR_Set'],    start_cr)
 
 a.regenerate()
 
