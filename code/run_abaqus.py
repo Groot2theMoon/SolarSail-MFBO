@@ -382,7 +382,7 @@ my_model.BuckleStep(
 if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
 my_model.BuckleStep(
     name='Step-Buckle',          
-    previous='Step-ClampTension',  
+    previous='Step-GlobalTension',  
     numEigen=N_EIG_BUCKLE,
     eigensolver=SUBSPACE, 
     vectors=250,                  
@@ -568,7 +568,7 @@ elif fidelity == 'HF':
 
     run_job_safely('Buckle_Analysis')   # P0-2: 500 Pa 상태에서 좌굴모드 산출
 
-    # [N-6] 좌굴 모드 병합(coalescence) 진단용 고유치 기록
+    # 좌굴 모드 병합(coalescence) 진단용 고유치 기록
     #   - 이유: Buckle_Analysis.dat 는 '다음 설계점'의 좌굴 잡이 시작될 때 삭제되므로
     #           여기서 고유치를 뽑아 이력(JSONL)에 남기지 않으면 회고 분석이 불가능하다.
     #   - 기록 전용: 실패해도 해석에는 전혀 영향을 주지 않는다 (예외 전부 삼킴).
@@ -591,7 +591,7 @@ elif fidelity == 'HF':
         print("[N-6] coalescence record 실패(무시): %s" % _eig_err)
 
     # 기존 Step 정리: Post-buckling은 GlobalTension 직후에서 시작하며,
-    # 중간 단계(ClampTension)를 건너뛰고 바로 최종 하중으로 Ramping함 (수렴성 향상 전략)
+    # 중간 단계(ClampTension)를 건너뛰고 바로 최종 하중으로 Ramping함
     if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
     if 'Step-ClampTension' in my_model.steps: del my_model.steps['Step-ClampTension']
 
@@ -600,7 +600,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-GlobalTension',  
         nlgeom=ON, 
-        stabilizationMagnitude=0.0002,      # R-4: Galhofo 참조 2e-4 
+        stabilizationMagnitude=0.0002,      # Galhofo 참조 2e-4 
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
         adaptiveDampingRatio=0.05,
@@ -613,8 +613,8 @@ elif fidelity == 'HF':
 
     my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Postbuckle')
 
-    # R-2: Step-Buckle 삭제 시 BC_Edges_Only_Z(prescribed condition)가 함께 삭제되므로
-    #      Postbuckle 스텝에 모서리 z 구속을 재생성한다 (Galhofo 참조: 3개 모서리 u3=0)
+    # Step-Buckle 삭제 시 BC_Edges_Only_Z(prescribed condition)가 함께 삭제되므로
+    # Postbuckle 스텝에 모서리 z 구속을 재생성한다 (Galhofo 참조: 3개 모서리 u3=0)
     my_model.DisplacementBC(
         name='BC_Edges_Only_Z',
         createStepName='Step-Postbuckle',
