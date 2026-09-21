@@ -290,13 +290,6 @@ V1 = (BASE/2.0, HEIGHT, 0.0) # Top
 V2 = (BASE, 0.0, 0.0)        # Right
 V3 = (0.0, 0.0, 0.0)         # Left
 
-# 정점 절단 폭 [m]. 근거: Galhofo2022 §3.1 + Fig.10 caption 원문 —
-#   "a triangular quadrant with a base of 20 m, a height of 10 m, and a top width of
-#    0.280 m. The mesh is a uniform grid."
-# 우리 모델도 BASE=20 m, HEIGHT=10 m 이므로 같은 값을 그대로 적용한다.
-# 정점을 자르면 면이 위상적으로 사각형이 되어 규칙 격자(STRUCTURED/SWEEP) 메쉬가 가능해진다.
-APEX_TOP_WIDTH = 0.280
-
 def clamp_coord_L(x): return (10-10*x, 10-10*x, 0)
 def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 
@@ -344,17 +337,10 @@ mat_cable.Elastic(table=((62.0e9, 0.36),))
 my_model.TrussSection(name='Section-Cable', material='Kevlar', area=CABLE_AREA)
 
 # 파트 생성: 멤브레인
-# 2026-09-21: 삼각형 -> 사다리꼴(정점 절단). Galhofo2022 와 동일 형상.
-#   케이블/RP/쿠플링은 모두 '좌표 기준 radius 로 노드를 선택'하므로 새 단면을 자동 추종한다
-#   (create_rigid_patch: getByBoundingSphere -> getClosest fallback).
-_xt = APEX_TOP_WIDTH / 2.0
-_apex_l = (V1[0] - _xt, V1[1], V1[2])
-_apex_r = (V1[0] + _xt, V1[1], V1[2])
-s = my_model.ConstrainedSketch(name='trapezoid_profile', sheetSize=BASE*2)
-s.Line(point1=V3[:2], point2=V2[:2])             # base (20 m)
-s.Line(point1=V2[:2], point2=_apex_r[:2])        # right slant
-s.Line(point1=_apex_r[:2], point2=_apex_l[:2])   # top edge (0.280 m)
-s.Line(point1=_apex_l[:2], point2=V3[:2])        # left slant
+s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
+s.Line(point1=V3[:2], point2=V2[:2])
+s.Line(point1=V2[:2], point2=V1[:2])
+s.Line(point1=V1[:2], point2=V3[:2])
 p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
 p.BaseShell(sketch=s)
 p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
@@ -433,29 +419,12 @@ def connect_cable(name, part, coord, vector_dir):
     return region_start, region_end
 
 p.seedPart(size=BASE/200.0, deviationFactor=0.1) # 약 1만개
-# 2026-09-21: 자유메쉬(FREE + MEDIAL_AXIS = 불규칙) 제거 -> 아래에서 규칙 격자 기법을 시도한다.
+p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
 # S4R-> S4 (cable 변형과 동일)
 elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
 elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)  
 p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
-# 2026-09-21: 메쉬 기법 = 규칙 격자.
-#   근거(원문): Galhofo2022 §3.1 — "Fig. 10 presents regular meshes ... using a mix of
-#   triangular (STRI65) and quadrilateral (S8R5) elements";
-#   App. — "a mix of quadrangular and triangular elements is used to build a regular mesh".
-#   요소차수는 1차(S4/S3) 유지하고 '격자 규칙성'만 복구한다(한 번에 한 변수).
-#   STRUCTURED 우선, CAE 가 거부하면 SWEEP(둘 다 규칙 격자). 자유메쉬로는 절대 되돌리지 않는다.
-_mesh_ok = False
-for _tech in (STRUCTURED, SWEEP):
-    try:
-        p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=_tech)
-        p.generateMesh()
-        _mesh_ok = True
-        print('  [MESH] 사용된 기법: %s  (규칙 격자 / Galhofo2022 Fig.10)' % _tech)
-        break
-    except Exception as _e:
-        print('  [MESH] %s 거부됨: %s' % (_tech, _e))
-if not _mesh_ok:
-    raise RuntimeError('[MESH] 규칙 격자 생성 실패 - 자유메쉬로 회귀 금지. 형상/시드 점검 필요')
+p.generateMesh()
 a.regenerate()
 
 # 꼭짓점 RP
