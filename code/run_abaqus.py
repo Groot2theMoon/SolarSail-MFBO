@@ -442,13 +442,12 @@ my_model.BuckleStep(
 )"""
 
 if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
-# A: 좌굴 고유값 추출 솔버. 기본 SUBSPACE(= 성공한 cable 변형과 동일).
-#   단, SUBSPACE 는 '작은 모델에서 많은 모드'용이다. 이 모델은 요소 ~1만 개 / DOF ~4만 개로
-#   크고 두께 5um 라 강성행렬 조건수가 극단적이라, 100개 모드를 요청하면
-#   'EIGENVALUES CANNOT BE FOUND' (0 CONVERGED) 로 실패하기 쉽다.
-#   LANCZOS 는 대형 희소행렬용이라 이 경우 훨씬 강건하다.
-#   스윕: PowerShell  $env:MFBO_EIGENSOLVER="LANCZOS"
-_EIGENSOLVER = os.environ.get("MFBO_EIGENSOLVER", "SUBSPACE").strip().upper()
+# A: 좌굴 고유값 추출 솔버. **기본 LANCZOS** — Abaqus 의 *BUCKLE 기본 솔버이자 이 코드의
+#    원래 설정(LANCZOS + maxBlocks=DEFAULT)이다. 요소 ~1만 개 / DOF ~4만 개 + 두께 5um 라
+#    강성 조건수가 극단적이어서 SUBSPACE(작은 모델·다수 모드용)로는 100개 모드 추출이
+#    'EIGENVALUES CANNOT BE FOUND' (0 CONVERGED) 로 실패했다.
+#    SUBSPACE 로 강제하려면:  $env:MFBO_EIGENSOLVER="SUBSPACE"
+_EIGENSOLVER = os.environ.get("MFBO_EIGENSOLVER", "LANCZOS").strip().upper()
 print("[run_abaqus] buckle eigensolver=%s numEigen=%d vectors=%s"
       % (_EIGENSOLVER, N_EIG_BUCKLE, (BUCKLE_VECTORS if _EIGENSOLVER != 'LANCZOS' else 'n/a')))
 if _EIGENSOLVER == 'LANCZOS':
