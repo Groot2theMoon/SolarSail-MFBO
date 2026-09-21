@@ -326,6 +326,13 @@ TRIG_ON = True
 #   (max|u3| = 0.008t). 즉 안정화 계수는 "주름 보존"과 "분기 통과"가 상충한다.
 #   => 작은 기저값 + 적응 감쇠(아래 ClampTension)로 간다. Postbuckle 과 동일한 조합.
 STAB = 0.0002
+# 적응 감쇠 "상한" (dissipated-energy fraction 목표가 수렴 곤란 시 올라갈 수 있는 최대치)
+#   2026-09-21 런4 진단: ClampTension step time 0.410 에서 TOO MANY ATTEMPTS 로 사망.
+#   증분 9.7e-5 -> 2.4e-5 -> 6.1e-6 -> 1.5e-6 -> 3.8e-7 로 6회 시도 전부 실패 (증분 축소가 무효),
+#   "THE SYSTEM MATRIX HAS 1 NEGATIVE EIGENVALUES" 경고 816회 -> 탄젠트가 부정정.
+#   => 증분/예산 문제가 아니라 반복해법 문제. 기저 STAB(2e-4, Galhofo 값)은 주름 보존을 위해 유지하고
+#      (1e-3 상향은 주름을 죽임: 실측 26t -> 0.008t) 필요할 때만 올라가는 이 상한을 키운다.
+ADAPT_DAMP_MAX = 0.15
 print("[run_abaqus_new] STAB=%g (코드 상수) / TRIG_ON=%s / TRIG_MAG=%.3e m / TRIG_MARGIN=%.3g"
       % (STAB, TRIG_ON, TRIG_MAG, TRIG_MARGIN))
 
@@ -526,7 +533,7 @@ my_model.StaticStep(
     stabilizationMagnitude=STAB,      # 코드 상수: 2e-4 (주름을 죽이지 않는 기저값)
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
     continueDampingFactors=False,     # 스텝마다 감쇠 초기화
-    adaptiveDampingRatio=0.05,        # 적응 감쇠: 수렴이 어려울 때만 Abaqus 가 자동으로 키운다
+    adaptiveDampingRatio=ADAPT_DAMP_MAX,        # 적응 감쇠: 수렴이 어려울 때만 Abaqus 가 자동으로 키운다
     initialInc=0.0001, minInc=1e-8, maxNumInc=20000   # 2026-09-21: 1000 소진 -> 말단 속도 1.25e-4/inc 기준 ~2300 필요
 )
 
@@ -679,6 +686,18 @@ HF_ODB = 'HF_Postbuckle.odb'
 # (B안) 좌굴 잡 모델 복사본 / *NODE FILE 삽입 없음.
 #   *IMPERFECTION 카드도 쓰지 않으므로 좌굴모드를 .fil 에 기록할 필요가 없다.
 
+# 감쇠 가격 측정용 에너지 출력: ALLIE(총내부에너지) ALLSD(정적 감쇠 소산) ALLKE(운동)
+#   목적: STAB/적응감쇠가 '실제로 일을 하고 있는지' 정량화. ALLSD/ALLIE 비가 크면
+#         주름이 감쇠 산물일 가능성 -> 논문에 그대로 기재해야 하는 수치 (지금까지 미측정 항목).
+#   해석 결과에는 영향이 없다 (출력 요청 전용).
+try:
+    my_model.HistoryOutputRequest(
+        name='H-Energy', createStepName='Step-GlobalTension',
+        variables=('ALLIE', 'ALLSD', 'ALLKE'))
+    print("[run_abaqus_new] H-Energy 추가: ALLIE/ALLSD/ALLKE (감쇠 가격 측정)")
+except Exception as _e:
+    print("[run_abaqus_new] (warning) H-Energy 추가 실패: %s" % _e)
+
 if fidelity == 'LF':
 
     # LF 는 좌굴모드를 쓰지 않는다(HF 분기가 같은 설계점에서 자체 실행) -> 비용 절감
@@ -763,7 +782,7 @@ elif fidelity == 'HF':
         stabilizationMagnitude=STAB,      # 코드 상수 STAB (기본 2e-4) 
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
-        adaptiveDampingRatio=0.05,
+        adaptiveDampingRatio=ADAPT_DAMP_MAX,
         initialInc=1e-4,
         minInc=1e-8,          # R-9: 1e-15 는 발산 시 증분 소진까지 수시간
         maxInc=0.1,
