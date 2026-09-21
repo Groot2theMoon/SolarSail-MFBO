@@ -202,7 +202,12 @@ def print_job_diag(job_name):
 
 sqrt2 = 1.414
 N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
-N_EIG_BUCKLE = 100 # A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
+# A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
+#   base state 가 부정정이면 요청 개수를 줄이는 것이 subspace 수렴에 유리하다.
+#   스윕: PowerShell  $env:MFBO_N_EIG_BUCKLE="10"   (기본 100)
+N_EIG_BUCKLE = int(os.environ.get("MFBO_N_EIG_BUCKLE", "100"))
+# subspace 반복의 기저 벡터 수. 스윕: $env:MFBO_VECTORS="60"   (기본 250)
+BUCKLE_VECTORS = int(os.environ.get("MFBO_VECTORS", "250"))
 
 MODEL_NAME = 'SailModel_Triangle'
 INSTANCE_NAME = 'MEMBRANE-1'
@@ -446,7 +451,7 @@ my_model.BuckleStep(
     previous='Step-GlobalTension',
     numEigen=N_EIG_BUCKLE,
     eigensolver=SUBSPACE,
-    vectors=250,
+    vectors=BUCKLE_VECTORS,      # A: 기본 8 -> 250 (MFBO_VECTORS 로 조정)
     maxIterations=5000,
 )
 # *IMPERFECTION, STEP=n 의 n 은 'Buckle_Analysis.fil 안의 스텝 번호'
