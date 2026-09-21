@@ -261,6 +261,13 @@ TRIG_MAG = float(os.environ.get("MFBO_TRIG_MAG", str(THICKNESS * 0.1)))
 TRIG_MARGIN = float(os.environ.get("MFBO_TRIG_MARGIN", "0.3"))
 # 0 이면 기하 trigger 없이 'u3 해제'만 한다 (trigger 민감도 비교용)
 TRIG_ON = os.environ.get("MFBO_TRIG_ON", "1") not in ("0", "", "false", "False")
+# 비선형 스텝(Trigger/ClampTension/Postbuckle)의 안정화 계수
+#   (DISSIPATED_ENERGY_FRACTION). 기본 2e-4 = Galhofo 참조값.
+#   불안정(주름) 분기에서 증분이 컷백으로도 복구되지 않고 죽으면 이 값을 키운다.
+#   예:  PowerShell  $env:MFBO_STAB="0.001"   (5배)   /   "0.01" (50배)
+#   검증: .sta 의 ALLSD/ALLIE (누적 소산/변형 에너지 비율) 가 작아야 물리적으로 유효.
+#   GlobalTension 스텝은 기존 2e-4 고정 (프리텐션 상태를 바꾸지 않기 위함).
+STAB = float(os.environ.get("MFBO_STAB", "0.0002"))
 
 
 # 하중 각도 (28.6도)
@@ -434,7 +441,7 @@ if fidelity == 'HF':
         name='Step-Trigger',
         previous='Step-GlobalTension',
         nlgeom=ON,
-        stabilizationMagnitude=0.0002,      # Galhofo Reference
+        stabilizationMagnitude=STAB,      # MFBO_STAB (기본 = Galhofo 2e-4)
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         initialInc=0.1, minInc=1e-8, maxInc=1.0, maxNumInc=50
     )
@@ -445,7 +452,7 @@ my_model.StaticStep(
     name='Step-ClampTension',
     previous=_PREV_CLAMP,
     nlgeom=ON,
-    stabilizationMagnitude=0.0002,      # Galhofo Reference
+    stabilizationMagnitude=STAB,      # MFBO_STAB (기본 = Galhofo 2e-4)
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
     initialInc=0.0001, minInc=1e-8, maxNumInc=1000    # P1-2: 1e-15 는 발산 시 증분 폭주
 )
@@ -657,7 +664,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-ClampTension',   # B안: ClampTension 을 체인에 유지
         nlgeom=ON, 
-        stabilizationMagnitude=0.0002,      # Galhofo 참조 2e-4 
+        stabilizationMagnitude=STAB,      # MFBO_STAB (기본 = Galhofo 참조 2e-4) 
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
         adaptiveDampingRatio=0.05,
