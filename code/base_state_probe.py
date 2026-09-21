@@ -7,6 +7,7 @@
   2) 면적 가중(요소 EVOL) 통계        — 요소 개수 비율이 아니라 실제 면적 비율
   3) 면내 평균응력 (S11+S22)/2 < 0 비율 — 단면점에 무관한 압축 지표
   4) 앵커 반력 (RF, instance 이름 포함 = 케이블 장력)
+  5) 면외변위 |u3| 통계      — 주름이 실제로 발생했는지 (B안 검증용)
 
 읽기 전용. 해석에는 전혀 영향을 주지 않는다.
 
@@ -22,6 +23,7 @@
 from __future__ import print_function
 import sys
 import math
+import os
 
 TARGET_STRESS = 7000.0   # Pa, R-13 목표 운용점(미검증)
 
@@ -171,6 +173,40 @@ def main():
                 print("       %.6g N  node %s  inst=%s  %s" % (mag, lab, inst, comp))
         except Exception as e:
             print("[R-13] RF 읽기 실패: %s" % e)
+
+        # 면외변위 |u3| 통계 — B안(trigger + 자연 주름)에서 '주름이 실제로 발생했는지'를
+        # 같은 로그로 확인하기 위한 것. A안/프리텐션 단계에서는 u3=0 고정이라 ~0 이 나온다.
+        try:
+            T_MEMB = float(os.environ.get('MFBO_T', '5.0e-6'))   # 막 두께 [m]
+            uf = frame.fieldOutputs['U']
+            u3 = []
+            inst_u3 = {}
+            for v in uf.values:
+                d = v.data
+                if len(d) < 3:
+                    continue
+                z = abs(float(d[2]))
+                u3.append(z)
+                try:
+                    inst = v.instance.name
+                except Exception:
+                    inst = ''
+                inst_u3.setdefault(inst, []).append(z)
+            if u3:
+                u3s = sorted(u3)
+                n3 = len(u3s)
+                f2 = sum(1 for x in u3s if x > 2.0 * T_MEMB) / float(n3)
+                f20 = sum(1 for x in u3s if x > 20.0 * T_MEMB) / float(n3)
+                print("[R-13] |u3| 통계 (n=%d): max=%.3e m  p99=%.3e  median=%.3e  "
+                      "|u3|>2t 비율=%.4f  |u3|>20t 비율=%.4f"
+                      % (n3, u3s[-1], u3s[int(0.99 * (n3 - 1))], u3s[n3 // 2], f2, f20))
+                for inst in sorted(inst_u3.keys()):
+                    arr = sorted(inst_u3[inst])
+                    print("       inst=%-18s n=%-6d max|u3|=%.3e m" % (inst, len(arr), arr[-1]))
+                print("[R-13] >>> 판정(주름): max|u3| 가 막 두께(%.1e m)의 수백배 이상이면 "
+                      "주름 발달 / ~0 이면 평탄(주름 미발생)" % T_MEMB)
+        except Exception as e:
+            print("[R-13] U(u3) 읽기 실패: %s" % e)
         return 0
     finally:
         try:
