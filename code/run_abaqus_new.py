@@ -164,6 +164,7 @@ def run_job_safely(job_name, model_name=None):
 
     # 잡 결과 핵심 줄을 콘솔에 직접 찍는다 (로그 일부만 붙여넣어도 원인 판별 가능)
     print_job_diag(job_name)
+    dump_job_diag(job_name)
     
     # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
     if job.status == ABORTED or not os.path.exists(odb_file):
@@ -189,6 +190,45 @@ def job_completed_ok(job_name):
                 if 'HAS COMPLETED SUCCESSFULLY' in f.read().upper():
                     return True
     return False
+
+
+def dump_job_diag(job_name):
+    """실패 진단에 필요한 것만 파일 하나로 모아 둔다 (사용자가 그 파일만 보내면 되도록).
+
+    내용: ① .sta 마지막 25줄 ② .msg/.dat 의 원인 판별 키 줄 ③ 완주 판정 결과.
+    파일: <RUN_DIR>/<job>.diag.txt  (예: aba/HF_Postbuckle.diag.txt)
+    """
+    out = ['===== 완주 판정 =====', 'job_completed_ok = %s' % job_completed_ok(job_name)]
+    sta = '%s.sta' % job_name
+    if os.path.exists(sta):
+        with open(sta, 'r', errors='replace') as f:
+            out.append('===== %s (마지막 25줄) =====' % sta)
+            out.extend(f.read().splitlines()[-25:])
+    KEYS = ('***ERROR', '***WARNING', 'TOO MANY', 'DISTORTION', 'NEGATIVE EIGENVALUE',
+            'HAS COMPLETED', 'NOT BEEN COMPLETED', 'EXCESSIVE', 'CUT BACK',
+            'CANNOT BE', 'ATTEMPT NUMBER  2')
+    for ext in ('msg', 'dat'):
+        fn = '%s.%s' % (job_name, ext)
+        if not os.path.exists(fn):
+            continue
+        out.append('===== %s (키 줄, 최대 500) =====' % fn)
+        n_hit = 0
+        with open(fn, 'r', errors='replace') as f:
+            for _ln, _line in enumerate(f, 1):
+                _u = _line.upper()
+                if any(_k in _u for _k in KEYS):
+                    out.append('%d: %s' % (_ln, _line.rstrip()))
+                    n_hit += 1
+                    if n_hit >= 500:
+                        out.append('... (500줄에서 절단)')
+                        break
+    if len(out) <= 2:
+        out.append('(no .sta/.msg/.dat found)')
+    dst = os.path.join(_RUN, '%s.diag.txt' % job_name)
+    with open(dst, 'w', errors='replace') as f:
+        f.write('\n'.join(out) + '\n')
+    print('[run_abaqus_new] 진단 요약 저장: %s (%d줄)' % (dst, len(out)))
+    return dst
 
 
 def print_job_diag(job_name):
