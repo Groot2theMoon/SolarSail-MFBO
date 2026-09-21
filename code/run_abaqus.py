@@ -152,8 +152,26 @@ def run_job_safely(job_name, model_name=None):
         print("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
         sys.exit(1)
         
+    if not job_completed_ok(job_name):
+        print("!!! WARNING: %s — .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 없음 "
+              "(중도 중단 의심; odb 존재만으로는 판정 불가 — R-12)" % job_name)
     print("Job %s completed successfully (Status: %s)." % (job_name, str(job.status)))
     return True
+
+def job_completed_ok(job_name):
+    """R-12: .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 가 있는지로 완주를 판정한다.
+
+    odb 파일 존재만 보면 '중도 중단된 odb'를 성공으로 오판한다
+    (2026-09-21 사례: HF_Postbuckle.odb 는 존재하나 Step-Postbuckle 프레임 0개).
+    """
+    for ext in ('sta', 'msg'):
+        fn = '%s.%s' % (job_name, ext)
+        if os.path.exists(fn):
+            with open(fn, 'r', errors='replace') as f:
+                if 'HAS COMPLETED SUCCESSFULLY' in f.read().upper():
+                    return True
+    return False
+
 
 def print_job_diag(job_name):
     """잡 산출물(.msg/.dat)의 원인 판별용 핵심 줄만 콘솔에 찍는다.
@@ -220,7 +238,15 @@ V_CR = clamp_coord_R(x_c)
 PRETENSION_SCALE = float(os.environ.get("MFBO_PRETENSION_SCALE", "10"))
 DISP_GLOBAL = 0.000005 * PRETENSION_SCALE
 CLAMP_PULL = DISP_GLOBAL * d_c
-PERTURBATION = 0.0005
+# 좌굴 스텝의 perturbation 변위 (K_delta 를 만드는 항).
+#   Abaqus 문서 §6.2.3: 좌굴 스텝의 nonzero prescribed BC 는 '증분 응력'에 기여하고,
+#   그 증분이 미분 초기응력 강성 K_delta 를 만든다. 크기 자체는 lambda 로 스케일되어
+#   사라지지만(CONVERGED 수에는 영향 없음), K_delta 가 K0 대비 너무 작으면 고유값 분리가
+#   나빠져 subspace 반복이 'EIGENVALUES CANNOT BE FOUND' 로 실패한다.
+#   성공한 run_abaqus_cable.py 는 같은 솔버 설정(numEigen=100/SUBSPACE/vectors=250)에서
+#   0.01 m 를 쓴다 -> 우리 5e-4 는 1/20 이다 (2026-09-21 좌굴 0모드의 유력 원인).
+#   스윕: PowerShell  $env:MFBO_PERT_MAG="0.001"
+PERTURBATION = float(os.environ.get("MFBO_PERT_MAG", "0.01"))
 CLAMP_PERT = PERTURBATION * d_c
 GLOBAL_FINAL = 0.0001 * PRETENSION_SCALE
 CLAMP_FINAL = GLOBAL_FINAL * d_c
