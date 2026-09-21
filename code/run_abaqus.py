@@ -678,6 +678,23 @@ elif fidelity == 'HF':
     except Exception as _eig_err:
         print("[N-6] coalescence record 실패(무시): %s" % _eig_err)
 
+    # [R-13 / 스파이크 10-0] base state(GlobalTension 말단) 응력·반력 측정
+    #   좌굴 성공/실패와 무관하게 Buckle_Analysis.odb 의 GlobalTension 프레임에서 읽는다.
+    #   -> "프리텐션 운용점이 물리적인가"를 실측으로 답하기 위한 것 (미해결 최우선 1건).
+    #   끄려면 환경변수 MFBO_BASE_PROBE=0
+    try:
+        if os.environ.get('MFBO_BASE_PROBE', '1') != '0':
+            _probe = os.path.join(_HERE, 'base_state_probe.py')
+            if os.path.exists(_probe) and os.path.exists(BUCKLE_ODB):
+                _pcmd = ('abaqus python "%s" "%s" Step-GlobalTension'
+                         % (_probe, BUCKLE_ODB))
+                subprocess.call(_pcmd, shell=True)
+            else:
+                print("[R-13] base state 측정 건너뜀 (probe=%s, odb=%s)"
+                      % (os.path.exists(_probe), os.path.exists(BUCKLE_ODB)))
+    except Exception as _probe_err:
+        print("[R-13] base state 측정 실패(무시): %s" % _probe_err)
+
     # 기존 Step 정리: Post-buckling은 GlobalTension 직후에서 시작하며,
     # 중간 단계(ClampTension)를 건너뛰고 바로 최종 하중으로 Ramping함
     if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
