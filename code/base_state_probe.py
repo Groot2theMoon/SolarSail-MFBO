@@ -177,7 +177,7 @@ def main():
         # 면외변위 |u3| 통계 — B안(trigger + 자연 주름)에서 '주름이 실제로 발생했는지'를
         # 같은 로그로 확인하기 위한 것. A안/프리텐션 단계에서는 u3=0 고정이라 ~0 이 나온다.
         try:
-            T_MEMB = float(os.environ.get('MFBO_T', '5.0e-6'))   # 막 두께 [m]
+            T_MEMB = 5.0e-6                        # 막 두께 [m] (코드 상수)
             uf = frame.fieldOutputs['U']
             u3 = []
             inst_u3 = {}

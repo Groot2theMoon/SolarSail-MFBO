@@ -41,8 +41,10 @@ CHECKPOINT_FILE = "mfbo_checkpoint.pt"
 # 실행 위치(CWD)와 무관하게 run_abaqus.py / 산출물을 찾기 위한 기준 디렉터리
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # Abaqus 산출물 전용 디렉터리 (odb·fil·msg·sta·inp·rpy 등이 code/ 를 어지럽히지 않도록)
-# 이름을 바꾸려면:  PowerShell  $env:MFBO_RUN_DIR="D:\경로"  (기본값: code/aba)
-_RUN = os.path.abspath(os.environ.get("MFBO_RUN_DIR") or os.path.join(_HERE, "aba"))
+# 코드 상수: 산출물 디렉터리 이름. run_abaqus*.py 의 RUN_DIR_NAME 과 같아야 한다.
+RUN_DIR_NAME = "aba"
+MOCK = False                     # True = Abaqus 없이 가짜 RESULTS 로 루프 점검
+_RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_HERE)      # 체크포인트 등 MFBO 자체 산출물은 code/ 에 고정
 
@@ -91,7 +93,7 @@ def get_abaqus(new_x, new_s):
     mode_str = "HF" if new_s > 0.5 else "LF"
     x1, x2 = new_x[0], new_x[1]
     # M-15: Abaqus 없이 배관을 검증하는 mock oracle (MFBO_MOCK=1 일 때만)
-    if os.environ.get("MFBO_MOCK") == "1":
+    if MOCK:
         import numpy as _np
         from eval_currin_mf import evaluate_currin_mf
         _lf = float(_np.ravel(evaluate_currin_mf([[x1, x2]], 0.0))[0])
@@ -116,7 +118,7 @@ def get_abaqus(new_x, new_s):
         print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
         subprocess.run(f'abaqus cae noGUI="{_script}" -- LF {x1} {x2}',
                        shell=True, check=False, capture_output=True, text=True, cwd=_RUN,
-                       env=dict(os.environ, MFBO_RUN_DIR=_RUN, MFBO_CODE_DIR=_HERE))
+                       )
         if not os.path.exists(_lf_odb):
             print("!!! HF prerequisite LF run produced no LF_Analysis.odb - aborting this HF point.")
             return FAIL, FAIL
@@ -131,7 +133,7 @@ def get_abaqus(new_x, new_s):
             capture_output=True, 
             text=True,
             cwd=_RUN,
-            env=dict(os.environ, MFBO_RUN_DIR=_RUN, MFBO_CODE_DIR=_HERE)   # Abaqus 작업 디렉터리 고정
+            # env 주입 없음: 값은 run_abaqus.py 안의 코드 상수로 고정되어 있다.
         )
         
         output_lines = result.stdout.splitlines()

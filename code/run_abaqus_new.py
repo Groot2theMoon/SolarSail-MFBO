@@ -59,9 +59,6 @@ import numpy as np
 def _resolve_here():
     def _ok(d):
         return bool(d) and os.path.exists(os.path.join(d, "eval_abaqus.py"))
-    env_dir = os.environ.get("MFBO_CODE_DIR")
-    if _ok(env_dir):
-        return os.path.abspath(env_dir)
     try:
         d = os.path.dirname(os.path.abspath(__file__))
         if _ok(d):
@@ -75,6 +72,8 @@ def _resolve_here():
     except Exception:
         pass
     cand.append(os.getcwd())
+    # cwd = code/aba (mfbo.py 구동 시) 이면 그 부모가 code 다.
+    cand.append(os.path.dirname(os.getcwd()))
     cand.append(os.path.join(os.getcwd(), "code"))
     for c in cand:
         if _ok(c):
@@ -84,8 +83,15 @@ def _resolve_here():
 
 _HERE = _resolve_here()
 # Abaqus 작업 디렉터리(=산출물 위치) = code/aba.
-# mfbo.py 가 MFBO_RUN_DIR 를 넘겨주면 그 값을 그대로 사용 (직접 실행해도 동일하게 동작)
-_RUN = os.path.abspath(os.environ.get("MFBO_RUN_DIR") or os.path.join(_HERE, "aba"))
+# ---- 코드 상수 (2026-09-21: 환경변수 전부 제거, 값은 이 파일에 고정) ----
+# 산출물 디렉터리 이름. mfbo.py 의 RUN_DIR_NAME 과 반드시 같은 값이어야 한다.
+RUN_DIR_NAME = "aba"
+# Abaqus 병렬 스레드/도메인 수 (1 = 단일 CPU, 4 = 대략 1.5~2.5배 빠름).
+#   라이선스 토큰이 없으면 잡이 라이선스 오류로 즉시 죽는다 -> 그때는 1 로.
+NUMCPUS = 4
+BASE_PROBE = True                # 각 잡 직후 base_state_probe.py (R-13) 자동 실행
+# ---- 코드 상수 끝 ----
+_RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_RUN)
 print("[run_abaqus_new] _HERE = %s" % _HERE)
@@ -143,9 +149,9 @@ def run_job_safely(job_name, model_name=None):
     # 병렬 실행 (속도). 기본 1 = 기존과 완전히 동일한 거동.
     #   단일 CPU 로 373 증분/30분 수준이면 4 스레드로 대략 1.5~2.5배 단축 여지가 있다.
     #   주의: 라이선스 토큰이 부족하면 잡이 라이선스 오류로 죽는다 -> 그때는 1 로 되돌린다.
-    #   예:  PowerShell  $env:MFBO_NUMCPUS="4"
-    _ncp = int(float(os.environ.get('MFBO_NUMCPUS', '1')))
-    print("[run_abaqus] numCpus=%d numDomains=%d (MFBO_NUMCPUS)" % (_ncp, _ncp))
+    #   라이선스 토큰 오류가 나면 위 NUMCPUS 상수를 1 로 바꾼다.
+    _ncp = NUMCPUS
+    print("[run_abaqus_new] numCpus=%d numDomains=%d (코드 상수 NUMCPUS)" % (_ncp, _ncp))
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
     print("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
@@ -244,26 +250,26 @@ V_CR = clamp_coord_R(x_c)
 # ---- 사전 장력(prestrain) 캘리브레이션 ----
 # 버클 base state(Step-ClampTension)의 장력을 키워 시스템행렬 부정정(음수 고유값)을 해소.
 # 1.0 = 기존값.  조정:  PowerShell  $env:MFBO_PRETENSION_SCALE="30"
-PRETENSION_SCALE = float(os.environ.get("MFBO_PRETENSION_SCALE", "10"))
+PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
 # R-13 실측(2026-09-21): PRETENSION_SCALE=10 -> 평균 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배.
 #   운용점을 목표에 맞추려면 약 33배(= DISP_GLOBAL 165um)가 필요하다.
 #   단 PRETENSION_SCALE 는 최종 하중까지 함께 키우므로(포스트버클 변위 1mm -> 3.3mm),
 #   운용점만 따로 맞추려면 절대값 노브 MFBO_DISP_GLOBAL / MFBO_GLOBAL_FINAL 을 쓴다.
-DISP_GLOBAL = float(os.environ.get("MFBO_DISP_GLOBAL", 0.000005 * PRETENSION_SCALE))
+DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
 CLAMP_PULL = DISP_GLOBAL * d_c
 # (B안) Buckle perturbation 상수 없음 (좌굴 스텝 자체가 없다)
-GLOBAL_FINAL = float(os.environ.get("MFBO_GLOBAL_FINAL", 0.0001 * PRETENSION_SCALE))
+GLOBAL_FINAL = 0.0001 * PRETENSION_SCALE     # 최종 하중: 코너 당김 1e-3 m
 CLAMP_FINAL = GLOBAL_FINAL * d_c
 # ---- B안 trigger 파라미터 ----
 # 기하 trigger 진폭. 기본 = 막 두께의 10% (Galhofo 관행 0.1t)
-TRIG_MAG = float(os.environ.get("MFBO_TRIG_MAG", str(THICKNESS * 0.1)))
+TRIG_MAG = THICKNESS * 0.1       # 0.1t = 5e-7 m (Galhofo 관행)
 # trigger 를 적용할 '내부' 노드의 경계 여유 [m]. 요소 크기 0.1 m -> 3요소 여유
-TRIG_MARGIN = float(os.environ.get("MFBO_TRIG_MARGIN", "0.3"))
+TRIG_MARGIN = 0.3                # 스케일 밖 값이면 폭의 5% 로 자동 대체된다
 # 0 이면 기하 trigger 없이 u3 해제만 한다 (trigger 민감도 비교용).
 #   2026-09-21: 다음 실행 기준값으로 0 을 기본에 둔다 -> 안정화(STAB)만 바꿔 주름 분기를
 #   넘는지 보는 한 변수 대조 런. seed 까지 켜는 런(민감도/생산)은
 #   $env:MFBO_TRIG_ON="1" 로 덮어쓴다. 실행 첫 줄이 실제 값을 항상 찍는다.
-TRIG_ON = os.environ.get("MFBO_TRIG_ON", "0") not in ("0", "", "false", "False")
+TRIG_ON = False                  # seed 없이 안정화만 바꾸는 '한 변수' 대조 런. seed 런은 True 로.
 # 비선형 스텝(Trigger/ClampTension/Postbuckle)의 안정화 계수
 #   2026-09-21 실측: 2e-4(Galhofo 참조값) 로는 Step-ClampTension 이 주름 발생 직후
 #   증분 444 에서 TOO MANY ATTEMPTS 로 죽었다 (증분 2.7e-4 -> 2.1e-6, 100배 축소에도
@@ -273,7 +279,7 @@ TRIG_ON = os.environ.get("MFBO_TRIG_ON", "0") not in ("0", "", "false", "False")
 #   예:  PowerShell  $env:MFBO_STAB="0.001"   (5배)   /   "0.01" (50배)
 #   검증: .sta 의 ALLSD/ALLIE (누적 소산/변형 에너지 비율) 가 작아야 물리적으로 유효.
 #   GlobalTension 스텝은 기존 2e-4 고정 (프리텐션 상태를 바꾸지 않기 위함).
-STAB = float(os.environ.get("MFBO_STAB", "0.001"))
+STAB = 0.001                     # 2e-4 는 주름 발생 직후 분기에서 실패 (2026-09-21 실측)
 print("[run_abaqus_new] STAB=%g (MFBO_STAB) / TRIG_ON=%s / TRIG_MAG=%.3e m / TRIG_MARGIN=%.3g"
       % (STAB, TRIG_ON, TRIG_MAG, TRIG_MARGIN))
 
@@ -399,7 +405,7 @@ rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5)
 # B안은 클램프를 유지한다 (설계변수 x_c/d_c 가 하중 경로로 들어가는 통로).
 # 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
-SIGMA0 = float(os.environ.get('MFBO_SIGMA0', '500.0'))
+SIGMA0 = 500.0                   # 수렴 보조용 초기응력 [Pa]
 rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=0.2)
 rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=0.2)
 
@@ -743,7 +749,7 @@ elif fidelity == 'HF':
     #   Step-ClampTension  : 클램프 당김 + 주름 발생 이후 = B안의 실제 '결함 시작 상태'
     #   끄려면 환경변수 MFBO_BASE_PROBE=0
     try:
-        if os.environ.get('MFBO_BASE_PROBE', '1') != '0':
+        if BASE_PROBE:
             _probe = os.path.join(_HERE, 'base_state_probe.py')
             if os.path.exists(_probe) and os.path.exists(HF_ODB):
                 #   Step-Trigger: u3 를 처음 푼 스텝 -> 'trigger 만으로 주름이 났는지' 판정

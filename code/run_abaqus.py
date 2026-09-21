@@ -54,9 +54,6 @@ import numpy as np
 def _resolve_here():
     def _ok(d):
         return bool(d) and os.path.exists(os.path.join(d, "eval_abaqus.py"))
-    env_dir = os.environ.get("MFBO_CODE_DIR")
-    if _ok(env_dir):
-        return os.path.abspath(env_dir)
     try:
         d = os.path.dirname(os.path.abspath(__file__))
         if _ok(d):
@@ -70,6 +67,8 @@ def _resolve_here():
     except Exception:
         pass
     cand.append(os.getcwd())
+    # cwd = code/aba (mfbo.py 구동 시) 이면 그 부모가 code 다.
+    cand.append(os.path.dirname(os.getcwd()))
     cand.append(os.path.join(os.getcwd(), "code"))
     for c in cand:
         if _ok(c):
@@ -79,8 +78,16 @@ def _resolve_here():
 
 _HERE = _resolve_here()
 # Abaqus 작업 디렉터리(=산출물 위치) = code/aba.
-# mfbo.py 가 MFBO_RUN_DIR 를 넘겨주면 그 값을 그대로 사용 (직접 실행해도 동일하게 동작)
-_RUN = os.path.abspath(os.environ.get("MFBO_RUN_DIR") or os.path.join(_HERE, "aba"))
+# ---- 코드 상수 (2026-09-21: 환경변수 전부 제거, 값은 이 파일에 고정) ----
+# 산출물 디렉터리 이름. mfbo.py 의 RUN_DIR_NAME 과 반드시 같은 값이어야 한다.
+RUN_DIR_NAME = "aba"
+# Abaqus 병렬 스레드/도메인 수 (1 = 단일 CPU, 4 = 대략 1.5~2.5배 빠름).
+#   라이선스 토큰이 없으면 잡이 라이선스 오류로 즉시 죽는다 -> 그때는 1 로.
+NUMCPUS = 4
+BASE_PROBE = True                # 각 잡 직후 base_state_probe.py (R-13) 자동 실행
+EIG_RECORD = True                # 좌굴 고유치 이력 기록 (coalescence_check.py record)
+# ---- 코드 상수 끝 ----
+_RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_RUN)
 print("[run_abaqus] _HERE = %s" % _HERE)
@@ -138,9 +145,9 @@ def run_job_safely(job_name, model_name=None):
     # 병렬 실행 (속도). 기본 1 = 기존과 완전히 동일한 거동.
     #   단일 CPU 로 373 증분/30분 수준이면 4 스레드로 대략 1.5~2.5배 단축 여지가 있다.
     #   주의: 라이선스 토큰이 부족하면 잡이 라이선스 오류로 죽는다 -> 그때는 1 로 되돌린다.
-    #   예:  PowerShell  $env:MFBO_NUMCPUS="4"
-    _ncp = int(float(os.environ.get('MFBO_NUMCPUS', '1')))
-    print("[run_abaqus] numCpus=%d numDomains=%d (MFBO_NUMCPUS)" % (_ncp, _ncp))
+    #   라이선스 토큰 오류가 나면 위 NUMCPUS 상수를 1 로 바꾼다.
+    _ncp = NUMCPUS
+    print("[run_abaqus] numCpus=%d numDomains=%d (코드 상수 NUMCPUS)" % (_ncp, _ncp))
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
     print("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
@@ -211,9 +218,9 @@ N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE
 # A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
 #   base state 가 부정정이면 요청 개수를 줄이는 것이 subspace 수렴에 유리하다.
 #   스윕: PowerShell  $env:MFBO_N_EIG_BUCKLE="10"   (기본 100)
-N_EIG_BUCKLE = int(os.environ.get("MFBO_N_EIG_BUCKLE", "100"))
+N_EIG_BUCKLE = 100
 # subspace 반복의 기저 벡터 수. 스윕: $env:MFBO_VECTORS="60"   (기본 250)
-BUCKLE_VECTORS = int(os.environ.get("MFBO_VECTORS", "250"))
+BUCKLE_VECTORS = 250
 
 MODEL_NAME = 'SailModel_Triangle'
 INSTANCE_NAME = 'MEMBRANE-1'
@@ -246,12 +253,12 @@ V_CR = clamp_coord_R(x_c)
 # ---- 사전 장력(prestrain) 캘리브레이션 ----
 # 버클 base state(Step-ClampTension)의 장력을 키워 시스템행렬 부정정(음수 고유값)을 해소.
 # 1.0 = 기존값.  조정:  PowerShell  $env:MFBO_PRETENSION_SCALE="30"
-PRETENSION_SCALE = float(os.environ.get("MFBO_PRETENSION_SCALE", "10"))
+PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
 # R-13 실측(2026-09-21): PRETENSION_SCALE=10 -> 평균 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배.
 #   운용점을 목표에 맞추려면 약 33배(= DISP_GLOBAL 165um)가 필요하다.
 #   단 PRETENSION_SCALE 는 최종 하중까지 함께 키우므로(포스트버클 변위 1mm -> 3.3mm),
 #   운용점만 따로 맞추려면 절대값 노브 MFBO_DISP_GLOBAL / MFBO_GLOBAL_FINAL 을 쓴다.
-DISP_GLOBAL = float(os.environ.get("MFBO_DISP_GLOBAL", 0.000005 * PRETENSION_SCALE))
+DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
 CLAMP_PULL = DISP_GLOBAL * d_c
 # 좌굴 스텝의 perturbation 변위 (K_delta 를 만드는 항).
 #   Abaqus 문서 §6.2.3: 좌굴 스텝의 nonzero prescribed BC 는 '증분 응력'에 기여하고,
@@ -261,9 +268,9 @@ CLAMP_PULL = DISP_GLOBAL * d_c
 #   성공한 run_abaqus_cable.py 는 같은 솔버 설정(numEigen=100/SUBSPACE/vectors=250)에서
 #   0.01 m 를 쓴다 -> 우리 5e-4 는 1/20 이다 (2026-09-21 좌굴 0모드의 유력 원인).
 #   스윕: PowerShell  $env:MFBO_PERT_MAG="0.001"
-PERTURBATION = float(os.environ.get("MFBO_PERT_MAG", "0.01"))
+PERTURBATION = 0.01
 CLAMP_PERT = PERTURBATION * d_c
-GLOBAL_FINAL = float(os.environ.get("MFBO_GLOBAL_FINAL", 0.0001 * PRETENSION_SCALE))
+GLOBAL_FINAL = 0.0001 * PRETENSION_SCALE     # 최종 하중: 코너 당김 1e-3 m
 CLAMP_FINAL = GLOBAL_FINAL * d_c
 
 
@@ -390,9 +397,9 @@ rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 #   run_abaqus_cable.py(성공)는 클램프가 없다. 우리만 클램프가 base state 하중의 33%를
 #   받아 sigma2<0 영역(21.5%)을 만들고, 그 때문에 좌굴 고유값 추출이 실패한다는 가설을
 #   클램프만 제거해 직접 검증한다.
-NO_CLAMP = os.environ.get('MFBO_NO_CLAMP', '0') not in ('0', '', 'false', 'False')
+NO_CLAMP = False                 # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
 # 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
-SIGMA0 = float(os.environ.get('MFBO_SIGMA0', '500.0'))
+SIGMA0 = 500.0                   # 수렴 보조용 초기응력 [Pa]
 if NO_CLAMP:
     print("[run_abaqus] MFBO_NO_CLAMP=1 : 클램프(cable_CL/CR + 강체패치 + BC) 없이 모델링 (대조 실험)")
     rp_cl_obj = rp_cr_obj = rp_cl_reg = rp_cr_reg = None
@@ -473,7 +480,7 @@ if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
 #    강성 조건수가 극단적이어서 SUBSPACE(작은 모델·다수 모드용)로는 100개 모드 추출이
 #    'EIGENVALUES CANNOT BE FOUND' (0 CONVERGED) 로 실패했다.
 #    SUBSPACE 로 강제하려면:  $env:MFBO_EIGENSOLVER="SUBSPACE"
-_EIGENSOLVER = os.environ.get("MFBO_EIGENSOLVER", "LANCZOS").strip().upper()
+_EIGENSOLVER = "LANCZOS"         # "SUBSPACE" 로 바꾸면 좌굴 추출 재시도
 print("[run_abaqus] buckle eigensolver=%s numEigen=%d vectors=%s"
       % (_EIGENSOLVER, N_EIG_BUCKLE, (BUCKLE_VECTORS if _EIGENSOLVER != 'LANCZOS' else 'n/a')))
 if _EIGENSOLVER == 'LANCZOS':
@@ -713,7 +720,7 @@ elif fidelity == 'HF':
     #   - 기록 전용: 실패해도 해석에는 전혀 영향을 주지 않는다 (예외 전부 삼킴).
     #   - 끄려면 환경변수 MFBO_EIG_RECORD=0
     try:
-        if os.environ.get('MFBO_EIG_RECORD', '1') != '0':
+        if EIG_RECORD:
             _rec = os.path.join(_HERE, 'coalescence_check.py')
             _dat = os.path.join(os.getcwd(), 'Buckle_Analysis.dat')
             _msg = os.path.join(os.getcwd(), 'Buckle_Analysis.msg')
@@ -734,7 +741,7 @@ elif fidelity == 'HF':
     #   -> "프리텐션 운용점이 물리적인가"를 실측으로 답하기 위한 것 (미해결 최우선 1건).
     #   끄려면 환경변수 MFBO_BASE_PROBE=0
     try:
-        if os.environ.get('MFBO_BASE_PROBE', '1') != '0':
+        if BASE_PROBE:
             _probe = os.path.join(_HERE, 'base_state_probe.py')
             if os.path.exists(_probe) and os.path.exists(BUCKLE_ODB):
                 _pcmd = ('abaqus python "%s" "%s" Step-GlobalTension'
