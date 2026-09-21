@@ -473,7 +473,7 @@ my_model.StaticStep(
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
     continueDampingFactors=False,     # 스텝마다 감쇠 초기화
     adaptiveDampingRatio=0.05,        # 적응 감쇠: 수렴이 어려울 때만 Abaqus 가 자동으로 키운다
-    initialInc=0.0001, minInc=1e-8, maxNumInc=5000    # 2026-09-21: 1000 은 소진됨 (step 71.85% 에서 중단)
+    initialInc=0.0001, minInc=1e-8, maxNumInc=20000   # 2026-09-21: 1000 소진 -> 말단 속도 1.25e-4/inc 기준 ~2300 필요
 )
 
 # Step Buckle / 좌굴 고유모드 추출 없음 (B안).
@@ -720,7 +720,7 @@ elif fidelity == 'HF':
         initialInc=1e-4,
         minInc=1e-8,          # R-9: 1e-15 는 발산 시 증분 소진까지 수시간
         maxInc=0.1,
-        maxNumInc=5000        # R-9 / 2026-09-21 상향 (ClampTension 이 증분 1000 예산으로 중단)
+        maxNumInc=20000       # R-9 / 2026-09-21: 20배 램프 -> 예산 선제 확보 (물리 불변, 완주만 결정)
     )
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 
