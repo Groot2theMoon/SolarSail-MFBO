@@ -419,12 +419,7 @@ def connect_cable(name, part, coord, vector_dir):
     return region_start, region_end
 
 p.seedPart(size=BASE/200.0, deviationFactor=0.1) # 약 1만개
-# 2026-09-21: MEDIAL_AXIS -> ADVANCING_FRONT.
-#   근거(실측): MEDIAL_AXIS 로 만든 메쉬에서 .dat 가 '1711 elements are distorted
-#   (triangular quality measure is bad)' 를 보고했고, 'Adjusted nodes = NO' 즉 tie 조정이
-#   아니라 **초기 메쉬 결함**이었다. 해당 요소들은 MEMBRANE-1 의 연속 라벨 대역(4406~4507).
-#   ADVANCING_FRONT 는 자유 메쉬에서 삼각형 품질이 크게 좋아진다 (알고리즘만 변경, 물리 불변).
-p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=ADVANCING_FRONT)
+p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
 # S4R-> S4 (cable 변형과 동일)
 elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
 elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)  
