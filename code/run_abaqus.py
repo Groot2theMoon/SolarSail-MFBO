@@ -442,7 +442,7 @@ my_model.BuckleStep(
     # (B) base state = '클램프 없는(GlobalTension 말단)' 상태.
     #   ClampTension 말단을 base 로 쓰면 시스템행렬이 부정정(음수 고유값 수천 개)이 되어
     #   좌굴모드 0개 -> 임퍼펙션 seed 없음 -> 포스트버클 불가.
-    #   성공한 cable 변형(run_abaqus_cable.py)과 같은 base state 다.
+    #   어떻게 잘 하면 가능할 것 같기도 한데...과연?
     previous='Step-GlobalTension',
     numEigen=N_EIG_BUCKLE,
     eigensolver=SUBSPACE,
@@ -451,19 +451,12 @@ my_model.BuckleStep(
 )
 # *IMPERFECTION, STEP=n 의 n 은 'Buckle_Analysis.fil 안의 스텝 번호'
 # (현재 2 = GlobalTension/Buckle/ClampTension). 스텝 순서가 바뀌어도 자동 추종.
-#   n 은 'Initial 을 제외한' 1-based 스텝 번호다 (len() 은 Initial 포함해 1 크다 — NEW-1).
+#   n 은 'Initial 을 제외한' 1-based 스텝 번호 (len() 은 Initial 포함해 1 크다 — NEW-1).
 _steps_in_order = [s for s in my_model.steps.keys() if s != 'Initial']
 _BUCKLE_STEP_NO = _steps_in_order.index('Step-Buckle') + 1
 print("[run_abaqus] steps=%s  _BUCKLE_STEP_NO=%d" % (_steps_in_order, _BUCKLE_STEP_NO))
 
-# *IMPERFECTION, FILE= 은 results file(.fil) 을 읽는다 -> 좌굴 모드를 .fil 에 기록해야
-# 임퍼펙션이 실제로 주입된다 (미요청 시 조용히 무시됨)
-#
-# NEW-2/결함 A: 그 *NODE FILE 삽입은 '모델이 완성된 뒤'(아래 좌굴 잡 준비 절)로 옮겼다.
-#   여기서 넣으면 (a) 이후에 만드는 초기응력/BC 가 좌굴용 모델 복사본에 안 들어가고,
-#   (b) Step-Buckle 을 삭제하는 포스트버클 잡에서 키워드가 스텝 밖으로 밀려나
-#       'the keyword is misplaced' 로 입력처리 직사한다.
-# ----
+# *IMPERFECTION, FILE= 은 results file(.fil) 을 읽는다 -> 좌굴 모드를 .fil 에 기록해야 임퍼펙션이 실제로 주입된다 (미요청 시 조용히 무시됨)
 
 my_model.Stress(
     name='Initial_Stiffness',
@@ -561,7 +554,7 @@ LF_ODB = 'LF_Analysis.odb'
 HF_ODB = 'HF_Postbuckle.odb'
 
 cmd = ""
-# ── 좌굴 잡 준비 (모델 완성 후) ─────────────────────────────────────────────────────────────
+# 버클링 준비 (모델 완성 후)
 # R-7: *IMPERFECTION, FILE= 은 results file(.fil) 을 읽으므로 좌굴모드를 .fil 에 기록해야 한다.
 # 결함 A/NEW-2: 그 *NODE FILE 은 Step-Buckle 안에서만 유효한데 포스트버클 잡은 그 스텝을
 #   삭제하므로 키워드가 스텝 밖으로 밀려나 'the keyword is misplaced' 로 입력처리 직사한다.
@@ -591,7 +584,6 @@ if fidelity == 'HF':
             if _b.strip().upper().startswith(('*BUCKLE', '*FREQUENCY')):
                 my_model.keywordBlock.insert(_i + 1, _noderef)
                 break
-# ──────────────────────────────────────────────────────────────────────────────
 
 if fidelity == 'LF':
 
