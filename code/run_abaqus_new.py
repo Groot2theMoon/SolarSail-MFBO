@@ -543,18 +543,48 @@ if fidelity == 'HF':
     # ---- trigger : 내부 노드를 +-TRIG_MAG 로 교란 (광대역 seed) ----
     #   자유메쉬 노드 순서대로 홀/짝을 나눠 부호를 교대시킨다 -> 여러 파장이 섞인 seed.
     #   모서리/꼭짓점 노드는 제외한다(BC_Edges_Only_Z, 케이블 RP 와 충돌 방지).
+    #   [FIX 2026-09-21] 이전 필터는 모델 스케일과 맞지 않아 내부 노드가 0개였다:
+    #     조건  y > TRIG_MARGIN(0.3)  /  y < 20 - x - 0.3  vs  실제 노드 범위
+    #     x in [-0.075, 0.075], y in [-0.041, 0.041]  ->  교집합 공집합.
+    #   빈 노드셋에 BC 를 만들면 Abaqus 는 오류 없이 '아무 일도 하지 않는다'
+    #   -> trigger 가 조용히 무효였고(프로브 실측 max|u3| = 5.8e-16 m), 주름은 반올림
+    #      노이즈가 seed 역할을 해서 났다(진폭 131.6 um = 26t).
+    #   -> 하드코딩 대신 노드 좌표 범위로 삼각형 3변을 복원해 '변에서 MG 이상 떨어진' 노드를 쓴다.
     _mn = inst_memb.nodes
+    _allc = [n.coordinates for n in _mn]
+    _xmin = min(c[0] for c in _allc); _xmax = max(c[0] for c in _allc)
+    _ymin = min(c[1] for c in _allc); _ymax = max(c[1] for c in _allc)
+    _apex = max(_allc, key=lambda c: c[1])          # 꼭짓점 = y 최대 노드
+    _W = _xmax - _xmin
+    # TRIG_MARGIN 이 스케일 범위 안이면 그 값, 아니면 폭의 5% 로 자동 스케일
+    _MG = TRIG_MARGIN if (0.0 < TRIG_MARGIN < 0.2 * _W) else 0.05 * _W
+
+    def _dist_seg(px, py, ax, ay, bx, by):
+        _dx, _dy = bx - ax, by - ay
+        _L2 = _dx * _dx + _dy * _dy
+        _t = 0.0 if _L2 == 0.0 else max(0.0, min(1.0, ((px - ax) * _dx + (py - ay) * _dy) / _L2))
+        _qx, _qy = ax + _t * _dx, ay + _t * _dy
+        return ((px - _qx) ** 2 + (py - _qy) ** 2) ** 0.5
+
     _n_int = []
     for _i in range(len(_mn)):
         _c = _mn[_i].coordinates
-        if (_c[1] > TRIG_MARGIN and _c[1] < _c[0] - TRIG_MARGIN
-                and _c[1] < BASE - _c[0] - TRIG_MARGIN):
-            _n_int.append(_mn[_i])
-    print("[run_abaqus_new] trigger 내부 노드 %d / 전체 %d (margin=%.2f m, mag=%.3e m, on=%s)"
-          % (len(_n_int), len(_mn), TRIG_MARGIN, TRIG_MAG, TRIG_ON))
-    if len(_n_int) < 50:
-        print("!!! WARNING: trigger 노드가 너무 적습니다 (%d). MFBO_TRIG_MARGIN 를 줄이세요."
-              % len(_n_int))
+        if (_c[1] - _ymin) < _MG:
+            continue
+        if _dist_seg(_c[0], _c[1], _xmin, _ymin, _apex[0], _apex[1]) < _MG:
+            continue
+        if _dist_seg(_c[0], _c[1], _xmax, _ymin, _apex[0], _apex[1]) < _MG:
+            continue
+        _n_int.append(_mn[_i])
+    print("[run_abaqus_new] 노드 범위 x[%.4f, %.4f] y[%.4f, %.4f] apex=(%.4f, %.4f) margin=%.4g m"
+          % (_xmin, _xmax, _ymin, _ymax, _apex[0], _apex[1], _MG))
+    print("[run_abaqus_new] trigger 내부 노드 %d / 전체 %d (mag=%.3e m, on=%s)"
+          % (len(_n_int), len(_mn), TRIG_MAG, TRIG_ON))
+    if TRIG_ON and len(_n_int) < 50:
+        raise RuntimeError(
+            "trigger 내부 노드가 %d개뿐입니다 (전체 %d). 빈/과소 노드셋에 BC 를 만들면 "
+            "trigger 가 조용히 무효가 됩니다 - 좌표 필터와 MFBO_TRIG_MARGIN 을 확인하세요."
+            % (len(_n_int), len(_mn)))
     _TRIG_OK = False
     try:
         a.Set(name='NS_TRIG_P', nodes=_n_int[0::2])
