@@ -380,8 +380,19 @@ rp2_obj, rp2_reg = create_rigid_patch('Right', V2, radius=0.2)
 rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 
 # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5)
-rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=0.2)
-rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=0.2)
+# [대조 실험] MFBO_NO_CLAMP=1 이면 클램프(강체패치 + cable_CL/CR + BC)를 아예 만들지 않는다.
+#   run_abaqus_cable.py(성공)는 클램프가 없다. 우리만 클램프가 base state 하중의 33%를
+#   받아 sigma2<0 영역(21.5%)을 만들고, 그 때문에 좌굴 고유값 추출이 실패한다는 가설을
+#   클램프만 제거해 직접 검증한다.
+NO_CLAMP = os.environ.get('MFBO_NO_CLAMP', '0') not in ('0', '', 'false', 'False')
+# 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
+SIGMA0 = float(os.environ.get('MFBO_SIGMA0', '500.0'))
+if NO_CLAMP:
+    print("[run_abaqus] MFBO_NO_CLAMP=1 : 클램프(cable_CL/CR + 강체패치 + BC) 없이 모델링 (대조 실험)")
+    rp_cl_obj = rp_cr_obj = rp_cl_reg = rp_cr_reg = None
+else:
+    rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=0.2)
+    rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=0.2)
 
 # 케이블 연결
 # V1(Top): 위로 (0, 1)
@@ -391,23 +402,28 @@ start_c2, end_c2 = connect_cable('Cable_Right', p_cable_bot_r, V2, (cos_val, -si
 # V3(Left): 좌하향 (-cos, -sin)
 start_c3, end_c3 = connect_cable('Cable_Left', p_cable_bot_l, V3, (-cos_val, -sin_val, 0.0))
 # V_CL : 좌상향 (-1, 1)
-start_cl, end_cl = connect_cable('cable_CL', p_cable_cl, V_CL, (-1.0, 1.0, 0.0))
-# V_CR : 우상향 (1, 1)
-start_cr, end_cr = connect_cable('cable_CR', p_cable_cr, V_CR, (1.0, 1.0, 0.0))
+if NO_CLAMP:
+    start_cl = end_cl = start_cr = end_cr = None
+else:
+    start_cl, end_cl = connect_cable('cable_CL', p_cable_cl, V_CL, (-1.0, 1.0, 0.0))
+    # V_CR : 우상향 (1, 1)
+    start_cr, end_cr = connect_cable('cable_CR', p_cable_cr, V_CR, (1.0, 1.0, 0.0))
 
 a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
 a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
 a.Set(name='RP_Left_Set', referencePoints=(a.referencePoints[rp3_obj.id],))
 
-a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
-a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
+if not NO_CLAMP:
+    a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
+    a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
 
 my_model.Tie(name='Tie_Top', main=a.sets['RP_Top_Set'], secondary=start_c1, positionToleranceMethod=COMPUTED)
 my_model.Tie(name='Tie_Right', main=a.sets['RP_Right_Set'], secondary=start_c2, positionToleranceMethod=COMPUTED)
 my_model.Tie(name='Tie_Left', main=a.sets['RP_Left_Set'], secondary=start_c3, positionToleranceMethod=COMPUTED)
 
-my_model.Tie(name='Tie_CL', main=a.sets['RP_CL_Set'], secondary=start_cl, positionToleranceMethod=COMPUTED)
-my_model.Tie(name='Tie_CR', main=a.sets['RP_CR_Set'], secondary=start_cr, positionToleranceMethod=COMPUTED)
+if not NO_CLAMP:
+    my_model.Tie(name='Tie_CL', main=a.sets['RP_CL_Set'], secondary=start_cl, positionToleranceMethod=COMPUTED)
+    my_model.Tie(name='Tie_CR', main=a.sets['RP_CR_Set'], secondary=start_cr, positionToleranceMethod=COMPUTED)
 
 a.regenerate()
 
@@ -487,7 +503,7 @@ my_model.Stress(
     name='Initial_Stiffness',
     region=inst_memb.sets['All'],
     distributionType=UNIFORM,
-    sigma11=500.0, sigma22=500.0, sigma33=0.0,
+    sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0,
     sigma12=0.0, sigma13=0.0, sigma23=0.0
 )
 
@@ -505,8 +521,9 @@ my_model.DisplacementBC(name='BC_Anchor', createStepName='Initial', region=end_c
                         )
 my_model.DisplacementBC(name='BC_Right', createStepName='Initial', region=end_c2, u3=0, ur1=0, ur2=0, ur3=0)
 my_model.DisplacementBC(name='BC_Left', createStepName='Initial', region=end_c3, u3=0, ur1=0, ur2=0, ur3=0)
-my_model.DisplacementBC(name='BC_CL', createStepName='Initial', region=end_cl, u3=0)
-my_model.DisplacementBC(name='BC_CR', createStepName='Initial', region=end_cr, u3=0)
+if not NO_CLAMP:
+    my_model.DisplacementBC(name='BC_CL', createStepName='Initial', region=end_cl, u3=0)
+    my_model.DisplacementBC(name='BC_CR', createStepName='Initial', region=end_cr, u3=0)
 
 my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial', region=end_c2, 
     u1=0, u2=0
@@ -514,12 +531,13 @@ my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial', reg
 my_model.DisplacementBC(name='Disp_Control_Left',createStepName='Initial', region=end_c3, 
     u1=0, u2=0
 )
-my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial', region=end_cl, 
-    u1=0, u2=0
-)
-my_model.DisplacementBC(name='Disp_Control_CR', createStepName='Initial', region=end_cr, 
-    u1=0, u2=0
-)
+if not NO_CLAMP:
+    my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial', region=end_cl, 
+        u1=0, u2=0
+    )
+    my_model.DisplacementBC(name='Disp_Control_CR', createStepName='Initial', region=end_cr, 
+        u1=0, u2=0
+    )
 
 # Right 케이블: 우하향 당기기
 my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(stepName='Step-GlobalTension', 
@@ -532,16 +550,17 @@ my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(stepName='Step-
     u2=-DISP_GLOBAL * sin_val
 )
 
-# 좌측 클램프: (-1, +1) 방향
-my_model.boundaryConditions['Disp_Control_CL'].setValuesInStep(stepName='Step-ClampTension', 
-    u1=-(CLAMP_PULL/sqrt2),
-    u2=(CLAMP_PULL/sqrt2)
-)
-# 우측 클램프: (+1, +1) 방향
-my_model.boundaryConditions['Disp_Control_CR'].setValuesInStep(stepName='Step-ClampTension', 
-    u1=(CLAMP_PULL/sqrt2),
-    u2=(CLAMP_PULL/sqrt2)
-)
+if not NO_CLAMP:
+    # 좌측 클램프: (-1, +1) 방향
+    my_model.boundaryConditions['Disp_Control_CL'].setValuesInStep(stepName='Step-ClampTension', 
+        u1=-(CLAMP_PULL/sqrt2),
+        u2=(CLAMP_PULL/sqrt2)
+    )
+    # 우측 클램프: (+1, +1) 방향
+    my_model.boundaryConditions['Disp_Control_CR'].setValuesInStep(stepName='Step-ClampTension', 
+        u1=(CLAMP_PULL/sqrt2),
+        u2=(CLAMP_PULL/sqrt2)
+    )
 
 # Buckle Perturbation
 my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(stepName='Step-Buckle', 
@@ -552,14 +571,15 @@ my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(stepName='Step-
     u1=-PERTURBATION * cos_val,
     u2=-PERTURBATION * sin_val
 )
-my_model.boundaryConditions['Disp_Control_CL'].setValuesInStep(stepName='Step-Buckle', 
-    u1=-(CLAMP_PERT / sqrt2),
-    u2=(CLAMP_PERT / sqrt2)
-)
-my_model.boundaryConditions['Disp_Control_CR'].setValuesInStep(stepName='Step-Buckle', 
-    u1=(CLAMP_PERT / sqrt2),
-    u2=(CLAMP_PERT/ sqrt2)
-)
+if not NO_CLAMP:
+    my_model.boundaryConditions['Disp_Control_CL'].setValuesInStep(stepName='Step-Buckle', 
+        u1=-(CLAMP_PERT / sqrt2),
+        u2=(CLAMP_PERT / sqrt2)
+    )
+    my_model.boundaryConditions['Disp_Control_CR'].setValuesInStep(stepName='Step-Buckle', 
+        u1=(CLAMP_PERT / sqrt2),
+        u2=(CLAMP_PERT/ sqrt2)
+    )
 
 # Step Buckle 에서는 전체 z 구속에서 모서리 z 구속으로 교체 Galhofo reference
 my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
@@ -623,7 +643,7 @@ if fidelity == 'LF':
         name='Initial_Stiffness',
         region=inst_memb.sets['All'],
         distributionType=UNIFORM,
-        sigma11=500.0, sigma22=500.0, sigma33=0.0, 
+        sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0, 
         sigma12=0.0, sigma13=0.0, sigma23=0.0
     )
     if 'Step-Buckle' in my_model.steps:
@@ -648,7 +668,7 @@ if fidelity == 'LF':
             u1=sign * GLOBAL_FINAL * cos_val,
             u2=-GLOBAL_FINAL * sin_val
         )
-    for name, sign in [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]:
+    for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
         my_model.boundaryConditions[name].setValuesInStep(
             stepName='Step-HighTension',
             u1=sign * CLAMP_FINAL / sqrt2,
@@ -675,7 +695,7 @@ elif fidelity == 'HF':
         name='Initial_Stiffness',
         region=inst_memb.sets['All'],
         distributionType=UNIFORM,
-        sigma11=500.0, sigma22=500.0, sigma33=0.0, 
+        sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0, 
         sigma12=0.0, sigma13=0.0, sigma23=0.0
     )
 
@@ -760,7 +780,7 @@ elif fidelity == 'HF':
             u2=-GLOBAL_FINAL * sin_val
         )
 
-    for name, sign in [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]:
+    for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
         my_model.boundaryConditions[name].setValuesInStep(
             stepName='Step-Postbuckle',
             u1=sign * CLAMP_FINAL / sqrt2,
