@@ -84,13 +84,9 @@ def _resolve_here():
 
 _HERE = _resolve_here()
 # Abaqus 작업 디렉터리(=산출물 위치) = code/aba.
-# ---- 코드 상수 (2026-09-21: 환경변수 전부 제거, 값은 이 파일에 고정) ----
-# 산출물 디렉터리 이름. mfbo.py 의 RUN_DIR_NAME 과 반드시 같은 값이어야 한다.
 RUN_DIR_NAME = "aba"
-# Abaqus 병렬 스레드/도메인 수 (1 = 단일 CPU, 4 = 대략 1.5~2.5배 빠름).
-#   라이선스 토큰이 없으면 잡이 라이선스 오류로 즉시 죽는다 -> 그때는 1 로.
 NUMCPUS = 4
-BASE_PROBE = True                # 각 잡 직후 base_state_probe.py (R-13) 자동 실행
+BASE_PROBE = True
 # ---- 코드 상수 끝 ----
 _RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
@@ -147,10 +143,6 @@ def run_job_safely(job_name, model_name=None):
     if job_name in mdb.jobs:
         del mdb.jobs[job_name]
     
-    # 병렬 실행 (속도). 기본 1 = 기존과 완전히 동일한 거동.
-    #   단일 CPU 로 373 증분/30분 수준이면 4 스레드로 대략 1.5~2.5배 단축 여지가 있다.
-    #   주의: 라이선스 토큰이 부족하면 잡이 라이선스 오류로 죽는다 -> 그때는 1 로 되돌린다.
-    #   라이선스 토큰 오류가 나면 위 NUMCPUS 상수를 1 로 바꾼다.
     _ncp = NUMCPUS
     print("[run_abaqus_new] numCpus=%d numDomains=%d (코드 상수 NUMCPUS)" % (_ncp, _ncp))
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
@@ -265,8 +257,8 @@ INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
-THICKNESS = 5.0e-6 # F2: 2.5e-6 -> 5.0e-6 (cable 변형, 2.5um는 수렴 매우 어려움)
-TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
+THICKNESS = 5.0e-6
+TARGET_STRESS = 7000.0 # Pa   # 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
 
 # 케이블 파라미터 (Galhofo reference)
 CABLE_RADIUS = 5.0e-4 # m
@@ -287,51 +279,19 @@ def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 V_CL = clamp_coord_L(x_c)
 V_CR = clamp_coord_R(x_c)
 
-# ---- 
 # ---- 사전 장력(prestrain) 캘리브레이션 ----
-# 프리텐션(코너 처방변위) 크기. 근거는 아래 R-13 실측 주석.
-# 1.0 = 기저값. 값 변경 = 이 상수 수정 + 커밋 (환경변수 아님).
+
 PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
 # R-13 실측(2026-09-21): PRETENSION_SCALE=10 -> 평균 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배.
-#   운용점을 목표에 맞추려면 약 3.3배(= DISP_GLOBAL 165 um)가 필요하다.
-#   단 PRETENSION_SCALE 는 최종 하중까지 함께 키우므로(포스트버클 변위 1mm -> 3.3mm),
-#   운용점만 따로 맞추려면 DISP_GLOBAL / GLOBAL_FINAL 상수를 직접 수정한다.
 DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
 CLAMP_PULL = DISP_GLOBAL * d_c
-# (B안) Buckle perturbation 상수 없음 (좌굴 스텝 자체가 없다)
 GLOBAL_FINAL = 0.0001 * PRETENSION_SCALE     # 최종 하중: 코너 당김 1e-3 m
 CLAMP_FINAL = GLOBAL_FINAL * d_c
-# ---- B안 trigger 파라미터 ----
-# 기하 trigger 진폭. 기본 = 막 두께의 10% (Galhofo 관행 0.1t)
+# ---- trigger 파라미터 ----
 TRIG_MAG = THICKNESS * 0.1       # 0.1t = 5e-7 m (Galhofo 관행)
-# trigger 를 적용할 '내부' 노드의 경계 여유 [m]. 요소 크기 0.1 m -> 3요소 여유
 TRIG_MARGIN = 0.05               # 삼각형 빗변에서 띄울 여유 (모델 폭 W 대비 비율)
-#   이전 값 0.3 은 모델 스케일(폭 0.15) 밖이라 내부 노드가 0개가 되는 원인이었다.
-# 0 이면 기하 trigger 없이 u3 해제만 한다 (trigger 민감도 비교용).
-#   2026-09-21: seed 를 켠다. seed=0 런들은 seed 민감도 데이터로 보존
-#   (seed 없이는 주름이 자연발생하나 분기 통과에 증분 2000+ 소요. 참조모델이 16분(974s)인
-#    이유는 케이블 없는 별도 모델에서 뽑은 모드를 *IMPERFECTION 으로 "심고" 시작하기 때문).
-#   끄려면 False 로 바꾸고 커밋 (환경변수 아님).
 TRIG_ON = True
-# 비선형 스텝(Trigger/ClampTension/Postbuckle)의 안정화 계수
-#   2026-09-21 실측 3런 (seed off, 안정화만 변경):
-#     2e-4              -> 주름 발생(26t) 후 분기에서 사망, ClampTension step 1.09% 정지
-#     1e-3              -> 주름 억제(max|u3| 0.008t), 압축만 축적, step 3.88% 정지  [오답]
-#     2e-4 + 적응감쇠    -> step 71.85% 까지 진행, 주름 유지(400t)                 [채택]
-#   => 기저값은 작게 유지(주름 보존)하고 adaptiveDampingRatio 로 수렴이 어려울 때만 키운다.
-#   값 변경 = 이 상수 수정 + 커밋 (환경변수 아님).
-#   검증: .sta 의 ALLSD/ALLIE (누적 소산/변형 에너지 비율) 가 작아야 물리적으로 유효.
-#   GlobalTension 스텝은 기존 2e-4 고정 (프리텐션 상태를 바꾸지 않기 위함).
-# 2026-09-21 실측: 2e-4 -> 주름 발생(26t) 후 분기에서 사망 / 1e-3 -> 주름이 죽었다
-#   (max|u3| = 0.008t). 즉 안정화 계수는 "주름 보존"과 "분기 통과"가 상충한다.
-#   => 작은 기저값 + 적응 감쇠(아래 ClampTension)로 간다. Postbuckle 과 동일한 조합.
 STAB = 0.0002
-# 적응 감쇠 "상한" (dissipated-energy fraction 목표가 수렴 곤란 시 올라갈 수 있는 최대치)
-#   2026-09-21 런4 진단: ClampTension step time 0.410 에서 TOO MANY ATTEMPTS 로 사망.
-#   증분 9.7e-5 -> 2.4e-5 -> 6.1e-6 -> 1.5e-6 -> 3.8e-7 로 6회 시도 전부 실패 (증분 축소가 무효),
-#   "THE SYSTEM MATRIX HAS 1 NEGATIVE EIGENVALUES" 경고 816회 -> 탄젠트가 부정정.
-#   => 증분/예산 문제가 아니라 반복해법 문제. 기저 STAB(2e-4, Galhofo 값)은 주름 보존을 위해 유지하고
-#      (1e-3 상향은 주름을 죽임: 실측 26t -> 0.008t) 필요할 때만 올라가는 이 상한을 키운다.
 ADAPT_DAMP_MAX = 0.15
 print("[run_abaqus_new] STAB=%g (코드 상수) / TRIG_ON=%s / TRIG_MAG=%.3e m / TRIG_MARGIN=%.3g"
       % (STAB, TRIG_ON, TRIG_MAG, TRIG_MARGIN))
@@ -501,8 +461,7 @@ my_model.StaticStep(
 )
 
 # Step Trigger : B안. u3 를 해제하고 소량 기하 trigger 로 주름을 자연 발생시킨다.
-#   HF 전용으로 만든다 -> LF 체인(GlobalTension->ClampTension->HighTension)은 기존과 동일하게
-#   유지되어 LF 지표가 변하지 않는다.
+#   HF 전용으로 만든다 -> LF 체인(GlobalTension->ClampTension->HighTension)은 기존과 동일하게 유지되어 LF 지표가 변하지 않는다.
 if fidelity == 'HF':
     my_model.StaticStep(
         name='Step-Trigger',
@@ -515,17 +474,12 @@ if fidelity == 'HF':
 _PREV_CLAMP = 'Step-Trigger' if fidelity == 'HF' else 'Step-GlobalTension'
 
 # Step Clamp Tension : 클램프에 변위 가하기
-#   [역할 명시 2026-09-21] u3 는 Step-Trigger 에서 해제되므로 이 스텝부터가 사실상
-#   포스트버클링 구간이다 (프리텐션 상태가 이미 분기 위 -> 해제 즉시 주름 발생).
-#   분할 이유는 두 가지이고, 둘 다 유지가 유리하다:
-#     (1) 물리적 스테이징 : GlobalTension 이 '운용 프리텐션' 수준(DISP_GLOBAL)을 만들고,
+#   u3 는 Step-Trigger 에서 해제되므로 이 스텝부터가 사실상 포스트버클링 구간이다 (프리텐션 상태가 이미 분기 위 -> 해제 즉시 주름 발생).
+#   물리적 스테이징 : GlobalTension 이 '운용 프리텐션' 수준(DISP_GLOBAL)을 만들고,
 #         이 스텝에서 설계변수 클램프(d_c)를 결합하고, Postbuckle 이 최종 하중까지 올린다.
-#         -> 코너·클램프를 동시에 램프하는 단일 스텝과는 *하중경로가 다르다*.
-#            (경로 민감도: merged vs split 비교는 아직 미검증 항목)
-#     (2) 수치적 스테이징 : 분기 핵생성과 20배 램프를 한 스텝에 몰면 수렴이 나빠진다
-#         (실측: 핵생성 구간에서 증분이 1.25e-4 까지 붕괴).
+#   수치적 스테이징 : 분기 핵생성과 20배 램프를 한 스텝에 몰면 수렴이 나빠진다
 #   LF 도 동일 스텝 구조를 쓴다 (하중경로 동일화 -> LF->HF 보정이 '주름 효과'만 학습).
-#   코너 처방변위는 이 스텝에서 DISP_GLOBAL 로 고정 유지된다.
+
 my_model.StaticStep(
     name='Step-ClampTension',
     previous=_PREV_CLAMP,
@@ -537,13 +491,6 @@ my_model.StaticStep(
     initialInc=0.0001, minInc=1e-8, maxNumInc=20000   # 2026-09-21: 1000 소진 -> 말단 속도 1.25e-4/inc 기준 ~2300 필요
 )
 
-# Step Buckle / 좌굴 고유모드 추출 없음 (B안).
-#   실측 근거: 클램프가 있는 base state 는 sigma2<0 영역 21.5% 로 이미 분기점 위이고
-#   *BUCKLE 추출이 실패한다(208 negative eigenvalues, CONVERGED=0).
-#   -> 좌굴모드 imperfection 대신 'trigger + 자연 주름'을 결함으로 쓴다.
-#   (A안 = run_abaqus.py 가 그대로 보존되어 있음)
-
-# *IMPERFECTION, FILE= 은 results file(.fil) 을 읽는다 -> 좌굴 모드를 .fil 에 기록해야 임퍼펙션이 실제로 주입된다 (미요청 시 조용히 무시됨)
 
 my_model.Stress(
     name='Initial_Stiffness',
@@ -621,16 +568,6 @@ if fidelity == 'HF':
     )
 
     # ---- trigger : 삼각형 내부를 해석적 사인 패턴으로 교란 (명시적 seed) ----
-    #   왜 이렇게 하는가(Abaqus 제약): 공간적으로 변하는 처방변위는 '노드셋'으로만 줄 수 있다.
-    #     -> 어떤 노드에 +, 어떤 노드에 - 를 줄지가 곧 패턴의 정의가 된다.
-    #   왜 노드순서 홀/짝이 아니라 해석식인가:
-    #     노드 리스트 순서는 메쉬 생성 순서라 공간적 의미가 없다(문서화/재현 불가).
-    #     sin(pi*(x-x0)/W) * sin(2*pi*(y-y0)/H) 의 부호는 메쉬와 무관한 결정론적 패턴이다.
-    #   영역은 삼각형 '안쪽'만: BC_Edges_Only_Z(u3=0)나 케이블 RP 를 건드리면 모서리
-    #     지지가 깨진다. 아래 y-밴드/여유는 보수적이라 변과 절대 겹치지 않는다.
-    #   [2026-09-21] seed 없는 런은 주름 자연발생(26t/400t)은 되지만 분기 통과를 증분으로
-    #     버텨 ClampTension 에 증분 2000+ 가 필요했다. 클램프 없는 참조 모델이 20분인
-    #     이유는 *IMPERFECTION 으로 모드를 심고 시작하기 때문 -> 같은 원리로 seed 를 준다.
     _mn = inst_memb.nodes
     _x0 = min(n.coordinates[0] for n in _mn); _x1 = max(n.coordinates[0] for n in _mn)
     _y0 = min(n.coordinates[1] for n in _mn); _y1 = max(n.coordinates[1] for n in _mn)
@@ -679,17 +616,9 @@ if fidelity == 'HF' and _TRIG_OK:
     my_model.boundaryConditions['BC_Trig_P'].deactivate('Step-ClampTension')
     my_model.boundaryConditions['BC_Trig_M'].deactivate('Step-ClampTension')
 
-# BUCKLE_ODB 는 더 이상 쓰지 않는다 (좌굴 잡 없음). base state 측정은 HF odb 로 한다.
 LF_ODB = 'LF_Analysis.odb'
 HF_ODB = 'HF_Postbuckle.odb'
 
-# (B안) 좌굴 잡 모델 복사본 / *NODE FILE 삽입 없음.
-#   *IMPERFECTION 카드도 쓰지 않으므로 좌굴모드를 .fil 에 기록할 필요가 없다.
-
-# 감쇠 가격 측정용 에너지 출력: ALLIE(총내부에너지) ALLSD(정적 감쇠 소산) ALLKE(운동)
-#   목적: STAB/적응감쇠가 '실제로 일을 하고 있는지' 정량화. ALLSD/ALLIE 비가 크면
-#         주름이 감쇠 산물일 가능성 -> 논문에 그대로 기재해야 하는 수치 (지금까지 미측정 항목).
-#   해석 결과에는 영향이 없다 (출력 요청 전용).
 try:
     my_model.HistoryOutputRequest(
         name='H-Energy', createStepName='Step-GlobalTension',
@@ -765,28 +694,19 @@ elif fidelity == 'HF':
         sigma12=0.0, sigma13=0.0, sigma23=0.0
     )
 
-    # (B안) 좌굴 잡 없음. HF 는 포스트버클 잡 하나만 제출한다.
-
-    # (B안) 좌굴모드 병합(coalescence) 진단 제거: 고유값을 추출하지 않는다.
-
-
-    # (B안) Step-Buckle 은 애초에 만들지 않았고, Step-ClampTension 은 *유지*한다.
-    #   -> 클램프 당김은 ClampTension 스텝에서 ramp 되고(GlobalTension 0 -> CLAMP_PULL),
-    #      Postbuckle 에서 CLAMP_FINAL 까지 다시 ramp 된다 (2단 점진 당김 = 주름 성장 경로).
-
     # Static, General 포스트버클링 수행    
     my_model.StaticStep(
         name='Step-Postbuckle', 
-        previous='Step-ClampTension',   # B안: ClampTension 을 체인에 유지
+        previous='Step-ClampTension',
         nlgeom=ON, 
         stabilizationMagnitude=STAB,      # 코드 상수 STAB (기본 2e-4) 
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
         adaptiveDampingRatio=ADAPT_DAMP_MAX,
         initialInc=1e-4,
-        minInc=1e-8,          # R-9: 1e-15 는 발산 시 증분 소진까지 수시간
+        minInc=1e-8,
         maxInc=0.1,
-        maxNumInc=20000       # R-9 / 2026-09-21: 20배 램프 -> 예산 선제 확보 (물리 불변, 완주만 결정)
+        maxNumInc=20000
     )
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 
@@ -815,10 +735,6 @@ elif fidelity == 'HF':
     
 
     run_job_safely('HF_Postbuckle')
-    # [R-13] base state 실측 — B안에서는 좌굴 잡이 없으므로 HF odb 를 직접 읽는다.
-    #   Step-GlobalTension : 프리텐션만 걸린 상태 (A안과 비교 가능한 기준점)
-    #   Step-ClampTension  : 클램프 당김 + 주름 발생 이후 = B안의 실제 '결함 시작 상태'
-    #   끄려면 환경변수 MFBO_BASE_PROBE=0
     try:
         if BASE_PROBE:
             _probe = os.path.join(_HERE, 'base_state_probe.py')
