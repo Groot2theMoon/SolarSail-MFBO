@@ -199,9 +199,12 @@ def dump_job_diag(job_name):
     KEYS = ('***ERROR', '***WARNING', 'TOO MANY', 'DISTORT', 'NEGATIVE EIGENVALUE',
             'HAS COMPLETED', 'NOT BEEN COMPLETED', 'EXCESSIVE', 'CUT BACK',
             'CANNOT BE', 'ATTEMPT NUMBER  2',
-            # 2026-09-21: 아래 5개가 빠져 있어 원인 판별이 한 라운드 지연되었다
+            # 2026-09-21: 아래 키들이 빠져 있어 원인 판별이 라운드마다 지연되었다
             'CONSTANT DAMPING', 'OVERCONSTRAINT', 'INACTIVE DOF',
-            'ALLSDTOL', 'SEVERE ELEMENT')
+            'ALLSDTOL', 'SEVERE ELEMENT',
+            # 마지막 증분의 진짜 사망 원인은 .msg '끝'에만 있다 (키 grep 만으로는 못 잡음)
+            'DIVERG', 'MINIMUM SPECIFIED', 'TIME INCREMENT REQUIRED',
+            'LINE SEARCH', 'ANALYSIS SUMMARY', 'CUTBACKS IN AUTOMATIC')
     for ext in ('msg', 'dat'):
         fn = '%s.%s' % (job_name, ext)
         if not os.path.exists(fn):
@@ -217,6 +220,14 @@ def dump_job_diag(job_name):
                     if n_hit >= 500:
                         out.append('... (truncated at 500)')
                         break
+    for ext in ('msg', 'dat'):
+        fn = '%s.%s' % (job_name, ext)
+        if not os.path.exists(fn):
+            continue
+        with open(fn, 'r', errors='replace') as f:
+            _tail = f.read().splitlines()[-45:]
+        out.append('===== %s (TAIL 45 - 진짜 사망 원인/요약은 여기에만 있다) =====' % fn)
+        out.extend(_tail)
     if len(out) <= 2:
         out.append('(no .sta/.msg/.dat found)')
     dst = os.path.join(_RUN, '%s.diag.txt' % job_name)
