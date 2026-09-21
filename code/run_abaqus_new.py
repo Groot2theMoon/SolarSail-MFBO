@@ -249,13 +249,13 @@ V_CR = clamp_coord_R(x_c)
 
 # ---- 
 # ---- 사전 장력(prestrain) 캘리브레이션 ----
-# 버클 base state(Step-ClampTension)의 장력을 키워 시스템행렬 부정정(음수 고유값)을 해소.
-# 1.0 = 기존값.  조정:  PowerShell  $env:MFBO_PRETENSION_SCALE="30"
+# 프리텐션(코너 처방변위) 크기. 근거는 아래 R-13 실측 주석.
+# 1.0 = 기저값. 값 변경 = 이 상수 수정 + 커밋 (환경변수 아님).
 PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
 # R-13 실측(2026-09-21): PRETENSION_SCALE=10 -> 평균 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배.
-#   운용점을 목표에 맞추려면 약 33배(= DISP_GLOBAL 165um)가 필요하다.
+#   운용점을 목표에 맞추려면 약 3.3배(= DISP_GLOBAL 165 um)가 필요하다.
 #   단 PRETENSION_SCALE 는 최종 하중까지 함께 키우므로(포스트버클 변위 1mm -> 3.3mm),
-#   운용점만 따로 맞추려면 절대값 노브 MFBO_DISP_GLOBAL / MFBO_GLOBAL_FINAL 을 쓴다.
+#   운용점만 따로 맞추려면 DISP_GLOBAL / GLOBAL_FINAL 상수를 직접 수정한다.
 DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
 CLAMP_PULL = DISP_GLOBAL * d_c
 # (B안) Buckle perturbation 상수 없음 (좌굴 스텝 자체가 없다)
@@ -268,20 +268,18 @@ TRIG_MAG = THICKNESS * 0.1       # 0.1t = 5e-7 m (Galhofo 관행)
 TRIG_MARGIN = 0.05               # 삼각형 빗변에서 띄울 여유 (모델 폭 W 대비 비율)
 #   이전 값 0.3 은 모델 스케일(폭 0.15) 밖이라 내부 노드가 0개가 되는 원인이었다.
 # 0 이면 기하 trigger 없이 u3 해제만 한다 (trigger 민감도 비교용).
-#   2026-09-21: 다음 실행 기준값으로 0 을 기본에 둔다 -> 안정화(STAB)만 바꿔 주름 분기를
-#   넘는지 보는 한 변수 대조 런. seed 까지 켜는 런(민감도/생산)은
-#   $env:MFBO_TRIG_ON="1" 로 덮어쓴다. 실행 첫 줄이 실제 값을 항상 찍는다.
-TRIG_ON = True                   # 2026-09-21: seed 를 켠다.
-#   seed=0 런들은 'seed 민감도' 데이터로 보존 (주름은 자연발생했지만 분기 통과에
-#   증분 2000+ 소요 -> 참조 모델이 20분인 이유는 모드를 심고 시작하기 때문).
+#   2026-09-21: seed 를 켠다. seed=0 런들은 seed 민감도 데이터로 보존
+#   (seed 없이는 주름이 자연발생하나 분기 통과에 증분 2000+ 소요. 참조모델이 16분(974s)인
+#    이유는 케이블 없는 별도 모델에서 뽑은 모드를 *IMPERFECTION 으로 "심고" 시작하기 때문).
 #   끄려면 False 로 바꾸고 커밋 (환경변수 아님).
+TRIG_ON = True
 # 비선형 스텝(Trigger/ClampTension/Postbuckle)의 안정화 계수
-#   2026-09-21 실측: 2e-4(Galhofo 참조값) 로는 Step-ClampTension 이 주름 발생 직후
-#   증분 444 에서 TOO MANY ATTEMPTS 로 죽었다 (증분 2.7e-4 -> 2.1e-6, 100배 축소에도
-#   복구 불가 = 증분 제어로 넘을 수 없는 분기). 그래서 기본값을 1e-3 으로 올려 둔다.
-#   스윕은 환경변수로 덮어쓴다:  $env:MFBO_STAB="0.01" (평상시 실행엔 입력 불필요)
-#   불안정(주름) 분기에서 증분이 컷백으로도 복구되지 않고 죽으면 이 값을 키운다.
-#   예:  PowerShell  $env:MFBO_STAB="0.001"   (5배)   /   "0.01" (50배)
+#   2026-09-21 실측 3런 (seed off, 안정화만 변경):
+#     2e-4              -> 주름 발생(26t) 후 분기에서 사망, ClampTension step 1.09% 정지
+#     1e-3              -> 주름 억제(max|u3| 0.008t), 압축만 축적, step 3.88% 정지  [오답]
+#     2e-4 + 적응감쇠    -> step 71.85% 까지 진행, 주름 유지(400t)                 [채택]
+#   => 기저값은 작게 유지(주름 보존)하고 adaptiveDampingRatio 로 수렴이 어려울 때만 키운다.
+#   값 변경 = 이 상수 수정 + 커밋 (환경변수 아님).
 #   검증: .sta 의 ALLSD/ALLIE (누적 소산/변형 에너지 비율) 가 작아야 물리적으로 유효.
 #   GlobalTension 스텝은 기존 2e-4 고정 (프리텐션 상태를 바꾸지 않기 위함).
 # 2026-09-21 실측: 2e-4 -> 주름 발생(26t) 후 분기에서 사망 / 1e-3 -> 주름이 죽었다
@@ -470,6 +468,11 @@ if fidelity == 'HF':
 _PREV_CLAMP = 'Step-Trigger' if fidelity == 'HF' else 'Step-GlobalTension'
 
 # Step Clamp Tension : 클램프에 변위 가하기
+#   [역할 명시 2026-09-21] u3 는 Step-Trigger 에서 해제되므로, 이 스텝부터가
+#   사실상 포스트버클링 구간이다(프리텐션 상태가 이미 분기 위 -> 해제 즉시 주름 발생).
+#   ClampTension(0 -> CLAMP_PULL) 과 Postbuckle(CLAMP_PULL -> CLAMP_FINAL) 은
+#   하나의 연속 램프를 수치 스테이징 목적으로 1:20 으로 나눈 것.
+#   코너 처방변위는 이 스텝에서 DISP_GLOBAL 로 고정 유지된다.
 my_model.StaticStep(
     name='Step-ClampTension',
     previous=_PREV_CLAMP,
