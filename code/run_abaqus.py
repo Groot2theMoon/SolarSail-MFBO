@@ -135,7 +135,13 @@ def run_job_safely(job_name, model_name=None):
     if job_name in mdb.jobs:
         del mdb.jobs[job_name]
     
-    job = mdb.Job(name=job_name, model=model_name, numCpus=1, numDomains=1)
+    # 병렬 실행 (속도). 기본 1 = 기존과 완전히 동일한 거동.
+    #   단일 CPU 로 373 증분/30분 수준이면 4 스레드로 대략 1.5~2.5배 단축 여지가 있다.
+    #   주의: 라이선스 토큰이 부족하면 잡이 라이선스 오류로 죽는다 -> 그때는 1 로 되돌린다.
+    #   예:  PowerShell  $env:MFBO_NUMCPUS="4"
+    _ncp = int(float(os.environ.get('MFBO_NUMCPUS', '1')))
+    print("[run_abaqus] numCpus=%d numDomains=%d (MFBO_NUMCPUS)" % (_ncp, _ncp))
+    job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
     print("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
     job.submit(consistencyChecking=OFF)
