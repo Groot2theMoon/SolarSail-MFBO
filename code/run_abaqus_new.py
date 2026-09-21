@@ -190,20 +190,23 @@ def dump_job_diag(job_name):
     내용: ① .sta 마지막 25줄 ② .msg/.dat 의 원인 판별 키 줄 ③ 완주 판정 결과.
     파일: <RUN_DIR>/<job>.diag.txt  (예: aba/HF_Postbuckle.diag.txt)
     """
-    out = ['===== 완주 판정 =====', 'job_completed_ok = %s' % job_completed_ok(job_name)]
+    out = ['===== job_completed_ok = %s =====' % job_completed_ok(job_name)]
     sta = '%s.sta' % job_name
     if os.path.exists(sta):
         with open(sta, 'r', errors='replace') as f:
-            out.append('===== %s (마지막 25줄) =====' % sta)
+            out.append('===== %s (last 25 lines) =====' % sta)
             out.extend(f.read().splitlines()[-25:])
-    KEYS = ('***ERROR', '***WARNING', 'TOO MANY', 'DISTORTION', 'NEGATIVE EIGENVALUE',
+    KEYS = ('***ERROR', '***WARNING', 'TOO MANY', 'DISTORT', 'NEGATIVE EIGENVALUE',
             'HAS COMPLETED', 'NOT BEEN COMPLETED', 'EXCESSIVE', 'CUT BACK',
-            'CANNOT BE', 'ATTEMPT NUMBER  2')
+            'CANNOT BE', 'ATTEMPT NUMBER  2',
+            # 2026-09-21: 아래 5개가 빠져 있어 원인 판별이 한 라운드 지연되었다
+            'CONSTANT DAMPING', 'OVERCONSTRAINT', 'INACTIVE DOF',
+            'ALLSDTOL', 'SEVERE ELEMENT')
     for ext in ('msg', 'dat'):
         fn = '%s.%s' % (job_name, ext)
         if not os.path.exists(fn):
             continue
-        out.append('===== %s (키 줄, 최대 500) =====' % fn)
+        out.append('===== %s (key lines, max 500) =====' % fn)
         n_hit = 0
         with open(fn, 'r', errors='replace') as f:
             for _ln, _line in enumerate(f, 1):
@@ -212,12 +215,15 @@ def dump_job_diag(job_name):
                     out.append('%d: %s' % (_ln, _line.rstrip()))
                     n_hit += 1
                     if n_hit >= 500:
-                        out.append('... (500줄에서 절단)')
+                        out.append('... (truncated at 500)')
                         break
     if len(out) <= 2:
         out.append('(no .sta/.msg/.dat found)')
     dst = os.path.join(_RUN, '%s.diag.txt' % job_name)
-    with open(dst, 'w', errors='replace') as f:
+    # ASCII 내용 + 명시적 UTF-8 저장: 한글 라벨을 쓰면 Windows 기본 인코딩(CP949)으로
+    # 저장되어 다른 도구에서 읽히지 않는다 (2026-09-21 실제 발생).
+    import io as _io
+    with _io.open(dst, 'w', encoding='utf-8', errors='replace') as f:
         f.write('\n'.join(out) + '\n')
     print('[run_abaqus_new] 진단 요약 저장: %s (%d줄)' % (dst, len(out)))
     return dst
