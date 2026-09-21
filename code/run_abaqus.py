@@ -183,7 +183,7 @@ V_CL = clamp_coord_L(x_c)
 V_CR = clamp_coord_R(x_c)
 
 # ---- 
-# ---- C: 사전 장력(prestrain) 캘리브레이션 ----
+# ---- 사전 장력(prestrain) 캘리브레이션 ----
 # 버클 base state(Step-ClampTension)의 장력을 키워 시스템행렬 부정정(음수 고유값)을 해소.
 # 1.0 = 기존값.  조정:  PowerShell  $env:MFBO_PRETENSION_SCALE="30"
 PRETENSION_SCALE = float(os.environ.get("MFBO_PRETENSION_SCALE", "10"))
@@ -301,7 +301,7 @@ def connect_cable(name, part, coord, vector_dir):
 
 p.seedPart(size=BASE/200.0, deviationFactor=0.1) # 약 1만개
 p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-# F2: 감차적분 S4R(아워글래싱) -> 완전적분 S4 (cable 변형과 동일)
+# S4R-> S4 (cable 변형과 동일)
 elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
 elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)  
 p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
@@ -367,10 +367,7 @@ my_model.StaticStep(
 
 # Step Buckle : 버클 모드 찾기. LF에서는 직접적으로 쓰이지 않음. 
 # HF 포스트버클링의 imperfection으로 사용됨.
-# Abacus BuckleStep을 사용하는 것이 정석이고 옳으나, 매우 얇은 solar-sail 자체의 불안정성에 의해 
-# 부적합했음이 확인되어 BuckleStep + subspace iteration 으로 복원 (R-6). LANCZOS 는 강성행렬이
-# indefinite 한 좌굴 해석에서 금지이며(예비하중 초과 시 해석 종료), FREQUENCY 모드는 질량
-# 정규화라 '0.1t' 임퍼펙션 관행이 성립하지 않는다. Galhofo 참조도 BUCKLE+subspace, 최초 4모드.
+#Galhofo 참조 BUCKLE+subspace, 최초 4모드.
 # BuckleStep도 아래 주석처리로 남겨놓았음.
 
 """if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
@@ -386,17 +383,17 @@ if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
 my_model.BuckleStep(
     name='Step-Buckle',          
     previous='Step-ClampTension',  
-    numEigen=N_EIG_BUCKLE,        # A: 음수모드 건너뛰기 여유 (cable 변형과 동일=100)
-    eigensolver=SUBSPACE,         # A: LANCZOS 금지(부정정) -> SUBSPACE
-    vectors=250,                  # A: 핵심 (기본값 8 -> 250)
+    numEigen=N_EIG_BUCKLE,
+    eigensolver=SUBSPACE, 
+    vectors=250,                  
     maxIterations=5000,
 )
 # *IMPERFECTION, STEP=n 의 n 은 'Buckle_Analysis.fil 안의 스텝 번호'
 # (현재 3 = GlobalTension/ClampTension/Buckle). 스텝 구성이 바뀌면 자동 추종.
 _BUCKLE_STEP_NO = len(my_model.steps)
 
-# R-7: *IMPERFECTION, FILE= 은 results file(.fil) 을 읽는다 -> 좌굴 모드를 .fil 에 기록해야
-#      임퍼펙션이 실제로 주입된다 (미요청 시 조용히 무시됨)
+# *IMPERFECTION, FILE= 은 results file(.fil) 을 읽는다 -> 좌굴 모드를 .fil 에 기록해야
+# 임퍼펙션이 실제로 주입된다 (미요청 시 조용히 무시됨)
 my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 for _i, _b in enumerate(my_model.keywordBlock.sieBlocks):
     if _b.strip().upper().startswith(('*BUCKLE', '*FREQUENCY')):
@@ -502,7 +499,7 @@ HF_ODB = 'HF_Postbuckle.odb'
 cmd = ""
 if fidelity == 'LF':
 
-    # R-17: LF 는 좌굴모드를 쓰지 않는다(HF 분기가 같은 설계점에서 자체 실행) -> 비용 절감
+    # LF 는 좌굴모드를 쓰지 않는다(HF 분기가 같은 설계점에서 자체 실행) -> 비용 절감
     # run_job_safely('Buckle_Analysis')
     
     if 'Initial_Stiffness' in my_model.predefinedFields:
@@ -556,8 +553,8 @@ if fidelity == 'LF':
 
 elif fidelity == 'HF':
 
-    # P0-2: 좌굴모드와 포스트버클 해석이 '같은 초기응력 상태'에서 계산되도록
-    #       초기응력 재생성(500 -> 100 Pa)을 좌굴 잡 제출 '앞'으로 이동.
+    # 좌굴모드와 포스트버클 해석이 '같은 초기응력 상태'에서 계산되도록
+    # 초기응력 재생성(500 -> 100 Pa)을 좌굴 잡 제출 '앞'으로 이동.
     if 'Initial_Stiffness' in my_model.predefinedFields:
         del my_model.predefinedFields['Initial_Stiffness']
 
