@@ -102,7 +102,7 @@ except:
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
                   'dat', 'res', 'abq', 'ipm', 'mdl', 'stt', 'cid')
 
-def run_job_safely(job_name):
+def run_job_safely(job_name, model_name=None):
     """
     job 실행 중 .odb, .lck 파일 충돌을 방지하고, 완료까지 대기하는 함수
 
@@ -110,6 +110,7 @@ def run_job_safely(job_name):
       - 성공 판정(not os.path.exists(odb))이 '지난 실행의 odb'를 보고 오판하는 것을 막고,
       - *IMPERFECTION, FILE=Buckle_Analysis 가 stale .fil 을 조용히 읽는 것을 막는다.
     """
+    model_name = model_name or MODEL_NAME
     for _ext in _JOB_ARTIFACTS:
         _f = '%s.%s' % (job_name, _ext)
         if os.path.exists(_f):
@@ -134,14 +135,17 @@ def run_job_safely(job_name):
     if job_name in mdb.jobs:
         del mdb.jobs[job_name]
     
-    job = mdb.Job(name=job_name, model=MODEL_NAME, numCpus=1, numDomains=1)
+    job = mdb.Job(name=job_name, model=model_name, numCpus=1, numDomains=1)
     print("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
     job.submit(consistencyChecking=OFF)
     
     job.waitForCompletion()
-    
-    time.sleep(1.0) 
+
+    time.sleep(1.0)
+
+    # 잡 결과 핵심 줄을 콘솔에 직접 찍는다 (로그 일부만 붙여넣어도 원인 판별 가능)
+    print_job_diag(job_name)
     
     # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
     if job.status == ABORTED or not os.path.exists(odb_file):
@@ -150,6 +154,33 @@ def run_job_safely(job_name):
         
     print("Job %s completed successfully (Status: %s)." % (job_name, str(job.status)))
     return True
+
+def print_job_diag(job_name):
+    """잡 산출물(.msg/.dat)의 원인 판별용 핵심 줄만 콘솔에 찍는다.
+
+    로그를 통째로 붙여넣지 않아도 (a) 좌굴모드가 나왔는지 (b) 왜 죽었는지를
+    한 화면에서 볼 수 있게 하기 위한 것. 실패해도 해석에는 영향 없음.
+    """
+    keys = ('NEGATIVE EIGENVALUES', 'CONVERGED', 'EIGENVALUES CANNOT BE FOUND',
+            'HAS COMPLETED SUCCESSFULLY', 'THE ANALYSIS HAS BEEN COMPLETED',
+            'misplaced', 'STIFFNESS MATRIX IS SINGULAR', 'TOO MANY ATTEMPTS',
+            '***ERROR')
+    for ext in ('msg', 'dat'):
+        fn = '%s.%s' % (job_name, ext)
+        if not os.path.exists(fn):
+            print("[DIAG:%s] %s 없음" % (job_name, fn))
+            continue
+        size = os.path.getsize(fn)
+        with open(fn, 'r') as f:
+            if size > 2000000:
+                f.seek(size - 2000000)
+            text = f.read()
+        hits = [ln.strip() for ln in text.splitlines()
+                if ln.strip() and any(k.lower() in ln.lower() for k in keys)]
+        print("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개"
+              % (job_name, fn, size / 1024.0, len(hits)))
+        for ln in hits[-5:]:
+            print("      | %s" % ln[:150])
 
 sqrt2 = 1.414
 N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
@@ -382,23 +413,30 @@ my_model.BuckleStep(
 if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
 my_model.BuckleStep(
     name='Step-Buckle',          
-    previous='Step-GlobalTension',  
+    # (B) base state = '클램프 없는(GlobalTension 말단)' 상태.
+    #   ClampTension 말단을 base 로 쓰면 시스템행렬이 부정정(음수 고유값 수천 개)이 되어
+    #   좌굴모드 0개 -> 임퍼펙션 seed 없음 -> 포스트버클 불가.
+    #   성공한 cable 변형(run_abaqus_cable.py)과 같은 base state 다.
+    previous='Step-GlobalTension',
     numEigen=N_EIG_BUCKLE,
-    eigensolver=SUBSPACE, 
-    vectors=250,                  
+    eigensolver=SUBSPACE,
+    vectors=250,
     maxIterations=5000,
 )
 # *IMPERFECTION, STEP=n 의 n 은 'Buckle_Analysis.fil 안의 스텝 번호'
-# (현재 3 = GlobalTension/ClampTension/Buckle). 스텝 구성이 바뀌면 자동 추종.
-_BUCKLE_STEP_NO = len(my_model.steps)
+# (현재 2 = GlobalTension/Buckle/ClampTension). 스텝 순서가 바뀌어도 자동 추종.
+#   n 은 'Initial 을 제외한' 1-based 스텝 번호다 (len() 은 Initial 포함해 1 크다 — NEW-1).
+_steps_in_order = [s for s in my_model.steps.keys() if s != 'Initial']
+_BUCKLE_STEP_NO = _steps_in_order.index('Step-Buckle') + 1
+print("[run_abaqus] steps=%s  _BUCKLE_STEP_NO=%d" % (_steps_in_order, _BUCKLE_STEP_NO))
 
 # *IMPERFECTION, FILE= 은 results file(.fil) 을 읽는다 -> 좌굴 모드를 .fil 에 기록해야
 # 임퍼펙션이 실제로 주입된다 (미요청 시 조용히 무시됨)
-my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
-for _i, _b in enumerate(my_model.keywordBlock.sieBlocks):
-    if _b.strip().upper().startswith(('*BUCKLE', '*FREQUENCY')):
-        my_model.keywordBlock.insert(_i + 1, '*NODE FILE, GLOBAL=YES, LAST MODE=%d\nU' % N_EIG)
-        break
+#
+# NEW-2/결함 A: 그 *NODE FILE 삽입은 '모델이 완성된 뒤'(아래 좌굴 잡 준비 절)로 옮겼다.
+#   여기서 넣으면 (a) 이후에 만드는 초기응력/BC 가 좌굴용 모델 복사본에 안 들어가고,
+#   (b) Step-Buckle 을 삭제하는 포스트버클 잡에서 키워드가 스텝 밖으로 밀려나
+#       'the keyword is misplaced' 로 입력처리 직사한다.
 # ----
 
 my_model.Stress(
@@ -497,6 +535,38 @@ LF_ODB = 'LF_Analysis.odb'
 HF_ODB = 'HF_Postbuckle.odb'
 
 cmd = ""
+# ── 좌굴 잡 준비 (모델 완성 후) ─────────────────────────────────────────────────────────────
+# R-7: *IMPERFECTION, FILE= 은 results file(.fil) 을 읽으므로 좌굴모드를 .fil 에 기록해야 한다.
+# 결함 A/NEW-2: 그 *NODE FILE 은 Step-Buckle 안에서만 유효한데 포스트버클 잡은 그 스텝을
+#   삭제하므로 키워드가 스텝 밖으로 밀려나 'the keyword is misplaced' 로 입력처리 직사한다.
+#   -> *NODE FILE 은 좌굴 잡 전용 '모델 복사본'에만 넣고, 원본 모델은 건드리지 않는다.
+BUCKLE_MODEL = MODEL_NAME
+if fidelity == 'HF':
+    _noderef = '*NODE FILE, GLOBAL=YES, LAST MODE=%d\nU' % N_EIG
+    try:
+        BUCKLE_MODEL = 'Model-Buckle'
+        if BUCKLE_MODEL in mdb.models:
+            del mdb.models[BUCKLE_MODEL]
+        mdb.Model(name=BUCKLE_MODEL, objectToCopy=my_model)
+        _bkm = mdb.models[BUCKLE_MODEL]
+        _bkm.keywordBlock.synchVersions(storeNodesAndElements=False)
+        _found = False
+        for _i, _b in enumerate(_bkm.keywordBlock.sieBlocks):
+            if _b.strip().upper().startswith(('*BUCKLE', '*FREQUENCY')):
+                _bkm.keywordBlock.insert(_i + 1, _noderef)
+                _found = True
+                break
+        print("[run_abaqus] 좌굴 잡 모델=%s, *NODE FILE 삽입=%s" % (BUCKLE_MODEL, _found))
+    except Exception as _e:
+        print("!!! WARNING: 모델 복사 실패(%s) -> 원본에 삽입 (결함 A 재발 가능)" % _e)
+        BUCKLE_MODEL = MODEL_NAME
+        my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
+        for _i, _b in enumerate(my_model.keywordBlock.sieBlocks):
+            if _b.strip().upper().startswith(('*BUCKLE', '*FREQUENCY')):
+                my_model.keywordBlock.insert(_i + 1, _noderef)
+                break
+# ──────────────────────────────────────────────────────────────────────────────
+
 if fidelity == 'LF':
 
     # LF 는 좌굴모드를 쓰지 않는다(HF 분기가 같은 설계점에서 자체 실행) -> 비용 절감
@@ -566,7 +636,7 @@ elif fidelity == 'HF':
         sigma12=0.0, sigma13=0.0, sigma23=0.0
     )
 
-    run_job_safely('Buckle_Analysis')   # P0-2: 500 Pa 상태에서 좌굴모드 산출
+    run_job_safely('Buckle_Analysis', model_name=BUCKLE_MODEL)   # P0-2: 500 Pa 상태에서 좌굴모드 산출
 
     # 좌굴 모드 병합(coalescence) 진단용 고유치 기록
     #   - 이유: Buckle_Analysis.dat 는 '다음 설계점'의 좌굴 잡이 시작될 때 삭제되므로
@@ -657,7 +727,7 @@ elif fidelity == 'HF':
     for i, block in enumerate(my_model.keywordBlock.sieBlocks):
         # Step 정의 시작 부분 찾기
         if block.lower().strip().startswith('*step'):
-            my_model.keywordBlock.insert(i-1, imp_text)
+            my_model.keywordBlock.insert(max(i - 1, 0), imp_text)
             inserted = True
             break
             

@@ -204,6 +204,23 @@ def cmd_record(args):
 
     if not vals:
         print("[record] 고유치를 찾지 못했습니다 — Abaqus 버전의 .dat 헤더 형식을 확인하세요.", file=sys.stderr)
+        # 실패 원인을 그 자리에서 알 수 있도록 파일 앞부분과 관련 줄을 함께 찍는다.
+        #   (a) 좌굴이 실패하면 .dat 에 고유치 표가 아예 없다 -> 여기서 바로 구분된다.
+        #   (b) 좌굴은 성공했는데 표 형식이 다르면 아래 'E|' 줄에 그 형식이 보인다.
+        try:
+            with open(path, 'r', errors='replace') as f:
+                lines = f.read().splitlines()
+            print("[record] %s 앞 12줄:" % os.path.basename(path))
+            for ln in [l for l in lines[:12] if l.strip()]:
+                print("    | %s" % ln.strip()[:120])
+            hits = [l.strip() for l in lines
+                    if ('eigen' in l.lower() or 'buckling factor' in l.lower())]
+            for ln in hits[:8]:
+                print("    E| %s" % ln[:120])
+            if not hits:
+                print("    (EIGEN/BUCKLING FACTOR 포함 줄 없음 -> 좌굴이 모드를 못 낸 상태)")
+        except Exception as _e:
+            print("[record] (진단 출력 실패: %s)" % _e)
         return 1
 
     g_rel, g_abs = gaps(vals)
