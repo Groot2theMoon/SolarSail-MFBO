@@ -708,7 +708,8 @@ elif fidelity == 'HF':
         if os.environ.get('MFBO_BASE_PROBE', '1') != '0':
             _probe = os.path.join(_HERE, 'base_state_probe.py')
             if os.path.exists(_probe) and os.path.exists(HF_ODB):
-                for _st in ('Step-GlobalTension', 'Step-ClampTension'):
+                #   Step-Trigger: u3 를 처음 푼 스텝 -> 'trigger 만으로 주름이 났는지' 판정
+                for _st in ('Step-GlobalTension', 'Step-Trigger', 'Step-ClampTension'):
                     print("[R-13] base state 측정: %s / %s" % (HF_ODB, _st))
                     subprocess.call('abaqus python "%s" "%s" %s' % (_probe, HF_ODB, _st),
                                     shell=True)
