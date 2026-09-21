@@ -458,7 +458,7 @@ if fidelity == 'HF':
         name='Step-Trigger',
         previous='Step-GlobalTension',
         nlgeom=ON,
-        stabilizationMagnitude=STAB,      # MFBO_STAB (기본 1e-3)
+        stabilizationMagnitude=STAB,      # 코드 상수 STAB (기본 2e-4)
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         initialInc=0.1, minInc=1e-8, maxInc=1.0, maxNumInc=50
     )
@@ -713,7 +713,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-ClampTension',   # B안: ClampTension 을 체인에 유지
         nlgeom=ON, 
-        stabilizationMagnitude=STAB,      # MFBO_STAB (기본 1e-3) 
+        stabilizationMagnitude=STAB,      # 코드 상수 STAB (기본 2e-4) 
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
         adaptiveDampingRatio=0.05,
