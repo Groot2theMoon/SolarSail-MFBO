@@ -241,7 +241,11 @@ V_CR = clamp_coord_R(x_c)
 # 버클 base state(Step-ClampTension)의 장력을 키워 시스템행렬 부정정(음수 고유값)을 해소.
 # 1.0 = 기존값.  조정:  PowerShell  $env:MFBO_PRETENSION_SCALE="30"
 PRETENSION_SCALE = float(os.environ.get("MFBO_PRETENSION_SCALE", "10"))
-DISP_GLOBAL = 0.000005 * PRETENSION_SCALE
+# R-13 실측(2026-09-21): PRETENSION_SCALE=10 -> 평균 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배.
+#   운용점을 목표에 맞추려면 약 33배(= DISP_GLOBAL 165um)가 필요하다.
+#   단 PRETENSION_SCALE 는 최종 하중까지 함께 키우므로(포스트버클 변위 1mm -> 3.3mm),
+#   운용점만 따로 맞추려면 절대값 노브 MFBO_DISP_GLOBAL / MFBO_GLOBAL_FINAL 을 쓴다.
+DISP_GLOBAL = float(os.environ.get("MFBO_DISP_GLOBAL", 0.000005 * PRETENSION_SCALE))
 CLAMP_PULL = DISP_GLOBAL * d_c
 # 좌굴 스텝의 perturbation 변위 (K_delta 를 만드는 항).
 #   Abaqus 문서 §6.2.3: 좌굴 스텝의 nonzero prescribed BC 는 '증분 응력'에 기여하고,
@@ -253,7 +257,7 @@ CLAMP_PULL = DISP_GLOBAL * d_c
 #   스윕: PowerShell  $env:MFBO_PERT_MAG="0.001"
 PERTURBATION = float(os.environ.get("MFBO_PERT_MAG", "0.01"))
 CLAMP_PERT = PERTURBATION * d_c
-GLOBAL_FINAL = 0.0001 * PRETENSION_SCALE
+GLOBAL_FINAL = float(os.environ.get("MFBO_GLOBAL_FINAL", 0.0001 * PRETENSION_SCALE))
 CLAMP_FINAL = GLOBAL_FINAL * d_c
 
 
