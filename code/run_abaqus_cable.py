@@ -379,7 +379,7 @@ FINAL_DISP = 0.00015
 
 cmd = ""
 if fidelity == 'LF':
-    run_job_safely('Buckle_Analysis') #< 굳이 lf에서 버클모드를 찾을 필요 없음
+    run_job_safely('Buckle_Analysis')
 
     my_model.StaticStep(
         name='Step-HighTension',
