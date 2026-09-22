@@ -164,12 +164,18 @@ def main():
     print('[8] 부호 변화(웨이브 추정):')
     print('       가로 중앙줄: 유효 bin=%2d  부호변화=%2d' % (len(row_x), wx))
     print('       세로 중앙줄: 유효 bin=%2d  부호변화=%2d' % (len(col_y), wy))
+    # 파장은 '실제로 값이 존재하는 구간(유효 bin)'을 기준으로 계산해야 한다.
+    # (이전 버전은 2*sx 를 써서 삼각형 중앙줄에서 파장을 4배 과대평가했다.)
+    ext_x = len(row_x) * sx / float(NC)
+    ext_y = len(col_y) * sy / float(NR)
     if wx > 0:
-        lam = 2.0 * sx / (wx + 1)
-        print('       가로 추정 파장 ~ %.4g m = %.0f t' % (lam, lam / T))
+        lam = ext_x / (wx + 1)
+        print('       가로 유효구간 %.4g m 안에 웨이브 %d개 -> 파장 ~ %.4g m = %.0f t'
+              % (ext_x, wx, lam, lam / T))
     if wy > 0:
-        lam = 2.0 * sy / (wy + 1)
-        print('       세로 추정 파장 ~ %.4g m = %.0f t' % (lam, lam / T))
+        lam = ext_y / (wy + 1)
+        print('       세로 유효구간 %.4g m 안에 웨이브 %d개 -> 파장 ~ %.4g m = %.0f t'
+              % (ext_y, wy, lam, lam / T))
 
     print()
     print('[해석 기준] 웨이브 수 1~2 = 긴 파장 소수 주름(국소 폴드 위험) /')
