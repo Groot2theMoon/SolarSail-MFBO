@@ -16,13 +16,17 @@ Flow (Simulation Logic):
     1. 형상(Geometry) & 물성(Material) & 메쉬(Mesh) 생성 (공통)
     2. 초기 장력(Global Tension) 단계 정의
     3. Fidelity에 따른 분기:
-       [LF 모드]
+       [LF 모드]  (클램프 있음 + 완전 형상)
          - 'Step-GlobalTension' -> 'Step-ClampTension' -> 'Step-HighTension' 순차 진행.
          - 주름(Wrinkle) 거동을 무시하고 선형적(혹은 단순 기하 비선형) 강성을 빠르게 계산.
-         - 'Buckle_Analysis'는 모드 확인용으로만 돌리고 실제 결과엔 반영 안 함.
-       [HF 모드]
-         - 1차: 'Step-GlobalTension' -> 'Step-ClampTension' 상태에서 고유치 해석(Buckle) 수행.
-         - 2차: 1차 해석 결과(.odb)에서 고유모드를 추출하여 초기 결함(Imperfection)으로 주입.
+         - 임퍼펙션(*IMPERFECTION) 없음 -> 좌굴(Buckle) 잡도 돌리지 않는다(모드 불필요).
+       [HF 모드]  (클램프 있음 + 임퍼펙션 주입 = 2-모델 레시피, 2026-09-22)
+         - 1차: 모드 소스는 '클램프 없는' 별도 모델의 좌굴 런이다(run_abaqus_cable.py 또는
+                전용 모드 스크립트). 클램프가 있는 base state 는 선형 좌굴 스펙트럼을 주지
+                못한다(실측: 음수고유값 598~2897 / CONVERGED=0 / EIGENVALUES CANNOT BE FOUND).
+         - 2차: 그 .fil 을 IMPERFECTION_NAME 으로 스테이징해 초기 결함으로 주입한다.
+                aba_imperfection.py 가 모드 개수를 검증하고, 부족하면 HF 제출 전에 중단한다.
+                자기 좌굴 잡(Buckle_Analysis)은 클램프 base state 증거용으로만 유지한다.
          - 3차: 'Step-Postbuckle' 수행 (Riks/Stabilization). 주름 거동을 포함한 비선형 해석.
     4. Post-Processing:
        - 'eval_abaqus.py'를 subprocess로 호출하여 ODB에서 필요한 값(추력, 면적 등)만 추출.
@@ -245,9 +249,9 @@ RUN_SELF_BUCKLE_JOB = True   # 자기(클램프) 좌굴 잡도 계속 돌린다 
 # ---- 2-모델 레시피 끝 ----------------------------------------------------
 # A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
 #   base state 가 부정정이면 요청 개수를 줄이는 것이 subspace 수렴에 유리하다.
-#   스윕: PowerShell  $env:MFBO_N_EIG_BUCKLE="10"   (기본 100)
+#   (구 MFBO_N_EIG_BUCKLE 환경변수 스윕은 2026-09-21 제거됨 -> 값을 바꾸려면 이 상수를 직접 수정)
 N_EIG_BUCKLE = 100
-# subspace 반복의 기저 벡터 수. 스윕: $env:MFBO_VECTORS="60"   (기본 250)
+# subspace 반복의 기저 벡터 수 (구 MFBO_VECTORS 환경변수는 2026-09-21 제거됨)
 BUCKLE_VECTORS = 250
 
 MODEL_NAME = 'SailModel_Triangle'
@@ -421,7 +425,8 @@ rp2_obj, rp2_reg = create_rigid_patch('Right', V2, radius=0.2)
 rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 
 # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5)
-# [대조 실험] MFBO_NO_CLAMP=1 이면 클램프(강체패치 + cable_CL/CR + BC)를 아예 만들지 않는다.
+# [대조 실험] 아래 NO_CLAMP 상수를 True 로 바꾸면 클램프(강체패치 + cable_CL/CR + BC)를
+#   아예 만들지 않는다 (환경변수 아님 — 2026-09-21 부로 환경변수는 전부 제거됨).
 #   run_abaqus_cable.py(성공)는 클램프가 없다. 우리만 클램프가 base state 하중의 33%를
 #   받아 sigma2<0 영역(21.5%)을 만들고, 그 때문에 좌굴 고유값 추출이 실패한다는 가설을
 #   클램프만 제거해 직접 검증한다.
@@ -429,7 +434,7 @@ NO_CLAMP = False                 # True = 클램프 생략 진단 모델 (run_ab
 # 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
 SIGMA0 = 500.0                   # 수렴 보조용 초기응력 [Pa]
 if NO_CLAMP:
-    print("[run_abaqus] MFBO_NO_CLAMP=1 : 클램프(cable_CL/CR + 강체패치 + BC) 없이 모델링 (대조 실험)")
+    print("[run_abaqus] NO_CLAMP=True : 클램프(cable_CL/CR + 강체패치 + BC) 없이 모델링 (대조 실험)")
     rp_cl_obj = rp_cr_obj = rp_cl_reg = rp_cr_reg = None
 else:
     rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=0.2)
@@ -528,7 +533,7 @@ else:
         previous='Step-GlobalTension',
         numEigen=N_EIG_BUCKLE,
         eigensolver=SUBSPACE,
-        vectors=BUCKLE_VECTORS,      # A: 기본 8 -> 250 (MFBO_VECTORS 로 조정)
+        vectors=BUCKLE_VECTORS,      # A: 기본 8 -> 250
         maxIterations=5000,
     )
 # *IMPERFECTION, STEP=n 의 n 은 'Buckle_Analysis.fil 안의 스텝 번호'
@@ -751,7 +756,7 @@ elif fidelity == 'HF':
     #   - 이유: Buckle_Analysis.dat 는 '다음 설계점'의 좌굴 잡이 시작될 때 삭제되므로
     #           여기서 고유치를 뽑아 이력(JSONL)에 남기지 않으면 회고 분석이 불가능하다.
     #   - 기록 전용: 실패해도 해석에는 전혀 영향을 주지 않는다 (예외 전부 삼킴).
-    #   - 끄려면 환경변수 MFBO_EIG_RECORD=0
+    #   - 끄려면 EIG_RECORD 상수를 False 로 (구 MFBO_EIG_RECORD 환경변수는 제거됨)
     try:
         if EIG_RECORD:
             _rec = os.path.join(_HERE, 'coalescence_check.py')
@@ -772,7 +777,7 @@ elif fidelity == 'HF':
     # [R-13 / 스파이크 10-0] base state(GlobalTension 말단) 응력·반력 측정
     #   좌굴 성공/실패와 무관하게 Buckle_Analysis.odb 의 GlobalTension 프레임에서 읽는다.
     #   -> "프리텐션 운용점이 물리적인가"를 실측으로 답하기 위한 것 (미해결 최우선 1건).
-    #   끄려면 환경변수 MFBO_BASE_PROBE=0
+    #   끄려면 BASE_PROBE 상수를 False 로 (구 MFBO_BASE_PROBE 환경변수는 제거됨)
     try:
         if BASE_PROBE:
             _probe = os.path.join(_HERE, 'base_state_probe.py')
