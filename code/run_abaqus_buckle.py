@@ -23,8 +23,9 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
 
 산출물 (code/buckle/)
     <job>.odb / .dat / .msg / .sta / .fil / .diag.txt
-    job 이름은 인자+요소에서 자동 생성한다: Buckle_xc<NNN>_d<NNN>um_<elem>
-      (예: Buckle_xc050_d1000um_s4r) — 요소/케이스가 바뀌어도 산출물이 서로 덮이지 않는다.
+    job 이름은 인자+요소+클램프모드에서 자동 생성한다: Buckle_xc<NNN>_d<NNN>um_<elem>_<clamp>
+      (예: Buckle_xc050_d0050um_s4r_driven) — 케이스가 바뀌어도 산출물이 서로 덮이지 않는다.
+    CLAMP_MODE 는 상단 상수: none | passive | driven | fixed (클램프 존재/작동 분리).
     고유값 표는 .dat 의 MODE NO / EIGENVALUE 블록에 있고, 스크립트가 콘솔에도 덤프한다.
 
 HF 에서 모드를 쓸 때 — 경로 주의 (HF 잡의 작업 디렉터리는 code/aba 다)
@@ -113,6 +114,24 @@ def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 PRETENSION_SCALE = 10.0
 DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 기본 코너 당김 5e-5 m
 
+# ---- 클램프 처리 모드 (2026-09-22 신설) ----
+#   A-route(run_abaqus.py)의 클램프는 '존재'와 '작동'이 분리돼 있다:
+#     존재 = 강체패치 + 케이블(Tie), u3=0
+#     작동 = Step-ClampTension 에서 다리변의 **외향 법선** (∓1,+1)/sqrt2 방향으로
+#            CLAMP_PULL = DISP_GLOBAL*d_c 만큼 당김. 그리고 좌굴 base state 는
+#            그 당김 **이후** 로 잡는다 (BuckleStep(previous='Step-ClampTension')).
+#   C-route 는 케이블이 없으므로 RP 를 직접 구속/구동해 같은 하중 경로를 만든다:
+#     'none'    : 패치 없음                -> 논문 재현 기준선 (P0)
+#     'passive' : u3=0, in-plane 자유      -> A-route 의 GlobalTension 직후 (P1)
+#     'driven'  : u3=0 + 법선 방향 구동    -> A-route 의 ClampTension 직후 (P2, 설계 base)
+#     'fixed'   : u1=u2=u3=0 완전 고정     -> 기존 동작 (수치 진단용, P3)
+CLAMP_MODE = 'fixed'
+CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c, A-route 와 동일)
+# 오타로 조용히 다른 케이스가 되는 것을 막는다 (값 검증은 메쉬 생성 전에).
+if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
+    raise RuntimeError("CLAMP_MODE must be 'none'|'passive'|'driven'|'fixed' (got %r)"
+                       % (CLAMP_MODE,))
+
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01     # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta)
 N_EIG_BUCKLE = 100      # 추출 요청 고유값 수
@@ -126,6 +145,10 @@ BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 �
 # Abaqus API 는 **심볼릭 상수**를 요구한다. 문자열을 그대로 넘기면
 #   "eigensolver; found string, expecting SUBSPACE, LANCZOS or AMS"
 # 로 즉시 죽는다(2026-09-22 실측: 전 케이스 BUILD_FAIL). 여기서 변환해서 넘긴다.
+if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
+    # 원장 P3: 값 검증이 없으면 dict KeyError 로 죽어 원인이 안 보인다.
+    raise RuntimeError("BUCKLE_SOLVER must be 'SUBSPACE' or 'LANCZOS' (got %r)"
+                       % (BUCKLE_SOLVER,))
 EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
 
 SIGMA0 = 500.0          # 초기응력 [Pa] — 수렴 보조 (run_abaqus_new.py 와 동일)
@@ -192,25 +215,39 @@ def parse_args(argv):
             stop = t
             break
     nums.reverse()
-    if not (1 <= len(nums) <= 2):
+    if not (1 <= len(nums) <= 3):
         raise RuntimeError(
-            'Expected 1 or 2 trailing numeric arguments (<x_c> [disp_m]), got %r '
+            'Expected 1 to 3 trailing numeric arguments (<x_c> [disp_m] [clamp_pull_m]), got %r '
             '(first non-numeric token from the end: %r).\n'
-            'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]'
+            'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m]'
             % (nums, stop))
-    return nums[0], (nums[1] if len(nums) > 1 else None)
+    return (nums[0],
+            (nums[1] if len(nums) > 1 else None),
+            (nums[2] if len(nums) > 2 else None))
 
 
-x_c, _disp_arg = parse_args(sys.argv)
+x_c, _disp_arg, _clamp_arg = parse_args(sys.argv)
 DISP = DISP_GLOBAL if _disp_arg is None else _disp_arg
+# 클램프 법선 당김 — 기본은 코너 당김과 같은 비율(A-route 의 d_c), CLI 3번째 인자로 직접 지정 가능.
+#   예: -- 0.5 0 5e-5  -> 코너 미구동 + 클램프만 5e-5 m (클램프 단독 구동 진단)
+CLAMP_PULL = (DISP * CLAMP_DC if _clamp_arg is None else _clamp_arg)
+CLAMP_PERT = PERTURBATION * CLAMP_DC    # 좌굴 스텝 클램프 섭동 [m] (A-route: PERTURBATION*d_c)
 
 if not (0.03 <= x_c <= 0.95):
     # 원장 M-8: x_c < 0.028 이면 클램프 패치가 정점 패치와 겹치고, x_c ~ 1 이면
     # 모서리 패치와 겹친다 -> 조용히 다른 모델이 된다. 경고만 찍고 진행한다.
     print("%s WARNING: x_c=%g is outside the safe band (0.03, 0.95) — "
           "the clamp patch may overlap a vertex patch (ledger M-8)." % (TAG, x_c))
-if DISP <= 0.0:
-    raise RuntimeError('disp_m must be > 0 (got %r).' % (DISP,))
+if DISP < 0.0:
+    raise RuntimeError('disp_m must be >= 0 (got %r).' % (DISP,))
+if DISP == 0.0:
+    # 코너를 구동하지 않는다 = 클램프 단독 구동 케이스 (진단용).
+    # Initial 단계의 Disp_Control_Right/Left(u1=u2=0) 값이 그대로 유지된다.
+    print("%s DISP=0 : 코너 미구동 — 클램프 단독 구동 케이스로 진행한다." % (TAG,))
+if CLAMP_MODE == 'driven' and CLAMP_PULL <= 0.0:
+    raise RuntimeError('CLAMP_MODE=driven 인데 CLAMP_PULL=%r <= 0 이다.' % (CLAMP_PULL,))
+print("%s CLAMP_MODE=%s d_c=%.3g -> CLAMP_PULL=%.4e m (buckle pert %.3e m)"
+      % (TAG, CLAMP_MODE, CLAMP_DC, CLAMP_PULL, CLAMP_PERT))
 
 V_CL = clamp_coord_L(x_c)
 V_CR = clamp_coord_R(x_c)
@@ -446,8 +483,12 @@ def build_model(disp):
     rp3_obj, rp3_reg = create_rigid_patch(a, inst_memb, 'Left', V3, radius=0.2)
 
     # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5) — 동일
-    rp_cl_obj, rp_cl_reg = create_rigid_patch(a, inst_memb, 'CL', V_CL, radius=0.2)
-    rp_cr_obj, rp_cr_reg = create_rigid_patch(a, inst_memb, 'CR', V_CR, radius=0.2)
+    #   CLAMP_MODE='none' 이면 패치를 아예 만들지 않는다 (논문 재현 기준선 P0).
+    if CLAMP_MODE == 'none':
+        rp_cl_obj = rp_cr_obj = None
+    else:
+        rp_cl_obj, rp_cl_reg = create_rigid_patch(a, inst_memb, 'CL', V_CL, radius=0.2)
+        rp_cr_obj, rp_cr_reg = create_rigid_patch(a, inst_memb, 'CR', V_CR, radius=0.2)
 
     # [제외] connect_cable(...) 5개 — 케이블 배치/부착 없음.
     # 케이블 버전에서 케이블은 'RP <-> 구동 끝단' 사이의 하중 전달 로드였다.
@@ -456,8 +497,9 @@ def build_model(disp):
     a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
     a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
     a.Set(name='RP_Left_Set', referencePoints=(a.referencePoints[rp3_obj.id],))
-    a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
-    a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
+    if CLAMP_MODE != 'none':
+        a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
+        a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
     a.regenerate()
 
     # ---- Step 1: GlobalTension (프리텐션) — run_abaqus_new.py 와 동일 ----
@@ -544,13 +586,41 @@ def build_model(disp):
         u2=-disp_a * sin_val
     )
 
-    # 클램프 RP: 고정 (케이블 버전은 클램프 케이블 끝단을 u3=0 으로 잡았고 u1,u2 는
-    #   ClampTension 에서 구동했다. 좌굴 모델은 논문 (b) 레시피대로 클램프를 구동하지
-    #   않으므로 클램프 위치를 그대로 고정한다.)
-    my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                            region=a.sets['RP_CL_Set'], u1=0, u2=0, u3=0)
-    my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
-                            region=a.sets['RP_CR_Set'], u1=0, u2=0, u3=0)
+    # ---- 클램프 RP 처리 (CLAMP_MODE) ----
+    #   A-route 는 클램프를 '존재'(패치 + 케이블 Tie)와 '작동'(Step-ClampTension 에서
+    #   다리변 법선 방향 구동)으로 분리하고, 좌굴 base state 를 당김 **이후**로 잡는다.
+    #   C-route 는 케이블이 없으므로 RP 를 직접 구속/구동해 같은 하중 경로를 만든다.
+    #     none    : (패치 없음 — 여기서는 아무것도 하지 않는다)
+    #     passive : u3=0, in-plane 자유
+    #     driven  : u3=0 + 법선 (∓1,+1)/sqrt2 구동 (Step-GlobalTension)
+    #     fixed   : u1=u2=u3=0 완전 고정 (기존 동작)
+    #   [판정] 2026-09-22 이전 주석의 "논문 (b) 레시피대로 클램프를 구동하지 않는다"는
+    #   근거가 성립하지 않는다 — 논문 좌굴모델에는 클램프 자체가 없다. 고정은 우리 선택이다.
+    _sq2 = 2.0 ** 0.5
+    if CLAMP_MODE == 'none':
+        pass
+    elif CLAMP_MODE == 'fixed':
+        my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
+                                region=a.sets['RP_CL_Set'], u1=0, u2=0, u3=0)
+        my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
+                                region=a.sets['RP_CR_Set'], u1=0, u2=0, u3=0)
+    else:
+        my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
+                                region=a.sets['RP_CL_Set'], u3=0)
+        my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
+                                region=a.sets['RP_CR_Set'], u3=0)
+        if CLAMP_MODE == 'driven':
+            # A-route 와 동일 패턴: u3 전용 BC 와 in-plane 구동 BC 를 분리해 만든다.
+            my_model.DisplacementBC(name='Disp_Clamp_CL', createStepName='Initial',
+                                    region=a.sets['RP_CL_Set'], u1=0, u2=0)
+            my_model.DisplacementBC(name='Disp_Clamp_CR', createStepName='Initial',
+                                    region=a.sets['RP_CR_Set'], u1=0, u2=0)
+            my_model.boundaryConditions['Disp_Clamp_CL'].setValuesInStep(
+                stepName='Step-GlobalTension',
+                u1=-CLAMP_PULL/_sq2, u2=+CLAMP_PULL/_sq2)
+            my_model.boundaryConditions['Disp_Clamp_CR'].setValuesInStep(
+                stepName='Step-GlobalTension',
+                u1=+CLAMP_PULL/_sq2, u2=+CLAMP_PULL/_sq2)
 
     # ---- Buckle 스텝: 논문 (c) "z-displacement is fixed in the three edges" ----
     all_edges = inst_memb.edges
@@ -575,6 +645,16 @@ def build_model(disp):
         u2=-PERTURBATION * sin_val
     )
 
+    # 클램프 섭동 (driven 모드만): A-route 의 CLAMP_PERT = PERTURBATION*d_c 와 동일.
+    #   클램프도 구동점이면 좌굴 스텝에서 같은 방식으로 섭동을 줘야 K_delta 가 일관된다.
+    if CLAMP_MODE == 'driven':
+        my_model.boundaryConditions['Disp_Clamp_CL'].setValuesInStep(
+            stepName='Step-Buckle',
+            u1=-CLAMP_PERT/_sq2, u2=+CLAMP_PERT/_sq2)
+        my_model.boundaryConditions['Disp_Clamp_CR'].setValuesInStep(
+            stepName='Step-Buckle',
+            u1=+CLAMP_PERT/_sq2, u2=+CLAMP_PERT/_sq2)
+
     return model_name
 
 # ============================================================================
@@ -583,10 +663,11 @@ def build_model(disp):
 # 요소/설정이 바뀐 케이스가 같은 job 이름으로 제출되면 run_job_safely 가 stale 산출물
 # (.dat/.msg/.odb/.diag)을 지우고 제출해 직전 결과 증거가 사라진다
 # (2026-09-22 실제 발생: S4 런이 S4R 런 산출물을 덮어 lambda 표를 잃었다).
-# 그래서 job 이름에 요소 태그를 넣는다 — ELEM_TAG 는 build_model 의 elemCode 와 짝.
+# 그래서 job 이름에 요소 태그 + 클램프 모드를 넣는다 (산출물이 서로 덮이지 않는다).
 ELEM_TAG = 's4r'
-JOB_NAME = 'Buckle_xc%03d_d%03dum_%s' % (int(round(x_c * 100.0)),
-                                         int(round(DISP * 1.0e6)), ELEM_TAG)
+JOB_NAME = 'Buckle_xc%03d_d%03dum_%s_%s' % (int(round(x_c * 100.0)),
+                                            int(round(DISP * 1.0e6)),
+                                            ELEM_TAG, CLAMP_MODE)
 
 print("")
 print("=" * 78)
