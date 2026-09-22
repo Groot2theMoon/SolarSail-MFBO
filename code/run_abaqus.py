@@ -90,6 +90,12 @@ EIG_RECORD = True                # 좌굴 고유치 이력 기록 (coalescence_c
 _RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_RUN)
+
+# ---- 임퍼펙션 소스 스테이징 모듈 (2-모델 레시피, stdlib only) ----
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: E402
+                              imperfection_text, report)
 print("[run_abaqus] _HERE = %s" % _HERE)
 print("[run_abaqus] _RUN  = %s" % _RUN)
  
@@ -215,6 +221,28 @@ def print_job_diag(job_name):
 
 sqrt2 = 1.414
 N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
+
+# ---- 2-모델 레시피: 임퍼펙션(좌굴모드) 소스 분리 (2026-09-22) ----------------
+#   모드 추출 = run_abaqus_cable.py (클램프 없음 -> 실측상 항상 성공, 모드 4개)
+#     abaqus cae noGUI=run_abaqus_cable.py          (code\ 에 Buckle_Analysis.fil 생성)
+#     abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>   (이 파일을 스테이징해 소비)
+#   근거: 클램프 패치는 기존 노드에 Coupling 만 걸어 메쉬를 바꾸지 않으므로 두 모델의
+#         막 노드 좌표/라벨이 동일하다 -> *IMPERFECTION 의 노드 라벨 매핑이 성립한다.
+#         (클램프가 있는 base state 는 음수 고유값 598~2897/CONVERGED=0 -> 모드 추출 불가)
+#         상세 근거·실패 이력: aba_imperfection.py, references/buckle-failure-triage.md
+MODE_SOURCE = 'cable'        # 'cable' = 외부(클램프 없는) .fil | 'self' = 자기 좌굴 잡
+MODE_SOURCE_FIL = os.path.join('..', 'Buckle_Analysis.fil')   # code\aba -> code\
+MODE_SOURCE_DAT = os.path.join('..', 'Buckle_Analysis.dat')
+MODE_SOURCE_MSG = os.path.join('..', 'Buckle_Analysis.msg')
+MODE_SOURCE_STEP = 2         # 소스 .fil 안의 스텝 번호 (케이블 런: 1=GlobalTension 2=Buckle)
+IMPERFECTION_NAME = 'Cable_Buckle'   # 자기 좌굴 잡 이름과 분리 -> 원장 C-1(조용한 0-모드 소비) 차단
+IMPERFECTION_MODES = (1, 2, 3, 4)
+IMPERFECTION_AMPL_T = 0.10   # 막 두께 배수(Galhofo 채택값 0.10 t). 진폭 민감도 = 0.50 으로 바꿔 재실행
+RUN_SELF_BUCKLE_JOB = True   # 자기(클램프) 좌굴 잡도 계속 돌린다 -> 클램프 base state probe
+                             # (코너 당김 하중분담) + 음수고유값 진단 증거를 함께 얻는다.
+                             # 이 잡이 sys.exit(1) 로 스크립트를 끊으면 False 로 두고,
+                             # 그때는 base state probe 가 '건너뜀' 으로 출력된다.
+# ---- 2-모델 레시피 끝 ----------------------------------------------------
 # A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
 #   base state 가 부정정이면 요청 개수를 줄이는 것이 subspace 수렴에 유리하다.
 #   스윕: PowerShell  $env:MFBO_N_EIG_BUCKLE="10"   (기본 100)
@@ -712,7 +740,12 @@ elif fidelity == 'HF':
         sigma12=0.0, sigma13=0.0, sigma23=0.0
     )
 
-    run_job_safely('Buckle_Analysis', model_name=BUCKLE_MODEL)   # P0-2: 500 Pa 상태에서 좌굴모드 산출
+    if RUN_SELF_BUCKLE_JOB:
+        # 자기(클램프) 좌굴 잡: 모드 소스가 아니라 '클램프 base state 증거 + 실패 진단'용이다.
+        #   (모드 추출은 MODE_SOURCE='cable' 경로가 담당 -> 클램프 모델은 CONVERGED=0.)
+        run_job_safely('Buckle_Analysis', model_name=BUCKLE_MODEL)   # P0-2: 500 Pa 상태에서 좌굴모드 산출
+    else:
+        print("[IMPERFECTION] 자기 좌굴 잡 건너뜀 (RUN_SELF_BUCKLE_JOB=False)")
 
     # 좌굴 모드 병합(coalescence) 진단용 고유치 기록
     #   - 이유: Buckle_Analysis.dat 는 '다음 설계점'의 좌굴 잡이 시작될 때 삭제되므로
@@ -810,10 +843,32 @@ elif fidelity == 'HF':
     # Buckle_Analysis.odb 파일의 결과(고유모드)를 초기 결함으로 주입
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
     
-    imp_scale = THICKNESS * 0.1 # Galhofo Reference
+    # --- 2-모델 레시피: 임퍼펙션 소스 (2026-09-22) ---------------------------
+    #   모드 형상은 '클램프 없는' 모델에서 나온 것을 쓴다(Galhofo 와 동일한 구조).
+    #   소스 .fil 을 IMPERFECTION_NAME 으로 스테이징 -> 자기 좌굴 잡의 0-모드 .fil 이
+    #   조용히 소비되는 사고(원장 C-1)를 이름 분리로 차단하고, 모드 개수를 검증한다.
+    imp_scale = THICKNESS * IMPERFECTION_AMPL_T   # Galhofo 채택값 0.10 t
+    if MODE_SOURCE == 'self':
+        imp_name, imp_step = 'Buckle_Analysis', _BUCKLE_STEP_NO
+        print("[IMPERFECTION] 소스=self 좌굴 잡(model=%s) STEP=%d amplitude=%.3e m"
+              % (BUCKLE_MODEL, imp_step, imp_scale))
+    else:
+        try:
+            _st = stage(MODE_SOURCE_FIL, IMPERFECTION_NAME, os.getcwd(),
+                        IMPERFECTION_MODES, dat_hint=MODE_SOURCE_DAT,
+                        msg_hint=MODE_SOURCE_MSG, here=_HERE)
+        except ImperfectionSourceError as _imp_err:
+            print("!!! ERROR: 임퍼펙션 소스 스테이징 실패 -> HF 잡을 제출하지 않고 중단합니다.")
+            print(str(_imp_err))
+            sys.exit(1)
+        imp_name, imp_step = _st['name'], MODE_SOURCE_STEP
+        print("[IMPERFECTION] %s STEP=%d amplitude=%.3e m (모드 %s)"
+              % (report(_st), imp_step, imp_scale, list(IMPERFECTION_MODES)))
+        if _st['modes'] < N_EIG:
+            print("!!! WARNING: 소스 모드 %d개 < N_EIG=%d -> 요청 모드 일부만 주입됩니다."
+                  % (_st['modes'], N_EIG))
 
-    imp_text = ("*IMPERFECTION, FILE=Buckle_Analysis, STEP=%d\n" % _BUCKLE_STEP_NO +
-                "\n".join("%d, %e" % (m, imp_scale) for m in range(1, N_EIG + 1)))
+    imp_text = imperfection_text(imp_name, imp_step, IMPERFECTION_MODES, imp_scale)
 
     # 키워드 삽입 위치 찾기 : *STEP 블록 직전에 삽입하는 것이 안전함
     inserted = False
