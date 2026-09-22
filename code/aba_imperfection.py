@@ -96,6 +96,94 @@ def count_modes(dat_path=None, msg_path=None):
     return 0
 
 
+# =====================================================================
+# ODB 모드표 -> 기하 섭동 (2026-09-22)
+#   `abaqus python aba_mode_from_odb.py <src.odb> <고유스텝> <out.txt> [n]` 이 만든 표를 읽는다.
+#   표의 u3 은 모드별 max|u3|=1 정규화 + 부호 고정이므로, 진폭만 곱해 더하면
+#   *IMPERFECTION 의 'mode, scale' 합 규약과 같은 기하 섭동이 된다(셸에서는 노드 좌표 섭동 = 임퍼펙션).
+#   .fil 경로와 달리 *BUCKLE 스텝의 파일출력 금지에 걸리지 않는다(원본 docstring 의 계획 경로).
+# =====================================================================
+MODE_TABLE_HEADER = 'MODE'
+
+
+def load_mode_table(path, modes=(1, 2, 3, 4)):
+    """모드표를 {mode: {node_label: u3(정규화)}} 로 읽는다. 문제가 있으면 ImperfectionSourceError."""
+    if not os.path.exists(path):
+        raise ImperfectionSourceError(
+            "%s 를 찾지 못했습니다.\n  먼저 모드표를 만드세요:\n"
+            "    abaqus python aba_mode_from_odb.py <소스.odb> <고유스텝> \"%s\" %d"
+            % (path, path, len(modes)))
+    want = set(int(m) for m in modes)
+    table = {}
+    cur = None
+    with open(path, "r") as f:
+        for line in f:
+            s = line.strip()
+            if not s or s.startswith('#'):
+                continue
+            if s.upper().startswith(MODE_TABLE_HEADER):
+                parts = s.split()
+                if len(parts) < 2 or not parts[1].isdigit():
+                    raise ImperfectionSourceError("모드표 %s: 잘못된 MODE 행 %r" % (path, s))
+                cur = int(parts[1])
+                if cur in want:
+                    table[cur] = {}
+                continue
+            if cur is None or cur not in want:
+                continue
+            parts = s.split()
+            if len(parts) < 2:
+                raise ImperfectionSourceError("모드표 %s: 잘못된 행 %r" % (path, s))
+            table[cur][int(parts[0])] = float(parts[1])
+    missing = sorted(want - set(table.keys()))
+    if missing:
+        raise ImperfectionSourceError("모드표 %s 에 모드 %s 가 없습니다 (있는 것: %s)"
+                                      % (path, missing, sorted(table.keys())))
+    for m in sorted(table):
+        if not table[m]:
+            raise ImperfectionSourceError("모드표 %s: 모드 %d 가 비어 있습니다" % (path, m))
+    return table
+
+
+def mode_table_info(path):
+    """모드표 헤더(# key=value)를 dict 로 돌려준다(추적용: source/step/instance).
+
+    출처를 상수로 중복 기재하지 않고 표에서 읽어 로그에 남긴다(교란 차단: 엉뚱한 ODB 를 쓰면 로그가 말해준다).
+    """
+    info = {}
+    if not os.path.exists(path):
+        return info
+    with open(path, "r") as f:
+        for line in f:
+            s = line.strip()
+            if not s.startswith('#'):
+                break
+            body = s.lstrip('#').strip()
+            if '=' in body:
+                k, v = body.split('=', 1)
+                info[k.strip()] = v.strip()
+    return info
+
+
+def build_perturbation(table, amplitude, modes=(1, 2, 3, 4)):
+    """{label: Δz} = Σ_modes amplitude * φ_mode(label). (*IMPERFECTION 의 합 규약과 동일)"""
+    out = {}
+    for m in modes:
+        for lab, u3 in table[int(m)].items():
+            out[lab] = out.get(lab, 0.0) + amplitude * u3
+    return out
+
+
+def perturbation_report(pert):
+    """로그용 한 줄 요약(섭동의 실현 크기를 정직하게 남긴다)."""
+    if not pert:
+        return "빈 섭동"
+    vals = [abs(v) for v in pert.values()]
+    lab_max = max(pert.items(), key=lambda kv: abs(kv[1]))[0]
+    return ("노드 %d개, max|dz|=%.3e m (노드 %s), 평균|dz|=%.3e m"
+            % (len(pert), max(vals), lab_max, sum(vals) / len(vals)))
+
+
 def resolve_source(hint, run_dir=None, here=None):
     """소스 .fil 의 실제 경로를 찾는다. 못 찾으면 후보 목록과 함께 예외."""
     cands = []

@@ -196,6 +196,7 @@ MODE_STABILIZATION = 0.0002                  # GlobalTension 안정화 계수 (H
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 (케이블 런·HF 와 동일)
 N_EIG_BUCKLE = 100                           # subspace 요청 고유값 수
 BUCKLE_VECTORS = 250                         # subspace 기저 벡터 수
+MODE_FREQ_NUM_EIGEN = 10                     # 주파수 스텝 요청 모드 수 (업스트림 원본과 동일)
 N_MODE_FILE = 4                              # .fil 에 기록할 모드 수 (*NODE FILE, LAST MODE)
 INSERT_NODE_FILE = True                      # 좌굴모드 .fil 기록을 키워드로 '명시 요청'할지.
                                              #   케이블 런(성공)에는 이 요청이 없다 -> 2026-09-22 실패
@@ -390,13 +391,15 @@ MODE_STEP_NAME = 'Step-Mode' if MODE_STEP_TYPE == 'frequency' else 'Step-Buckle'
 if MODE_STEP_NAME in my_model.steps:
     del my_model.steps[MODE_STEP_NAME]
 if MODE_STEP_TYPE == 'frequency':
+    # 업스트림 원본과 같은 설정(numEigen=10, LANCZOS). 원본 주석 그대로:
+    #   "BuckleStep을 사용하는 것이 정석이고 옳으나, 매우 얇은 solar-sail 자체의 불안정성에 의해
+    #    negative eigenvalue만 찾는 경우가 대부분이라, mfbo 적용을 위해 Abaqus FrequencyStep으로 대체."
+    # CAE FrequencyStep 은 vectors/maxIterations 를 받지 않는 형태가 원본에서 검증됐다.
     my_model.FrequencyStep(
         name=MODE_STEP_NAME,
         previous='Step-GlobalTension',
-        numEigen=N_EIG_BUCKLE,
-        eigensolver=SUBSPACE,
-        vectors=BUCKLE_VECTORS,
-        maxIterations=5000
+        numEigen=MODE_FREQ_NUM_EIGEN,
+        eigensolver=LANCZOS
     )
 else:
     my_model.BuckleStep(
@@ -484,11 +487,15 @@ if not ok or n_modes <= 0:
     print("  라이선스 0: 위 [DIAG] 의 '음수 고유값 N개 vs 요청 M개' 판정을 먼저 본다.")
     sys.exit(1)
 
-print("RESULT:MODE_OK — 모드 %d개 추출. 파일: %s" % (n_modes, os.path.abspath(JOB_NAME + '.fil')))
-print("  스텝=%s(%s) / *NODE FILE 요청=%s" % (MODE_STEP_TYPE, MODE_STEP_NAME, INSERT_NODE_FILE))
-print("  주의: *BUCKLE 스텝은 .fil 출력이 금지된다(Abaqus 실측 경고)"
-      " -> 모드 소스는 주파수 스텝이어야 한다")
-print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>")
-print("  (run_abaqus.py 는 이 .fil 을 IMPERFECTION_NAME=%s 로 스테이징해 주입한다)"
-      % 'ClampFree_Buckle')   # run_abaqus.py 의 IMPERFECTION_NAME 과 같아야 한다
+print("RESULT:MODE_OK — 모드 %d개 계산. .odb=%s" % (n_modes, os.path.abspath(JOB_NAME + '.odb')))
+print("  스텝=%s(%s) / *NODE FILE 요청=%s (.fil 기록은 주파수 스텝에서만 가능)"
+      % (MODE_STEP_TYPE, MODE_STEP_NAME, INSERT_NODE_FILE))
+print("  [기본 경로] 모드표 추출(새 해석 없음, 토큰만) — code\\ 에서 실행:")
+print("    abaqus python aba_mode_from_odb.py %s %s modes_ClampFree_Buckle.txt %d"
+      % (JOB_NAME + '.odb', MODE_STEP_NAME, N_MODE_FILE))
+print("  (run_abaqus.py 는 ..\\modes_ClampFree_Buckle.txt = code\\modes_ClampFree_Buckle.txt 를 읽는다)")
+print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>"
+      "   (run_abaqus.py 기본 IMPERFECTION_MODE='odb_table' 가 위 모드표를 읽는다)")
+print("  (.fil 경로를 쓰려면 run_abaqus.py 에서 IMPERFECTION_MODE='file' 로 바꾸고,"
+      " 위 .fil 을 ..\\ClampFree_Buckle.fil 로 복사)")
 print("=" * 74)
