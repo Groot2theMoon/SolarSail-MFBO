@@ -63,9 +63,11 @@ import regionToolset
 import interaction
 import sys
 import os
+import re
 import subprocess
 import math
 import time
+import traceback
 import numpy as np
 
 TAG = '[run_abaqus_buckle]'
@@ -111,25 +113,59 @@ print("%s _HERE = %s" % (TAG, _HERE))
 print("%s _RUN  = %s" % (TAG, _RUN))
 print("DEBUG: All sys.argv: " + str(sys.argv))
 
-# CLI: x_c 하나만 받는다. 기존 'HF x_c d_c' 형식도 받되, 그 경우 x_c 를 정확히 집어낸다.
-#   (sys.argv[-1] 을 그냥 float() 하면 'HF 0.5 1.0' 에서 d_c=1.0 을 x_c 로 삼키는 침묵 오류가 난다.)
-_args = [a for a in sys.argv[1:] if a != '--']
-if len(_args) == 1:
-    _x_c_raw = _args[0]
-elif len(_args) == 3 and _args[0].upper() in ('LF', 'HF'):
-    _x_c_raw = _args[1]
-    print("%s 참고: fidelity='%s' 및 d_c='%s' 는 이 스크립트에서 쓰이지 않습니다 "
-          "(순수 선형 좌굴 전용)." % (TAG, _args[0], _args[2]))
-else:
-    print("Error: 인자를 해석할 수 없습니다: %s" % str(_args))
+# ================= CLI =================
+#  ★ 2026-09-22 실측: "아무것도 안 돌고 exit code 0" 이 나왔다. 원인은 두 취약점의 겹침이다.
+#   (1) 위치 기반 인덱싱(sys.argv[1:])은 Abaqus 가 넘기는 argv 형태에 따라 빈 리스트가 된다.
+#       검증된 기존 스크립트들(run_abaqus_new.py 등)이 sys.argv[-3:] (접미 기반)을 쓴 이유가 이것이다.
+#   (2) 그 실패를 sys.exit(1) 로 알리려 했더니 CAE 의 noGUI 러너에서 종료코드가 0으로 보였다.
+#       => "실패했는데 성공처럼 보인다" 는 최악의 형태. 그래서 이 스크립트는 실패를
+#          반드시 **예외**로 올린다 (Abaqus 가 'cae exited with an error' 로 표면화한다).
+print("DEBUG: All sys.argv: " + str(sys.argv))
+
+
+def parse_x_c(argv):
+    """argv 에서 x_c 하나만 뽑는다. Abaqus 가 어떤 형태로 넘겨도 동작해야 한다.
+
+    허용 형태:
+        -- 0.5
+        -- HF 0.5 1.0
+        HF 0.5 1.0
+        run_abaqus_buckle.py -- 0.5
+        C:\...\run_abaqus_buckle.py HF 0.5 1.0
+    반환: (x_c 문자열 또는 None, 오류 메시지 또는 None)
+    """
+    toks = [a for a in argv if a != '--']
+    # 스크립트 파일명/경로 토큰 제거
+    toks = [a for a in toks
+            if not a.lower().endswith('.py') and not re.match(r'^[A-Za-z]:', a)]
+    if not toks:
+        return None, '인자가 하나도 없습니다'
+    if toks[0].upper() in ('LF', 'HF'):
+        if len(toks) < 2:
+            return None, 'fidelity 뒤에 x_c 가 없습니다: %s' % toks
+        if len(toks) >= 3:
+            print("%s 참고: fidelity='%s' 및 d_c='%s' 는 쓰이지 않습니다 "
+                  "(순수 선형 좌굴 전용)." % (TAG, toks[0], toks[2]))
+        return toks[1], None
+    if len(toks) >= 3:
+        print("%s 참고: 첫 토큰 '%s' 를 fidelity 로 보지 않았습니다. 마지막 값 %s 을 x_c 로 씁니다."
+              % (TAG, toks[0], toks[-1]))
+    return toks[-1], None
+
+
+_x_c_raw, _cli_err = parse_x_c(sys.argv)
+if _cli_err:
+    print("Error: %s" % _cli_err)
     print("Usage: abaqus cae noGUI=run_abaqus_buckle.py -- x_c        (예: -- 0.5)")
     print("       abaqus cae noGUI=run_abaqus_buckle.py -- HF x_c d_c (호환 형식)")
-    sys.exit(1)
+    raise RuntimeError('CLI 인자를 해석할 수 없습니다: %s (위 Usage 참조). '
+                       'sys.exit 를 쓰지 않는 이유: CAE noGUI 러너에서 종료코드가 0으로 보인다.'
+                       % _cli_err)
 try:
     x_c = float(_x_c_raw)
 except Exception:
-    print("Error: x_c 를 float 로 변환할 수 없습니다: %r" % (_x_c_raw,))
-    sys.exit(1)
+    raise RuntimeError('x_c 를 float 로 변환할 수 없습니다: %r' % (_x_c_raw,))
+print("%s x_c = %g" % (TAG, x_c))
 
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
@@ -164,8 +200,8 @@ def run_job_safely(job_name, model_name=None):
         try:
             os.remove(lck_file)
         except OSError:
-            print("!!! FATAL ERROR: Cannot remove lock file. Is another Abaqus process running?")
-            sys.exit(1)
+            raise RuntimeError('락 파일을 지울 수 없습니다: %s '
+                               '(다른 Abaqus 프로세스가 돌고 있습니까?)' % lck_file)
 
     if job_name in mdb.jobs:
         del mdb.jobs[job_name]
@@ -187,8 +223,9 @@ def run_job_safely(job_name, model_name=None):
 
     # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
     if job.status == ABORTED or not os.path.exists(odb_file):
-        print("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
-        sys.exit(1)
+        raise RuntimeError('Job %s 실패 (Status=%s). sys.exit 대신 예외로 올린다: '
+                           'CAE noGUI 러너에서 sys.exit 은 종료코드 0으로 보인다.'
+                           % (job_name, str(job.status)))
 
     if not job_completed_ok(job_name):
         print("!!! WARNING: %s — .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 없음 "
@@ -588,17 +625,20 @@ for _alpha in ALPHA_LIST:
         _model = build_model(_alpha)
     except Exception as _e:
         print("!!! ERROR: alpha=%.4g 모델 생성 실패: %s" % (_alpha, _e))
+        print("----- traceback (실패한 줄을 확인하세요) -----")
+        print(traceback.format_exc())
+        print("---------------------------------------------")
         SUMMARY.append((_alpha, _job, 'BUILD_FAIL', str(_e)))
         continue
 
-    # 주의: run_job_safely 는 실패 시 sys.exit(1) 을 부른다. 스윕 중 한 케이스가 죽어도
-    #       나머지를 계속 돌려야 하므로 SystemExit 를 붙잡아 다음 α 로 넘어간다.
+    # 스윕 중 한 케이스가 죽어도 나머지를 계속 돌린다 (run_job_safely 는 실패 시
+    # RuntimeError 를 올린다 — sys.exit 은 CAE 러너에서 종료코드 0으로 보이므로 쓰지 않는다).
     _ok = True
     try:
         run_job_safely(_job, _model)
-    except SystemExit:
+    except Exception as _e:
         _ok = False
-        print("!!! alpha=%.4g : %s 실패 -> 다음 alpha 로 계속" % (_alpha, _job))
+        print("!!! alpha=%.4g : %s 실패 -> 다음 alpha 로 계속: %s" % (_alpha, _job, _e))
 
     try:
         print_job_eigen(_job)
@@ -639,6 +679,11 @@ for _row in SUMMARY:
     _a = _row[0]
     print("     %-12.4g %-15.4e %-14s %s"
           % (_a, _a * DISP_GLOBAL, _row[1], _row[-1]))
+if not any(r[2] == 'OK' for r in SUMMARY):
+    raise RuntimeError('전 alpha 에서 잡이 하나도 완주하지 못했습니다 (SUMMARY=%s). '
+                       '위 로그의 첫 ERROR/traceback 을 보세요. '
+                       '이 상태를 exit 0 으로 끝내면 성공처럼 보이므로 예외로 올린다.' % str(SUMMARY))
+
 print("%s 선택 규칙: 위 .dat 원문 덤프에서 λ1..λ4 > 0 이며 CONVERGED 인 최대 alpha." % TAG)
 print("%s 그 alpha 의 모드를 HF 초기결함으로 쓴다: *IMPERFECTION, FILE=%s, STEP=2"
       % (TAG, r'..\buckle\Buckle_a<alpha>'))
