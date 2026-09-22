@@ -283,13 +283,13 @@ V_CR = clamp_coord_R(x_c)
 
 # ---- 
 # ---- 사전 장력(prestrain) 캘리브레이션 ----
-# 버클 base state(Step-ClampTension)의 장력을 키워 시스템행렬 부정정(음수 고유값)을 해소.
-# 1.0 = 기존값.  조정:  PowerShell  $env:MFBO_PRETENSION_SCALE="30"
+# 사전 장력 크기. base state 장력을 키워 시스템행렬 부정정(음수 고유값) 완화를 시도한다.
+# 1.0 = 기존값. 값을 바꾸려면 이 상수를 직접 수정한다(구 MFBO_PRETENSION_SCALE 환경변수는 제거됨).
 PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
 # R-13 실측(2026-09-21): PRETENSION_SCALE=10 -> 평균 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배.
 #   운용점을 목표에 맞추려면 약 33배(= DISP_GLOBAL 165um)가 필요하다.
 #   단 PRETENSION_SCALE 는 최종 하중까지 함께 키우므로(포스트버클 변위 1mm -> 3.3mm),
-#   운용점만 따로 맞추려면 절대값 노브 MFBO_DISP_GLOBAL / MFBO_GLOBAL_FINAL 을 쓴다.
+#   운용점만 따로 맞추려면 DISP_GLOBAL / GLOBAL_FINAL 상수를 직접 수정한다(절대값).
 DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
 CLAMP_PULL = DISP_GLOBAL * d_c
 # 좌굴 스텝의 perturbation 변위 (K_delta 를 만드는 항).
@@ -298,8 +298,8 @@ CLAMP_PULL = DISP_GLOBAL * d_c
 #   사라지지만(CONVERGED 수에는 영향 없음), K_delta 가 K0 대비 너무 작으면 고유값 분리가
 #   나빠져 subspace 반복이 'EIGENVALUES CANNOT BE FOUND' 로 실패한다.
 #   성공한 run_abaqus_cable.py 는 같은 솔버 설정(numEigen=100/SUBSPACE/vectors=250)에서
-#   0.01 m 를 쓴다 -> 우리 5e-4 는 1/20 이다 (2026-09-21 좌굴 0모드의 유력 원인).
-#   스윕: PowerShell  $env:MFBO_PERT_MAG="0.001"
+#   0.01 m 를 쓴다 -> 2026-09-22 부로 우리도 0.01 m 로 맞췄다(구 5e-4 = 1/20 이었다).
+#   값을 바꾸려면 이 상수를 직접 수정한다(구 MFBO_PERT_MAG 환경변수는 제거됨).
 PERTURBATION = 0.01
 CLAMP_PERT = PERTURBATION * d_c
 GLOBAL_FINAL = 0.0001 * PRETENSION_SCALE     # 최종 하중: 코너 당김 1e-3 m
@@ -512,7 +512,7 @@ if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
 #    원래 설정(LANCZOS + maxBlocks=DEFAULT)이다. 요소 ~1만 개 / DOF ~4만 개 + 두께 5um 라
 #    강성 조건수가 극단적이어서 SUBSPACE(작은 모델·다수 모드용)로는 100개 모드 추출이
 #    'EIGENVALUES CANNOT BE FOUND' (0 CONVERGED) 로 실패했다.
-#    SUBSPACE 로 강제하려면:  $env:MFBO_EIGENSOLVER="SUBSPACE"
+#    SUBSPACE 로 강제하려면 _EIGENSOLVER 상수를 'SUBSPACE' 로 수정 (구 MFBO_EIGENSOLVER 환경변수는 제거됨)
 _EIGENSOLVER = "LANCZOS"         # "SUBSPACE" 로 바꾸면 좌굴 추출 재시도
 print("[run_abaqus] buckle eigensolver=%s numEigen=%d vectors=%s"
       % (_EIGENSOLVER, N_EIG_BUCKLE, (BUCKLE_VECTORS if _EIGENSOLVER != 'LANCZOS' else 'n/a')))
