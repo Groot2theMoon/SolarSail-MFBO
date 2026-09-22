@@ -32,7 +32,7 @@ run_abaqus_new.py 와의 차이 (그 외는 동일해야 한다)
 
 α 스윕 (프리텐션 수준)
     λ>0 인 base state 를 찾기 위해 프리텐션을 α 배로 바꿔가며 한 번에 전부 돌린다.
-    α = ALPHA_LIST (0.05, 0.10, 0.25, 0.50, 1.00) x DISP_GLOBAL(5e-5 m)
+    α = ALPHA_LIST (0.01, 0.05, 0.10, 0.25, 0.50, 1.00) x DISP_GLOBAL(5e-5 m)
     판정: λ1..λ4 > 0 이며 CONVERGED 인 **최대 α** 를 고르고, 그 모드를 HF 초기결함으로 쓴다.
 
 LF/HF 구분은 없다 (의도적)
@@ -389,6 +389,10 @@ BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 �
 PERTURBATION = 0.01     # m
 N_EIG_BUCKLE = 100      # 추출 요청 고유값 수 (음수 모드 건너뛰기 위해 100 — 대조 스크립트와 동일)
 BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (numEigen 의 2.5배 — 대조 스크립트와 동일)
+# subspace 반복 상한. c8855cb 에서 하드코딩 5000 을 상수로 바꾸면서 정의를 빠뜨려
+# build_model 이 NameError 로 죽었다(전 alpha BUILD_FAIL, 잡 0건). 값은 대조 스크립트와 동일:
+# run_abaqus_cable.py:345 maxIterations=5000 / run_abaqus.py:504 maxIterations=5000
+BUCKLE_MAXITER = 5000
 SIGMA0 = 500.0          # 수렴 보조용 초기응력 [Pa] (run_abaqus_new.py 와 동일)
 
 print("%s x_c=%.3g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
