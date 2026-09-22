@@ -421,8 +421,8 @@ def connect_cable(name, part, coord, vector_dir):
 p.seedPart(size=BASE/200.0, deviationFactor=0.1) # 약 1만개
 p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
 # S4R-> S4 (cable 변형과 동일)
-elemTypeQuad = ElemType(elemCode=S8R5, elemLibrary=STANDARD)
-elemTypeTri = ElemType(elemCode=STRI65, elemLibrary=STANDARD)  
+elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
+elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)  
 p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
 p.generateMesh()
 a.regenerate()
