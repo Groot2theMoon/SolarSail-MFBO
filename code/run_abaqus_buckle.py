@@ -425,7 +425,7 @@ def build_model(disp):
     #   HF 쪽 요소 타입을 바꾸면 이 두 줄도 함께 바꿔야 한다.
     #   현재값은 HF 기준 S4/S3 (커밋 6e0ef6e "cable deformation compatibility" 이후).
     #   참고: Galhofo 검증모델은 S4R(s4R) 을 썼다 — 남은 차이는 요소 종류 하나다.
-    elemTypeQuad = ElemType(elemCode=S4R, elemLibrary=STANDARD)
+    elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
     elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)
     p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
     p.generateMesh()
