@@ -131,17 +131,43 @@ def parse_x_c(argv):
             if not a.lower().endswith('.py') and not re.match(r'^[A-Za-z]:', a)]
     if not toks:
         return None, '인자가 하나도 없습니다'
-    if toks[0].upper() in ('LF', 'HF'):
-        if len(toks) < 2:
+
+    # fidelity 토큰은 '첫 토큰'이 아니라 '목록 어디에 있든' 찾는다.
+    #   러너가 접두 토큰을 붙이면(abaqus cae noGUI=...) 첫 토큰이 'cae' 가 되어
+    #   기존 구현은 아래 fallback 으로 떨어져 **마지막 값(=d_c)을 x_c 로** 조용히 반환했다.
+    #   실측(2026-09-22): ['abaqus','cae','noGUI=...py','--','HF','0.5','1.0'] -> '1.0'
+    #   x_c=1.0 은 클램프 패치를 좌/우 정점에 정확히 겹치게 만드는 잘못된 모델이다.
+    _fid = None
+    for _i, _a in enumerate(toks):
+        if _a.upper() in ('LF', 'HF'):
+            _fid = _i
+            break
+    if _fid is not None:
+        _rest = toks[_fid + 1:]
+        if not _rest:
             return None, 'fidelity 뒤에 x_c 가 없습니다: %s' % toks
-        if len(toks) >= 3:
+        if len(_rest) >= 2:
             print("%s 참고: fidelity='%s' 및 d_c='%s' 는 쓰이지 않습니다 "
-                  "(순수 선형 좌굴 전용)." % (TAG, toks[0], toks[2]))
-        return toks[1], None
-    if len(toks) >= 3:
-        print("%s 참고: 첫 토큰 '%s' 를 fidelity 로 보지 않았습니다. 마지막 값 %s 을 x_c 로 씁니다."
-              % (TAG, toks[0], toks[-1]))
-    return toks[-1], None
+                  "(순수 선형 좌굴 전용)." % (TAG, toks[_fid], _rest[1]))
+        return _rest[0], None
+
+    # fidelity 토큰이 없으면 'float 로 해석되는 토큰'만 x_c 후보로 본다 (러너 토큰 배제).
+    #   후보가 2개 이상이면 어느 쪽이 x_c 인지 알 수 없으므로 **추측하지 않고 중단**한다.
+    #   (기존 구현은 이 경우에도 마지막 값을 조용히 반환했다.)
+    def _is_float(_s):
+        try:
+            float(_s)
+            return True
+        except (TypeError, ValueError):
+            return False
+    _cands = [a for a in toks if _is_float(a)]
+    if not _cands:
+        return None, 'float 로 해석할 수 있는 토큰이 없습니다: %s' % toks
+    if len(_cands) > 1:
+        return None, ('x_c 후보가 %d개입니다 (%s) — 어느 값이 x_c 인지 알 수 없습니다. '
+                      '`-- x_c` 처럼 값을 하나만 넘기세요.'
+                      % (len(_cands), ', '.join(_cands)))
+    return _cands[0], None
 
 
 _x_c_raw, _cli_err = parse_x_c(sys.argv)
@@ -211,24 +237,36 @@ def run_job_safely(job_name, model_name=None):
                            % (job_name, str(job.status)))
 
     if not job_completed_ok(job_name):
-        print("!!! WARNING: %s — .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 없음 "
-              "(중도 중단 의심; odb 존재만으로는 판정 불가 — R-12)" % job_name)
+        print("!!! WARNING: %s — .sta/.msg 에 완주 문자열 없음 (%s) "
+              "(중도 중단 의심; odb 존재만으로는 판정 불가 — R-12)"
+              % (job_name, ' / '.join(_COMPLETION_STRINGS)))
     print("Job %s completed successfully (Status: %s)." % (job_name, str(job.status)))
     return True
 
 
+_COMPLETION_STRINGS = ('HAS COMPLETED SUCCESSFULLY', 'THE ANALYSIS HAS BEEN COMPLETED')
+
+
 def job_completed_ok(job_name):
-    """R-12: .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 가 있는지로 완주를 판정한다.
+    """R-12: .sta/.msg 의 완주 문자열로 완주를 판정한다.
 
     odb 파일 존재만 보면 '중도 중단된 odb'를 성공으로 오판한다
     (2026-09-21 사례: HF_Postbuckle.odb 는 존재하나 Step-Postbuckle 프레임 0개).
+
+    완주 문자열은 두 가지다. 좌굴 스텝은 증분 블록이 없어 .sta 에
+    'THE ANALYSIS HAS COMPLETED SUCCESSFULLY' 를 남기지 않고 .msg 에
+    'THE ANALYSIS HAS BEEN COMPLETED' 만 남긴다 -> 한 문자열만 보면 성공한
+    좌굴 잡을 '중도 중단 의심'으로 잘못 보고한다 (실측 2026-09-22: 좌굴형
+    .msg + .sta 조합에서 False, 이 스크립트의 α 요약표 '완주판정' 열이 전부 False).
+    중단된 잡은 'HAS NOT BEEN COMPLETED' 이므로 두 문자열 어느 것과도 일치하지 않는다.
     """
     for ext in ('sta', 'msg'):
         fn = '%s.%s' % (job_name, ext)
         if os.path.exists(fn):
             with open(fn, 'r', errors='replace') as f:
-                if 'HAS COMPLETED SUCCESSFULLY' in f.read().upper():
-                    return True
+                _up = f.read().upper()
+            if any(_s in _up for _s in _COMPLETION_STRINGS):
+                return True
     return False
 
 
@@ -300,7 +338,9 @@ def print_job_diag(job_name):
             print("[DIAG:%s] %s 없음" % (job_name, fn))
             continue
         size = os.path.getsize(fn)
-        with open(fn, 'r') as f:
+        # errors='replace': Windows 에서 산출물이 CP949 등 비UTF-8 로 저장될 수 있고,
+        # 그 경우 여기서 UnicodeDecodeError 가 나면 '실패 원인 콘솔 출력' 자체가 죽는다.
+        with open(fn, 'r', errors='replace') as f:
             if size > 2000000:
                 f.seek(size - 2000000)
             text = f.read()
