@@ -113,15 +113,6 @@ print("%s _HERE = %s" % (TAG, _HERE))
 print("%s _RUN  = %s" % (TAG, _RUN))
 print("DEBUG: All sys.argv: " + str(sys.argv))
 
-# ================= CLI =================
-#  ★ 2026-09-22 실측: "아무것도 안 돌고 exit code 0" 이 나왔다. 원인은 두 취약점의 겹침이다.
-#   (1) 위치 기반 인덱싱(sys.argv[1:])은 Abaqus 가 넘기는 argv 형태에 따라 빈 리스트가 된다.
-#       검증된 기존 스크립트들(run_abaqus_new.py 등)이 sys.argv[-3:] (접미 기반)을 쓴 이유가 이것이다.
-#   (2) 그 실패를 sys.exit(1) 로 알리려 했더니 CAE 의 noGUI 러너에서 종료코드가 0으로 보였다.
-#       => "실패했는데 성공처럼 보인다" 는 최악의 형태. 그래서 이 스크립트는 실패를
-#          반드시 **예외**로 올린다 (Abaqus 가 'cae exited with an error' 로 표면화한다).
-print("DEBUG: All sys.argv: " + str(sys.argv))
-
 
 def parse_x_c(argv):
     """argv 에서 x_c 하나만 뽑는다. Abaqus 가 어떤 형태로 넘겨도 동작해야 한다.
@@ -173,14 +164,6 @@ _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
 
 
 def run_job_safely(job_name, model_name=None):
-    """
-    job 실행 중 .odb, .lck 파일 충돌을 방지하고, 완료까지 대기하는 함수
-
-    P1-3: 제출 전에 이전 실행 산출물을 지운다.
-      - 성공 판정(not os.path.exists(odb))이 '지난 실행의 odb'를 보고 오판하는 것을 막고,
-      - *IMPERFECTION, FILE=Buckle_Analysis 가 stale .fil 을 조용히 읽는 것을 막는다.
-    """
-    # MODEL_NAME 전역 상수를 쓰지 않는다: 이 스크립트는 alpha 마다 모델 이름이 달라진다.
     if model_name is None:
         raise RuntimeError('run_job_safely: model_name 을 반드시 인자로 넘겨야 합니다 '
                            '(이 스크립트의 모델 이름은 alpha 마다 동적으로 생성된다).')
@@ -387,7 +370,7 @@ DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
 
 # ---- 좌굴 전용 상수 ----
 # α 스윕: 프리텐션 수준을 바꿔가며 λ>0 인 base state 를 찾는다.
-ALPHA_LIST = (0.05, 0.10, 0.25, 0.50, 1.00)
+ALPHA_LIST = (0.01, 0.05, 0.10, 0.25, 0.50, 1.00)
 # 좌굴 스텝의 perturbation 크기.
 #   근거(A안 주석 + run_abaqus_cable.py 실측): 좌굴 스텝의 nonzero prescribed BC 는
 #   '증분 응력' 을 만들고 그 증분이 미분 초기응력 강성 K_delta 를 만든다.
@@ -492,7 +475,7 @@ def build_model(alpha):
     #   HF 쪽 요소 타입을 바꾸면 이 두 줄도 함께 바꿔야 한다.
     #   현재값은 HF 기준 S4/S3 (커밋 6e0ef6e "cable deformation compatibility" 이후).
     #   참고: Galhofo 검증모델은 S4R(s4R) 을 썼다 — 남은 차이는 요소 종류 하나다.
-    elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
+    elemTypeQuad = ElemType(elemCode=S4R, elemLibrary=STANDARD)
     elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)
     p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
     p.generateMesh()
@@ -540,8 +523,6 @@ def build_model(alpha):
                                 variables=('S', 'E', 'U', 'COORD', 'EVOL'))
 
     # ---- 좌굴 스텝: 솔버는 코드 상수 하나로 교체 (SUBSPACE <-> LANCZOS) ----
-    #   논문 :247 은 SUBSPACE 를 명시 선택했다. 바꾸면 논문 사양에서 이탈한다.
-    #   두 솔버는 인자 이름이 다르므로 분기해서 넘긴다 (LANCZOS 는 vectors 를 받지 않는다).
     _eig = dict(name='Step-Buckle', previous='Step-GlobalTension',
                 numEigen=N_EIG_BUCKLE, eigensolver=BUCKLE_SOLVER)
     if BUCKLE_SOLVER == 'SUBSPACE':
