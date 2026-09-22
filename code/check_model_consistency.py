@@ -29,6 +29,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 NEW = os.path.join(HERE, 'run_abaqus_new.py')
 BUCKLE = os.path.join(HERE, 'run_abaqus_buckle.py')
+MODE = os.path.join(HERE, 'run_abaqus_mode.py')
 
 # 모델 정의에 해당하는 줄들. HF 쪽과 좌굴 쪽에서 '문자 그대로' 같아야 한다.
 # (제외: HF/LF 전용 하중·감쇠·스텝·추출 관련. 그것들은 좌굴 모델에 없어야 정상이다.)
@@ -74,6 +75,10 @@ SHARED = [
     "SIGMA0 = 500.0",
 ]
 
+# 모드 소스(run_abaqus_mode.py)는 클램프가 없는 모델이므로 clamp_coord_* 정의만 제외한다.
+# 나머지는 전부 같아야 한다: *IMPERFECTION 은 노드 라벨로 매핑되기 때문.
+SHARED_MODE = [s for s in SHARED if 'clamp_coord' not in s]
+
 # 좌굴 스크립트에 '있으면 안 되는' HF/LF 전용 것들 (역할 분리 검사)
 FORBIDDEN_IN_BUCKLE = [
     "Step-ClampTension",
@@ -87,6 +92,19 @@ FORBIDDEN_IN_BUCKLE = [
     "TRIG_ON",
     "extraction.txt",
     "HF_ODB",
+]
+
+# 모드 스크립트에 '있으면 안 되는' 것들 (역할 분리: 모드 추출만 한다)
+FORBIDDEN_IN_MODE = [
+    "*IMPERFECTION",       # 모드를 '소비'하면 안 된다 (소비는 HF 담당)
+    "Step-Postbuckle",
+    "Step-HighTension",
+    "Step-ClampTension",
+    "HF_Postbuckle",
+    "Step-Trigger",
+    "BC_Trig_P",
+    "TRIG_ON",
+    "Calling extraction script",
 ]
 
 
@@ -130,16 +148,18 @@ def norm(s):
 
 
 def main():
-    if not (os.path.exists(NEW) and os.path.exists(BUCKLE)):
-        print("!!! 파일을 찾을 수 없습니다: %s / %s" % (NEW, BUCKLE))
+    if not (os.path.exists(NEW) and os.path.exists(BUCKLE) and os.path.exists(MODE)):
+        print("!!! 파일을 찾을 수 없습니다: %s / %s / %s" % (NEW, BUCKLE, MODE))
         return 1
     a = code_only(NEW)
     b = code_only(BUCKLE)
+    c = code_only(MODE)
 
     print("=" * 74)
     print("모델 정의 일치 검사 (AST 기반: 주석/docstring 제외)")
     print("  %s" % os.path.basename(NEW))
     print("  %s" % os.path.basename(BUCKLE))
+    print("  %s   (모드 소스)" % os.path.basename(MODE))
     print("=" * 74)
     bad = []
     for k in SHARED:
@@ -151,6 +171,19 @@ def main():
               % ('OK' if (ia and ib) else '!!!', ia, ib, k[:60]))
 
     print()
+    print("--- 모드 소스(run_abaqus_mode.py) 와 HF 의 모델 정의 일치 ---")
+    print("    *IMPERFECTION 은 노드 라벨로 매핑되므로 메쉬/형상/프리텐션 정의가 같아야 한다.")
+    print("    (제외: clamp_coord_* — 이 모델에는 클램프가 없다)")
+    bad4 = []
+    for k in SHARED_MODE:
+        nk = norm(k)
+        ia, ic = nk in a, nk in c
+        if not (ia and ic):
+            bad4.append(k)
+        print("  %-4s HF=%-5s mode=%-5s  %s"
+              % ('OK' if (ia and ic) else '!!!', ia, ic, k[:60]))
+
+    print()
     print("--- 좌굴 스크립트에 HF/LF 전용이 섞여 있지 않은지 (0 이어야 정상) ---")
     bad2 = []
     for k in FORBIDDEN_IN_BUCKLE:
@@ -159,10 +192,20 @@ def main():
             bad2.append((k, n))
         print("  %-4s %-22s %d회" % ('OK' if n == 0 else '!!!', k, n))
 
+    print()
+    print("--- 모드 스크립트에 HF/LF 전용이 섞여 있지 않은지 (0 이어야 정상) ---")
+    bad5 = []
+    for k in FORBIDDEN_IN_MODE:
+        n = c.count(norm(k))
+        if n:
+            bad5.append((k, n))
+        print("  %-4s %-22s %d회" % ('OK' if n == 0 else '!!!', k, n))
+
     # --- EVOL 필드출력 (면적가중 산출에 필요. 2026-09-22 누락을 실측으로 발견) ---
     print()
     print("--- 필드출력 EVOL (base_state_probe 면적가중) ---")
-    for _label, _txt in (('run_abaqus_new.py', a), ('run_abaqus_buckle.py', b)):
+    for _label, _txt in (('run_abaqus_new.py', a), ('run_abaqus_buckle.py', b),
+                         ('run_abaqus_mode.py', c)):
         _has = 'EVOL' in _txt
         print("  %s  %s" % ('OK  ' if _has else '!!! ', _label + ' EVOL=' + str(_has)))
         if not _has:
@@ -191,14 +234,15 @@ def main():
 
     print()
     print("=" * 74)
-    if bad or bad2 or bad3:
-        print("RESULT: !!! 불일치 %d건 (모델 정의) + %d건 (역할 분리) + %d건 (디렉터리)"
-              % (len(bad), len(bad2), len(bad3)))
+    if bad or bad2 or bad3 or bad4 or bad5:
+        print("RESULT: !!! 불일치 (HF↔buckle 정의 %d / buckle 역할 %d / 디렉터리 %d"
+              " / HF↔모드소스 정의 %d / 모드소스 역할 %d)"
+              % (len(bad), len(bad2), len(bad3), len(bad4), len(bad5)))
         print("        모드 노드가 어긋나면 *IMPERFECTION 이 조용히 실패한다.")
         print("        한쪽을 고쳤으면 다른 쪽도 같이 고쳐라.")
         return 1
-    print("RESULT: PASS — 모델 정의 %d 항목 일치 / 좌굴 스크립트에 HF 전용 요소 없음"
-          % len(SHARED))
+    print("RESULT: PASS — HF↔buckle %d 항목 / HF↔모드소스 %d 항목 일치, 역할 분리 위반 0건"
+          % (len(SHARED), len(SHARED_MODE)))
     print("=" * 74)
     return 0
 

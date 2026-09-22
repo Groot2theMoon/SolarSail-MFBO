@@ -234,10 +234,12 @@ N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE
 #         막 노드 좌표/라벨이 동일하다 -> *IMPERFECTION 의 노드 라벨 매핑이 성립한다.
 #         (클램프가 있는 base state 는 음수 고유값 598~2897/CONVERGED=0 -> 모드 추출 불가)
 #         상세 근거·실패 이력: aba_imperfection.py, references/buckle-failure-triage.md
-MODE_SOURCE = 'cable'        # 'cable' = 외부(클램프 없는) .fil | 'self' = 자기 좌굴 잡
-MODE_SOURCE_FIL = os.path.join('..', 'Buckle_Analysis.fil')   # code\aba -> code\
-MODE_SOURCE_DAT = os.path.join('..', 'Buckle_Analysis.dat')
-MODE_SOURCE_MSG = os.path.join('..', 'Buckle_Analysis.msg')
+MODE_SOURCE = 'external'     # 'external' = 클램프 없는 외부 .fil(run_abaqus_mode.py) | 'self' = 자기 좌굴 잡
+#   모드 소스 = run_abaqus_mode.py (클램프 없음, HF 파라미터 정렬). 산출물은 code\ 에 쌓인다.
+#   (이전 소스였던 run_abaqus_cable.py 의 Buckle_Analysis.fil 을 쓰려면 아래 이름만 교체한다.)
+MODE_SOURCE_FIL = os.path.join('..', 'ClampFree_Buckle.fil')   # code\aba -> code\
+MODE_SOURCE_DAT = os.path.join('..', 'ClampFree_Buckle.dat')
+MODE_SOURCE_MSG = os.path.join('..', 'ClampFree_Buckle.msg')
 MODE_SOURCE_STEP = 2         # 소스 .fil 안의 스텝 번호 (케이블 런: 1=GlobalTension 2=Buckle)
 IMPERFECTION_NAME = 'Cable_Buckle'   # 자기 좌굴 잡 이름과 분리 -> 원장 C-1(조용한 0-모드 소비) 차단
 IMPERFECTION_MODES = (1, 2, 3, 4)
@@ -246,6 +248,8 @@ RUN_SELF_BUCKLE_JOB = True   # 자기(클램프) 좌굴 잡도 계속 돌린다 
                              # (코너 당김 하중분담) + 음수고유값 진단 증거를 함께 얻는다.
                              # 이 잡이 sys.exit(1) 로 스크립트를 끊으면 False 로 두고,
                              # 그때는 base state probe 가 '건너뜀' 으로 출력된다.
+if MODE_SOURCE not in ('external', 'self'):
+    raise RuntimeError("MODE_SOURCE 는 'external' 또는 'self' 여야 합니다 (현재 %r)" % (MODE_SOURCE,))
 # ---- 2-모델 레시피 끝 ----------------------------------------------------
 # A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
 #   base state 가 부정정이면 요청 개수를 줄이는 것이 subspace 수렴에 유리하다.
