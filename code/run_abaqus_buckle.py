@@ -470,7 +470,10 @@ def build_model(disp):
     #      면적가중을 못 하고 균등가중으로 떨어진다(2026-09-22 실측으로 발견).
     my_model.FieldOutputRequest(name='F-Output-1',
                                 createStepName='Step-GlobalTension',
-                                variables=('S', 'E', 'U', 'COORD', 'EVOL'))
+                                variables=('S', 'E', 'U', 'COORD', 'EVOL', 'RF'))
+    # 'RF' = 앵커 반력. base_state_probe 가 "각 앵커(정점/클램프)가 당김을 얼마나
+    # 흡수하는가"(하중 경로 분담)를 읽는 데 쓴다 — 2026-09-22 첫 좌굴 런에서
+    # RF 미출력으로 그 계측이 비어 있었다. 출력 요청은 해석 결과를 바꾸지 않는다.
 
     # ---- 좌굴 스텝: 솔버는 코드 상수 하나로 교체 (SUBSPACE <-> LANCZOS) ----
     _eig = dict(name='Step-Buckle', previous='Step-GlobalTension',
