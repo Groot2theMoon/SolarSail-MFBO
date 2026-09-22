@@ -23,7 +23,8 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
 
 산출물 (code/buckle/)
     <job>.odb / .dat / .msg / .sta / .fil / .diag.txt
-    job 이름은 인자에서 자동 생성한다: Buckle_xc<NNN>_d<NNN>um
+    job 이름은 인자+요소에서 자동 생성한다: Buckle_xc<NNN>_d<NNN>um_<elem>
+      (예: Buckle_xc050_d1000um_s4r) — 요소/케이스가 바뀌어도 산출물이 서로 덮이지 않는다.
     고유값 표는 .dat 의 MODE NO / EIGENVALUE 블록에 있고, 스크립트가 콘솔에도 덤프한다.
 
 HF 에서 모드를 쓸 때 — 경로 주의 (HF 잡의 작업 디렉터리는 code/aba 다)
@@ -425,7 +426,15 @@ def build_model(disp):
     #   HF 쪽 요소 타입을 바꾸면 이 두 줄도 함께 바꿔야 한다.
     #   현재값은 HF 기준 S4/S3 (커밋 6e0ef6e "cable deformation compatibility" 이후).
     #   참고: Galhofo 검증모델은 S4R(s4R) 을 썼다 — 남은 차이는 요소 종류 하나다.
-    elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
+    #   [2026-09-22 실측, x_c=0.5 / DISP=1e-3 m (alpha=20), 다른 조건 동일]
+    #     S4R -> 잡이 죽지 않고 GlobalTension 완주(24 inc) + base_state_probe 까지 진행.
+    #            단 그 런의 lambda 표는 확인 전에 아래 S4 런이 산출물을 덮어 잃었다.
+    #     S4  -> 좌굴 스텝에서 ***ERROR: THE EIGENVALUES CANNOT BE FOUND
+    #            (SYSTEM MATRIX 598 NEGATIVE EIGENVALUES, CONVERGED=0, .dat 표 없음)
+    #   => 좌굴 스텝이 실제로 돌아가는 쪽(S4R)을 기본값으로 둔다. S4 로 바꾸려면
+    #      ELEM_TAG 도 's4' 로 함께 바꿔 산출물이 서로 덮이지 않게 한다.
+    #      (HF 소비 모델은 S4 라서 check_model_consistency 는 이 한 항목만 EXIT=1 — 미해결)
+    elemTypeQuad = ElemType(elemCode=S4R, elemLibrary=STANDARD)
     elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)
     p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
     p.generateMesh()
@@ -571,7 +580,13 @@ def build_model(disp):
 # ============================================================================
 # 실행 — 한 케이스: 모델 빌드 -> 잡 제출 -> 결과 덤프 -> base state 측정(선택)
 # ============================================================================
-JOB_NAME = 'Buckle_xc%03d_d%03dum' % (int(round(x_c * 100.0)), int(round(DISP * 1.0e6)))
+# 요소/설정이 바뀐 케이스가 같은 job 이름으로 제출되면 run_job_safely 가 stale 산출물
+# (.dat/.msg/.odb/.diag)을 지우고 제출해 직전 결과 증거가 사라진다
+# (2026-09-22 실제 발생: S4 런이 S4R 런 산출물을 덮어 lambda 표를 잃었다).
+# 그래서 job 이름에 요소 태그를 넣는다 — ELEM_TAG 는 build_model 의 elemCode 와 짝.
+ELEM_TAG = 's4r'
+JOB_NAME = 'Buckle_xc%03d_d%03dum_%s' % (int(round(x_c * 100.0)),
+                                         int(round(DISP * 1.0e6)), ELEM_TAG)
 
 print("")
 print("=" * 78)
