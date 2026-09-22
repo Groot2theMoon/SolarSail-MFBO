@@ -612,6 +612,15 @@ for _alpha in ALPHA_LIST:
     SUMMARY.append((_alpha, _job, 'OK' if _ok else 'JOB_FAIL',
                     job_completed_ok(_job)))
 
+    # 스윕은 모델을 5개 만든다. 다 쓰면 지운다 (스윕 도중 메모리 부족으로 남은 alpha 가
+    # 죽는 것을 막는다. odb/.dat/.fil 은 이미 디스크에 있으므로 잃는 것이 없다).
+    _freed = False
+    if _model is not None and _model in mdb.models:
+        del mdb.models[_model]
+        _freed = True
+    print("%s alpha=%.4g 종료 (model 해제=%s, 남은 모델 %d개)"
+          % (TAG, _alpha, _freed, len(mdb.models.keys())))
+
 print("")
 print("=" * 78)
 print("%s ===== α 스윕 요약 =====" % TAG)
