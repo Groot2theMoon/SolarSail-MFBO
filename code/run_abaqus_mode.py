@@ -94,7 +94,8 @@ def print_job_diag(job_name):
     """원인 판별용 핵심 줄만 콘솔에 찍는다(로그 전체를 붙여넣지 않아도 되도록)."""
     keys = ('NEGATIVE EIGENVALUES', 'CONVERGED', 'EIGENVALUES CANNOT BE FOUND',
             'HAS COMPLETED SUCCESSFULLY', 'THE ANALYSIS HAS BEEN COMPLETED',
-            'STIFFNESS MATRIX IS SINGULAR', 'TOO MANY ATTEMPTS', '***ERROR')
+            'STIFFNESS MATRIX IS SINGULAR', 'TOO MANY ATTEMPTS', '***ERROR',
+            'USER INPUT PROCESSING', 'misplaced', 'NOT A VALID', 'UNKNOWN PARAMETER')
     for ext in ('msg', 'dat'):
         fn = '%s.%s' % (job_name, ext)
         if not os.path.exists(fn):
@@ -102,14 +103,30 @@ def print_job_diag(job_name):
             continue
         size = os.path.getsize(fn)
         with open(fn, 'r', errors='replace') as f:
+            # 키워드/입력처리 경고는 파일 '앞'에, 수렴 실패는 '뒤'에 있다 -> 양쪽을 본다
+            head = f.read(600000)
+            tail = ''
             if size > 2000000:
                 f.seek(size - 2000000)
-            text = f.read()
-        hits = [ln.strip() for ln in text.splitlines()
+                tail = f.read()
+        hits = ['[앞] ' + ln.strip() for ln in head.splitlines()
                 if ln.strip() and any(k.lower() in ln.lower() for k in keys)]
+        hits += ['[뒤] ' + ln.strip() for ln in tail.splitlines()
+                 if ln.strip() and any(k.lower() in ln.lower() for k in keys)]
         print("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개" % (job_name, fn, size / 1024.0, len(hits)))
-        for ln in hits[-5:]:
+        for ln in hits[-10:]:
             print("      | %s" % ln[:150])
+
+    fn = '%s.fil' % job_name
+    if os.path.exists(fn):
+        with open(fn, 'rb') as f:
+            data = f.read()
+        n_eig = data.count(b'EIGENVALUE') + data.count(b'EIGEN')
+        print("[DIAG:%s] .fil %.0f KB, 'EIGEN' 마커 %d개 (휴리스틱 — 0 이면 "
+              "임퍼펙션 주입이 조용히 무시될 수 있다)"
+              % (job_name, os.path.getsize(fn) / 1024.0, n_eig))
+    else:
+        print("[DIAG:%s] .fil 없음 -> 임퍼펙션 주입이 조용히 무시된다" % job_name)
 
 
 # =====================================================================
@@ -152,6 +169,9 @@ PERTURBATION = 0.01                          # 좌굴 스텝 섭동 (케이블 �
 N_EIG_BUCKLE = 100                           # subspace 요청 고유값 수
 BUCKLE_VECTORS = 250                         # subspace 기저 벡터 수
 N_MODE_FILE = 4                              # .fil 에 기록할 모드 수 (*NODE FILE, LAST MODE)
+INSERT_NODE_FILE = True                      # 좌굴모드 .fil 기록을 키워드로 '명시 요청'할지.
+                                             #   케이블 런(성공)에는 이 요청이 없다 -> 2026-09-22 실패
+                                             #   (모드 0)의 비물리적 후보 1순위. False 래더(L1)로 검증.
 JOB_NAME = 'ClampFree_Buckle'
 BUCKLE_STEP_NO = 2                           # 이 모델의 스텝 순서: 1=GlobalTension 2=Buckle
 
@@ -363,15 +383,19 @@ my_model.fieldOutputRequests['F-Output-1'].setValues(
 # 7. *NODE FILE 삽입 -> 좌굴모드를 .fil 에 기록 (없으면 *IMPERFECTION 이 조용히 무시된다)
 #    위치: *BUCKLE 키워드 '직후' = 좌굴 스텝 '안' (스텝 밖으로 밀리면 misplaced 로 죽는다)
 # -------------------------------------------------------------
-my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
-_noderef = '*NODE FILE, GLOBAL=YES, LAST MODE=%d\nU' % N_MODE_FILE
-_found = False
-for _i, _b in enumerate(my_model.keywordBlock.sieBlocks):
-    if _b.strip().upper().startswith(('*BUCKLE', '*FREQUENCY')):
-        my_model.keywordBlock.insert(_i + 1, _noderef)
-        _found = True
-        break
-print("[run_abaqus_mode] *NODE FILE 삽입=%s (LAST MODE=%d)" % (_found, N_MODE_FILE))
+if INSERT_NODE_FILE:
+    my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
+    _noderef = '*NODE FILE, GLOBAL=YES, LAST MODE=%d\nU' % N_MODE_FILE
+    _found = False
+    for _i, _b in enumerate(my_model.keywordBlock.sieBlocks):
+        if _b.strip().upper().startswith(('*BUCKLE', '*FREQUENCY')):
+            my_model.keywordBlock.insert(_i + 1, _noderef)
+            _found = True
+            break
+    print("[run_abaqus_mode] *NODE FILE 삽입=%s (LAST MODE=%d)" % (_found, N_MODE_FILE))
+else:
+    print("[run_abaqus_mode] *NODE FILE 삽입 생략 (INSERT_NODE_FILE=False)"
+          " -> *BUCKLE 자체 기록에 의존. HF 쪽 stage() 가 모드 0개를 잡으므로 조용한 주입은 없다.")
 
 # -------------------------------------------------------------
 # 8. 실행
@@ -401,13 +425,17 @@ n_modes = count_modes(JOB_NAME + '.dat', JOB_NAME + '.msg')
 print("=" * 74)
 if not ok or n_modes <= 0:
     print("RESULT:MODE_FAIL — 모드 %d개 (job_ok=%s)." % (n_modes, ok))
-    print("  확인할 것: .msg 의 'NEGATIVE EIGENVALUES' 개수 / 'CONVERGED UPTO THIS ITERATION'")
-    print("  되돌릴 것(교란 제거 실패 시): PRETENSION_SCALE=3.6 / SIGMA0=700.0 / MODE_STABILIZATION=0.0005")
-    print("  (그 값들은 run_abaqus_cable.py 에서 실측 성공한 조합이다.)")
+    print("  이 런이 실패했다는 것은 '클램프가 있어서 실패했다'는 설명이 틀렸다는 뜻이다")
+    print("  (모드 소스에는 클램프가 없고 나머지 base state 값은 HF 와 같다). 1줄씩 바꿔 래더로 좁힌다:")
+    print("    L1  INSERT_NODE_FILE = False          # 비물리적 요인 제거(*NODE FILE 명시 요청)")
+    print("    L2  PRETENSION_SCALE = 3.6            # 코너 당김 1.8e-5 (케이블과 같은 인장)")
+    print("    L3  SIGMA0 = 700.0 / MODE_STABILIZATION = 0.0005")
+    print("  라이선스 0: 위 [DIAG] 줄에서 'USER INPUT PROCESSING' 개수와")
+    print("    'misplaced' / 'NOT A VALID' 유무(= 키워드 위치 문제인지)를 먼저 확인한다.")
     sys.exit(1)
 
 print("RESULT:MODE_OK — 모드 %d개 추출. 파일: %s" % (n_modes, os.path.abspath(JOB_NAME + '.fil')))
 print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>")
 print("  (run_abaqus.py 는 이 .fil 을 IMPERFECTION_NAME=%s 로 스테이징해 주입한다)"
-      % 'Cable_Buckle')
+      % 'ClampFree_Buckle')   # run_abaqus.py 의 IMPERFECTION_NAME 과 같아야 한다
 print("=" * 74)

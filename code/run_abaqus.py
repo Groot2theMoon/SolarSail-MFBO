@@ -241,7 +241,8 @@ MODE_SOURCE_FIL = os.path.join('..', 'ClampFree_Buckle.fil')   # code\aba -> cod
 MODE_SOURCE_DAT = os.path.join('..', 'ClampFree_Buckle.dat')
 MODE_SOURCE_MSG = os.path.join('..', 'ClampFree_Buckle.msg')
 MODE_SOURCE_STEP = 2         # 소스 .fil 안의 스텝 번호 (케이블 런: 1=GlobalTension 2=Buckle)
-IMPERFECTION_NAME = 'Cable_Buckle'   # 자기 좌굴 잡 이름과 분리 -> 원장 C-1(조용한 0-모드 소비) 차단
+IMPERFECTION_NAME = 'ClampFree_Buckle'   # 모드 소스 잡 이름과 '같은' 이름 -> 원장 C-1(조용한 0-모드 소비) 차단
+                                         # (MODE_SOURCE_FIL 의 basename 과 함께 움직여야 한다)
 IMPERFECTION_MODES = (1, 2, 3, 4)
 IMPERFECTION_AMPL_T = 0.10   # 막 두께 배수(Galhofo 채택값 0.10 t). 진폭 민감도 = 0.50 으로 바꿔 재실행
 RUN_SELF_BUCKLE_JOB = True   # 자기(클램프) 좌굴 잡도 계속 돌린다 -> 클램프 base state probe
