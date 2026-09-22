@@ -471,7 +471,7 @@ def build_model(disp):
     #   => 좌굴 스텝이 실제로 돌아가는 쪽(S4R)을 기본값으로 둔다. S4 로 바꾸려면
     #      ELEM_TAG 도 's4' 로 함께 바꿔 산출물이 서로 덮이지 않게 한다.
     #      (HF 소비 모델은 S4 라서 check_model_consistency 는 이 한 항목만 EXIT=1 — 미해결)
-    elemTypeQuad = ElemType(elemCode=S4R, elemLibrary=STANDARD)
+    elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
     elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)
     p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
     p.generateMesh()
