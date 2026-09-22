@@ -17,15 +17,11 @@ import numpy as np
 print("DEBUG: All sys.argv: " + str(sys.argv))
 
 try:
-    # abaqus cae noGUI=run_abaqus.py -- [HF/LF] id x_c d_c
+    # abaqus cae noGUI=run_abaqus_cable.py -- [HF/LF]
     fidelity = sys.argv[-1].upper()
-
-    #edge_id = float(sys.argv[-3])
-    #x_c = float(sys.argv[-2])
-    #d_c = float(sys.argv[-1])
     
 except:
-    print("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus.py -- HF id x_c d_c")
+    print("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus_cable.py -- [fidelity]")
     sys.exit(1)
 
 def run_job_safely(job_name):
