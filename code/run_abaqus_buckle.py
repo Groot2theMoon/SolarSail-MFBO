@@ -33,9 +33,15 @@ run_abaqus_new.py 와의 차이 (그 외는 동일해야 한다)
     α = ALPHA_LIST (0.05, 0.10, 0.25, 0.50, 1.00) x DISP_GLOBAL(5e-5 m)
     판정: λ1..λ4 > 0 이며 CONVERGED 인 **최대 α** 를 고르고, 그 모드를 HF 초기결함으로 쓴다.
 
+LF/HF 구분은 없다 (의도적)
+    이 스크립트는 순수 선형 좌굴(고유치) 해석만 한다. 스텝은 GlobalTension -> Buckle 둘뿐이다.
+    LF 지표/Postbuckle/추출(eval_abaqus.py)/감쇠/trigger 는 이 스크립트에 없다 —
+    그것들은 run_abaqus_new.py 의 책무이고, 여기서 중복되면 역할이 흐려진다.
+
 Usage
-    abaqus cae noGUI=run_abaqus_buckle.py -- [Fidelity] [x_c] [d_c]
-    (Fidelity 는 CLI 호환용으로만 받는다. d_c 는 클램프 당김용이라 이 스크립트에선 쓰지 않는다.)
+    abaqus cae noGUI=run_abaqus_buckle.py -- x_c
+    abaqus cae noGUI=run_abaqus_buckle.py -- HF 0.5 1.0
+        (두 번째 형식은 기존 호출 습관 호환용. fidelity/d_c 는 쓰이지 않으며 그 사실을 출력한다.)
 
 산출물
     <RUN_DIR>/Buckle_a<alpha>.odb / .dat / .msg / .sta / .diag.txt
@@ -95,12 +101,24 @@ print("%s _HERE = %s" % (TAG, _HERE))
 print("%s _RUN  = %s" % (TAG, _RUN))
 print("DEBUG: All sys.argv: " + str(sys.argv))
 
+# CLI: x_c 하나만 받는다. 기존 'HF x_c d_c' 형식도 받되, 그 경우 x_c 를 정확히 집어낸다.
+#   (sys.argv[-1] 을 그냥 float() 하면 'HF 0.5 1.0' 에서 d_c=1.0 을 x_c 로 삼키는 침묵 오류가 난다.)
+_args = [a for a in sys.argv[1:] if a != '--']
+if len(_args) == 1:
+    _x_c_raw = _args[0]
+elif len(_args) == 3 and _args[0].upper() in ('LF', 'HF'):
+    _x_c_raw = _args[1]
+    print("%s 참고: fidelity='%s' 및 d_c='%s' 는 이 스크립트에서 쓰이지 않습니다 "
+          "(순수 선형 좌굴 전용)." % (TAG, _args[0], _args[2]))
+else:
+    print("Error: 인자를 해석할 수 없습니다: %s" % str(_args))
+    print("Usage: abaqus cae noGUI=run_abaqus_buckle.py -- x_c        (예: -- 0.5)")
+    print("       abaqus cae noGUI=run_abaqus_buckle.py -- HF x_c d_c (호환 형식)")
+    sys.exit(1)
 try:
-    fidelity = sys.argv[-3].upper()     # CLI 호환용 (이 스크립트는 좌굴만 한다)
-    x_c = float(sys.argv[-2])
-    d_c = float(sys.argv[-1])
+    x_c = float(_x_c_raw)
 except Exception:
-    print("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus_buckle.py -- HF x_c d_c")
+    print("Error: x_c 를 float 로 변환할 수 없습니다: %r" % (_x_c_raw,))
     sys.exit(1)
 
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
@@ -298,15 +316,12 @@ def print_job_eigen(job_name):
             prev = j
 
 
-sqrt2 = 1.414
-
 MODEL_PREFIX = 'SailModel_Buckle'
 INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
 THICKNESS = 5.0e-6
-TARGET_STRESS = 7000.0 # Pa   # 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
 
 # 좌표 정의 (run_abaqus_new.py 와 동일)
 V1 = (BASE/2.0, HEIGHT, 0.0) # Top
@@ -322,7 +337,6 @@ V_CR = clamp_coord_R(x_c)
 # ---- 사전 장력(prestrain) 캘리브레이션 (run_abaqus_new.py 와 동일) ----
 PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
 DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
-GLOBAL_FINAL = 0.0001 * PRETENSION_SCALE     # 최종 하중: 코너 당김 1e-3 m
 
 # ---- 좌굴 전용 상수 ----
 # α 스윕: 프리텐션 수준을 바꿔가며 λ>0 인 base state 를 찾는다.
@@ -333,11 +347,9 @@ ALPHA_LIST = (0.05, 0.10, 0.25, 0.50, 1.00)
 #   K_delta 가 K0 대비 너무 작으면 고유값 분리가 나빠져 subspace 가
 #   'EIGENVALUES CANNOT BE FOUND' 로 실패한다. 성공한 대조 스크립트는 0.01 m 를 썼다.
 PERTURBATION = 0.01     # m
-N_EIG = 4               # 임퍼펙션에 쓸 모드 수 (참고용 표시)
 N_EIG_BUCKLE = 100      # 추출 요청 고유값 수 (음수 모드 건너뛰기 위해 100 — 대조 스크립트와 동일)
 BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (numEigen 의 2.5배 — 대조 스크립트와 동일)
 SIGMA0 = 500.0          # 수렴 보조용 초기응력 [Pa] (run_abaqus_new.py 와 동일)
-STAB = 0.0002           # Step-GlobalTension 안정화 (run_abaqus_new.py 와 동일)
 
 print("%s x_c=%.3g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
 print("%s DISP_GLOBAL=%.3e m  PERTURBATION=%.3e m  ALPHA_LIST=%s"
