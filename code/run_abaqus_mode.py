@@ -128,6 +128,28 @@ def print_job_diag(job_name):
     else:
         print("[DIAG:%s] .fil 없음 -> 임퍼펙션 주입이 조용히 무시된다" % job_name)
 
+    # 설계 규칙 (run_abaqus_cable.py 의 좌굴 스텝 주석에서 확인):
+    #   '요청 고유값 수 > base state 의 음수 고유값 수' 여야 양수 좌굴모드가 subspace 창에 들어온다.
+    #   (케이블 런: 52 < 100 -> 성공 / 클램프 C-route: 598~2897 > 100 -> 0모드)
+    fn = '%s.msg' % job_name
+    if os.path.exists(fn):
+        with open(fn, 'r', errors='replace') as f:
+            txt = f.read()
+        key = 'SYSTEM MATRIX HAS'
+        idx = txt.find(key)
+        neg = None
+        if idx >= 0:
+            tok = txt[idx + len(key):].strip().split()
+            if tok and tok[0].isdigit():
+                neg = int(tok[0])
+        if neg is None:
+            print("[DIAG:%s] 'SYSTEM MATRIX HAS ... NEGATIVE EIGENVALUES' 를 못 찾음" % job_name)
+        else:
+            print("[DIAG:%s] 음수 고유값 %d개 vs 요청 %d개 -> %s"
+                  % (job_name, neg, N_EIG_BUCKLE,
+                     'OK (창에 양수 모드가 들어온다)' if N_EIG_BUCKLE > neg
+                     else '!!! 요청 수를 늘려야 한다 (N_EIG_BUCKLE <= 음수 개수)'))
+
 
 # =====================================================================
 # 모델 정의 — HF 와 '문자 그대로' 같은 줄 (check_model_consistency.py 가 검사)
