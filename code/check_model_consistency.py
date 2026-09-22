@@ -159,6 +159,15 @@ def main():
             bad2.append((k, n))
         print("  %-4s %-22s %d회" % ('OK' if n == 0 else '!!!', k, n))
 
+    # --- EVOL 필드출력 (면적가중 산출에 필요. 2026-09-22 누락을 실측으로 발견) ---
+    print()
+    print("--- 필드출력 EVOL (base_state_probe 면적가중) ---")
+    for _label, _txt in (('run_abaqus_new.py', a), ('run_abaqus_buckle.py', b)):
+        _has = 'EVOL' in _txt
+        print("  %s  %s" % ('OK  ' if _has else '!!! ', _label + ' EVOL=' + str(_has)))
+        if not _has:
+            bad.append('%s: EVOL 필드출력 누락 -> base_state_probe 면적가중 불가' % _label)
+
     print()
     print("--- 작업 디렉터리 분리 (산출물 혼입 방지) ---")
     def _run_dir_of(path):

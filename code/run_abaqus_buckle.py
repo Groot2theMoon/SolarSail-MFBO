@@ -393,6 +393,16 @@ ALPHA_LIST = (0.05, 0.10, 0.25, 0.50, 1.00)
 #   '증분 응력' 을 만들고 그 증분이 미분 초기응력 강성 K_delta 를 만든다.
 #   K_delta 가 K0 대비 너무 작으면 고유값 분리가 나빠져 subspace 가
 #   'EIGENVALUES CANNOT BE FOUND' 로 실패한다. 성공한 대조 스크립트는 0.01 m 를 썼다.
+# ---- 좌굴 솔버 (논문 :247 "The solver subspace interaction is selected" => 기본 SUBSPACE) ----
+#   A/B 시험은 이 상수 한 줄만 바꾼다 (환경변수 금지 원칙).
+#   두 솔버는 인자 이름이 다르다:
+#     SUBSPACE -> vectors        (검증된 대조 run_abaqus_cable.py 와 동일 조합)
+#     LANCZOS  -> blockSize / minEigen / maxEigen
+BUCKLE_SOLVER = 'SUBSPACE'      # 'SUBSPACE' | 'LANCZOS'
+BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
+BUCKLE_MIN_EIGEN = 0.0          # LANCZOS 전용 (음의 고유값도 보고 싶으면 -1e30 등)
+BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 넘기지 않는다)
+
 PERTURBATION = 0.01     # m
 N_EIG_BUCKLE = 100      # 추출 요청 고유값 수 (음수 모드 건너뛰기 위해 100 — 대조 스크립트와 동일)
 BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (numEigen 의 2.5배 — 대조 스크립트와 동일)
@@ -523,14 +533,29 @@ def build_model(alpha):
     #   numEigen=100 (음수 모드 건너뛰기), SUBSPACE, vectors=250, maxIterations=5000
     if 'Step-Buckle' in my_model.steps:
         del my_model.steps['Step-Buckle']
-    my_model.BuckleStep(
-        name='Step-Buckle',
-        previous='Step-GlobalTension',
-        numEigen=N_EIG_BUCKLE,
-        eigensolver=SUBSPACE,
-        vectors=BUCKLE_VECTORS,
-        maxIterations=5000
-    )
+    # ---- 필드출력: HF(run_abaqus_new.py:724) 와 동일. EVOL 이 없으면 base_state_probe 가
+    #      면적가중을 못 하고 균등가중으로 떨어진다(2026-09-22 실측으로 발견).
+    my_model.FieldOutputRequest(name='F-Output-1',
+                                createStepName='Step-GlobalTension',
+                                variables=('S', 'E', 'U', 'COORD', 'EVOL'))
+
+    # ---- 좌굴 스텝: 솔버는 코드 상수 하나로 교체 (SUBSPACE <-> LANCZOS) ----
+    #   논문 :247 은 SUBSPACE 를 명시 선택했다. 바꾸면 논문 사양에서 이탈한다.
+    #   두 솔버는 인자 이름이 다르므로 분기해서 넘긴다 (LANCZOS 는 vectors 를 받지 않는다).
+    _eig = dict(name='Step-Buckle', previous='Step-GlobalTension',
+                numEigen=N_EIG_BUCKLE, eigensolver=BUCKLE_SOLVER)
+    if BUCKLE_SOLVER == 'SUBSPACE':
+        _eig.update(vectors=BUCKLE_VECTORS, maxIterations=BUCKLE_MAXITER)
+    else:
+        _eig.update(blockSize=BUCKLE_BLOCK_SIZE, maxIterations=BUCKLE_MAXITER,
+                    minEigen=BUCKLE_MIN_EIGEN)
+        if BUCKLE_MAX_EIGEN is not None:
+            _eig.update(maxEigen=BUCKLE_MAX_EIGEN)
+    print("%s eigensolver=%s numEigen=%d : %s"
+          % (TAG, BUCKLE_SOLVER, N_EIG_BUCKLE,
+             ', '.join('%s=%s' % (_k, _eig[_k]) for _k in sorted(_eig)
+                       if _k not in ('name', 'previous'))))
+    my_model.BuckleStep(**_eig)
 
     # ---- 초기응력 (수렴 보조) — 동일 ----
     my_model.Stress(
