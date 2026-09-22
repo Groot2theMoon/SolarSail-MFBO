@@ -418,8 +418,13 @@ def build_model(alpha):
     # ---- 메쉬: run_abaqus_new.py 와 완전히 동일 ----
     p.seedPart(size=BASE/200.0, deviationFactor=0.1) # 약 1만개
     p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-    elemTypeQuad = ElemType(elemCode=S8R5, elemLibrary=STANDARD)
-    elemTypeTri = ElemType(elemCode=STRI65, elemLibrary=STANDARD)
+    # ★ 요소 타입은 run_abaqus_new.py(HF) 와 반드시 같아야 한다.
+    #   이유: 좌굴 모드는 HF 와 **같은 노드**에 정의되어야 *IMPERFECTION 으로 이식된다.
+    #   HF 쪽 요소 타입을 바꾸면 이 두 줄도 함께 바꿔야 한다.
+    #   현재값은 HF 기준 S4/S3 (커밋 6e0ef6e "cable deformation compatibility" 이후).
+    #   참고: Galhofo 검증모델은 S4R(s4R) 을 썼다 — 남은 차이는 요소 종류 하나다.
+    elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
+    elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)
     p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
     p.generateMesh()
     a.regenerate()
