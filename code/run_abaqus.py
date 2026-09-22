@@ -269,6 +269,7 @@ if IMPERFECTION_MODE not in ('odb_table', 'file'):
 # 모드표는 모델을 만들기 전에 읽는다(없으면 HF 잡을 제출하지 않고 즉시 중단).
 _pert = None
 _mode_table = None
+_labels = ()
 if IMPERFECTION_MODE == 'odb_table':
     try:
         _mode_table = load_mode_table(MODE_TABLE, IMPERFECTION_MODES)
@@ -478,7 +479,18 @@ else:
     if _n != len(_labels):
         print("!!! WARNING: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치 의심"
               % (len(_labels), _n))
+    # 말이 아니라 실측: 섭동이 실제 좌표에 들어갔는지 3개 노드를 찍어 로그에 남긴다.
+    for _nd in p.nodes.sequenceFromLabels(
+            labels=(_labels[0], _labels[len(_labels) // 2], _labels[-1])):
+        print("               파트 노드 %d z=%.9e (Δz=%.3e m)"
+              % (_nd.label, _nd.coordinates[2], _pert.get(_nd.label, 0.0)))
 a.regenerate()
+
+# 의존 인스턴스는 파트 메쉬를 공유한다 -> 어셈블리 쪽에서도 좌표가 같아야 한다(전달 확인).
+if _pert is not None and _labels:
+    _i0 = _labels[0]
+    print("[IMPERFECTION] 어셈블리 인스턴스 확인: 노드 %d z=%.9e (파트와 같아야 함)"
+          % (_i0, inst_memb.nodes.sequenceFromLabels(labels=(_i0,))[0].coordinates[2]))
 
 # 꼭짓점 RP
 rp1_obj, rp1_reg = create_rigid_patch('Top', V1, radius=0.2)
