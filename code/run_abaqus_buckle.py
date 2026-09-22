@@ -134,15 +134,47 @@ SIGMA0 = 500.0          # 초기응력 [Pa] — 수렴 보조 (run_abaqus_new.py
 # 인자 — 한 번에 한 케이스만 받는다. 스윕 기능은 없다.
 #   abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]
 # ============================================================================
-def parse_args(argv):
-    """스크립트 뒤 숫자 1~2개만 받는다: <x_c> [disp_m].
+# Abaqus CAE 러너는 자기 토큰을 sys.argv 에 섞어 넣는다(실측 두 가지 형태):
+#   ['abaqus','cae','noGUI=...py','--','HF','0.5','1.0']  (2026-09-22, 원문 주석에 기록)
+#   ['...','-cae','...']  로 시작/끝나는 형태            (2026-09-22, 사용자 콘솔 실측)
+# 그래서 "러너 토큰은 걸러내고, 남은 토큰은 숫자여야 한다"로 처리한다.
+# 숫자가 아닌 토큰이 남으면 추측하지 않고 중단한다
+#   (잘못된 모델로 라이선스 1회를 쓰는 것을 막는다).
+_LAUNCHER_WORDS = ('abaqus', 'cae', 'cae.exe', 'abq', 'standard', 'explicit')
 
-    추측/치환 금지 규칙: 숫자가 아니거나 개수가 맞지 않으면 조용히 넘어가지 않고
-    사용법을 찍고 예외로 끝낸다 (잘못된 모델로 라이선스 1회를 쓰는 것을 막는다).
+
+def _is_launcher_token(tok):
+    """러너/구분자/스크립트 토큰이면 True (사용자 인자가 아니다)."""
+    t = tok.strip()
+    if t in ('', '--'):
+        return True
+    if t.startswith('-'):                     # -cae, -noGUI 등 러너 플래그
+        return True
+    if t.lower() in _LAUNCHER_WORDS:
+        return True
+    if t.lower().endswith('.py') or t.lower().startswith('nogui='):
+        return True
+    if len(t) > 1 and t[1] == ':':            # C:\... 같은 Windows 경로
+        return True
+    return False
+
+
+def parse_args(argv):
+    """스크립트 인자에서 숫자 1~2개만 뽑는다: <x_c> [disp_m].
+
+    러너 토큰은 걸러내되 무엇을 걸렀는지 출력하고, 남은 토큰이 숫자가 아니거나
+    개수가 맞지 않으면 사용법을 찍고 예외로 끝낸다(조용한 치환 금지).
     """
-    toks = [t for t in list(argv[1:]) if t.strip() not in ('--', '')]
+    toks = list(argv[1:])
+    print("%s argv=%s" % (TAG, list(argv)))
+    dropped = [t for t in toks if _is_launcher_token(t)]
+    toks = [t for t in toks if not _is_launcher_token(t)]
+    if dropped:
+        print("%s NOTE: launcher/separator tokens ignored: %s"
+              % (TAG, ', '.join(repr(d) for d in dropped)))
     if toks and toks[0].upper() in ('LF', 'HF'):
-        print("%s NOTE: fidelity token %r is ignored (buckling-only script)." % (TAG, toks[0]))
+        print("%s NOTE: fidelity token %r is ignored (buckling-only script)."
+              % (TAG, toks[0]))
         toks = toks[1:]
     nums = []
     for t in toks:
@@ -150,12 +182,15 @@ def parse_args(argv):
             nums.append(float(t))
         except ValueError:
             raise RuntimeError(
-                'Bad argument %r: numbers only.\n'
-                'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]' % (t,))
+                'Bad argument %r: numbers only (argv was %r).\n'
+                'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]'
+                % (t, list(argv)))
     if not (1 <= len(nums) <= 2):
         raise RuntimeError(
-            'Expected 1 or 2 numeric arguments (<x_c> [disp_m]), got %r.\n'
-            'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]' % (nums,))
+            'Expected 1 or 2 numeric arguments (<x_c> [disp_m]), got %r '
+            '(argv was %r).\n'
+            'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]'
+            % (nums, list(argv)))
     return nums[0], (nums[1] if len(nums) > 1 else None)
 
 
