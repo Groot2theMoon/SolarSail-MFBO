@@ -1,58 +1,34 @@
 """
-선형 좌굴(고유치) 해석 전용 스크립트 — 케이블만 제외하면 run_abaqus_new.py 와 동일한 모델.
+run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, 스윕 없음.
 
 목적
-    포스트버클링이 ClampTension step time 0.466 에서 멈추는 원인 = **준축퇴 다중 분기**.
-    (실측: A안에서 208 negative eigenvalues, 논문 첫 4개 고유값 차이가 0.04%)
-    분기 경로를 '지정'해 주려면 먼저 그 경로(고유모드)를 얻어야 한다.
-    이 스크립트가 그 모드를 뽑는다.
+    클램프 패치가 있는 삼각 막 모델의 선형 좌굴 고유모드를 한 번에 추출한다.
+    추출한 모드는 HF 포스트버클링의 초기결함(*IMPERFECTION, FILE=..., STEP=2)으로 쓴다.
 
-논문(Galhofo 2022) §3.2 좌굴 레시피 중 우리에게 필요한 부분
-    (a) 케이블 없는 별도 모델          <- 이 스크립트 (케이블 제외)
-    (b) 초기 작은 프리텐션(3정점 변위)  <- Step-GlobalTension
-    (c) 3개 변의 z 고정                <- BC_Edges_Only_Z
-    (d) buckle 스텝 + SUBSPACE 솔버     <- Step-Buckle
-    클램프는 **유지**한다 (우리 모델의 주 하중원이며 MFBO 설계변수 x_c/d_c 의 통로다).
+모델 (run_abaqus_new.py 의 HF 모델과 같은 빌드 블록을 공유한다)
+    삼각 막(BASE=20 m, HEIGHT=10 m, 두께 5e-6 m)
+    + 꼭짓점 강체패치 3개 + 클램프 강체패치 2개 (위치 x_c).
+    케이블은 없다 — 논문 §3.2 의 좌굴 모델과 같은 방식으로, 케이블이 당기던
+    지점을 직접 prescribed 변위로 구속한다.
+    스텝: Step-GlobalTension(프리텐션) -> Step-Buckle(SUBSPACE, numEigen=100,
+    vectors=250). 좌굴 스텝의 perturbation 은 0.01 m (대조 스크립트와 동일).
 
-run_abaqus_new.py 와의 차이 (그 외는 동일해야 한다)
-    제외 : 케이블 part 생성(create_cable_part), Cable 재질/TrussSection,
-           connect_cable, Tie/Join 부착, 케이블 끝단 BC(end_c1..end_cr)
-    대체 : 케이블이 'RP <-> 구동 끝단'을 잇는 하중 전달 로드였으므로,
-           케이블을 빼면 **RP 를 직접 구동/구속**하면 하중 경로가 동일해진다.
-             R  : RP_Right_Set 에 (DISP*cos, -DISP*sin)
-             L  : RP_Left_Set  에 (-DISP*cos, -DISP*sin)
-             Top: RP_Top_Set   을 고정 (케이블 버전의 BC_Anchor 대응)
-             CL/CR: RP_CL/CR_Set 을 고정 (클램프는 구동하지 않는다 — 논문 (b) 레시피)
-    교체 : Step-Trigger -> Step-Buckle (BuckleStep, SUBSPACE, numEigen=100, vectors=250)
-    유지 : 메쉬(seedPart/setMeshControls/setElementType: S4+S3 — HF 와 같은 요소),
-           create_rigid_patch(radius=0.2), Coupling KINEMATIC, SIGMA0,
-           Step-GlobalTension 의 증분/안정화 설정, NUMCPUS.
-    분리 : RUN_DIR_NAME = "buckle" (HF/LF 는 "aba"). 산출물을 섞지 않기 위함이다.
-           -> 이 때문에 HF 의 *IMPERFECTION 경로에 ..\buckle\ 를 붙여야 한다 (아래 참조).
+사용법
+    abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]
+        x_c     클램프 위치 파라미터. 0.5 -> 좌(5,5) / 우(15,5)
+        disp_m  GlobalTension 코너 당김 [m]. 생략하면 기본 5e-5 m.
+                (논문 좌굴 모델의 값: 모서리 5e-4 m, 정점 1e-3 m)
+    예)  abaqus cae noGUI=run_abaqus_buckle.py -- 0.5
+         abaqus cae noGUI=run_abaqus_buckle.py -- 0.5 1e-3
 
-α 스윕 (프리텐션 수준)
-    λ>0 인 base state 를 찾기 위해 프리텐션을 α 배로 바꿔가며 한 번에 전부 돌린다.
-    α = ALPHA_LIST (0.01, 0.05, 0.10, 0.25, 0.50, 1.00) x DISP_GLOBAL(5e-5 m)
-    판정: λ1..λ4 > 0 이며 CONVERGED 인 **최대 α** 를 고르고, 그 모드를 HF 초기결함으로 쓴다.
+산출물 (code/buckle/)
+    <job>.odb / .dat / .msg / .sta / .fil / .diag.txt
+    job 이름은 인자에서 자동 생성한다: Buckle_xc<NNN>_d<NNN>um
+    고유값 표는 .dat 의 MODE NO / EIGENVALUE 블록에 있고, 스크립트가 콘솔에도 덤프한다.
 
-LF/HF 구분은 없다 (의도적)
-    이 스크립트는 순수 선형 좌굴(고유치) 해석만 한다. 스텝은 GlobalTension -> Buckle 둘뿐이다.
-    LF 지표/Postbuckle/추출(eval_abaqus.py)/감쇠/trigger 는 이 스크립트에 없다 —
-    그것들은 run_abaqus_new.py 의 책무이고, 여기서 중복되면 역할이 흐려진다.
-
-Usage
-    abaqus cae noGUI=run_abaqus_buckle.py -- x_c
-    abaqus cae noGUI=run_abaqus_buckle.py -- HF 0.5 1.0
-        (두 번째 형식은 기존 호출 습관 호환용. fidelity/d_c 는 쓰이지 않으며 그 사실을 출력한다.)
-
-산출물
-    code/buckle/Buckle_a<alpha>.odb / .dat / .msg / .sta / .fil / .diag.txt
-    .fil 은 *BUCKLE 스텝이 자동 기록한다 (run_abaqus_cable.py 로 검증된 사실).
-    -> HF 쪽에서 읽을 때는 **경로를 붙여야 한다**. HF 잡의 작업 디렉터리는 code/aba 이고
-       좌굴 산출물은 code/buckle 이므로, 그냥 FILE=Buckle_a025 라고 쓰면 못 찾거나
-       (더 나쁘게) code/aba 에 남은 stale .fil 을 조용히 읽는다.
-         *IMPERFECTION, FILE=..\buckle\Buckle_a025, STEP=2   (STEP=2 = Buckle 스텝)
-       ..\buckle\ 로 시작하는 파일명을 피하려면 절대경로를 써도 된다.
+HF 에서 모드를 쓸 때 — 경로 주의 (HF 잡의 작업 디렉터리는 code/aba 다)
+    *IMPERFECTION, FILE=..\\buckle\\<job>, STEP=2
+    <job> 은 이 스크립트가 마지막에 그대로 찍어 준다.
 """
 
 from abaqus import *
@@ -111,88 +87,111 @@ os.makedirs(_RUN, exist_ok=True)
 os.chdir(_RUN)
 print("%s _HERE = %s" % (TAG, _HERE))
 print("%s _RUN  = %s" % (TAG, _RUN))
-print("DEBUG: All sys.argv: " + str(sys.argv))
 
 
-def parse_x_c(argv):
-    """argv 에서 x_c 하나만 뽑는다. Abaqus 가 어떤 형태로 넘겨도 동작해야 한다.
 
-    허용 형태:
-        -- 0.5
-        -- HF 0.5 1.0
-        HF 0.5 1.0
-        run_abaqus_buckle.py -- 0.5
-        C:\...\run_abaqus_buckle.py HF 0.5 1.0
-    반환: (x_c 문자열 또는 None, 오류 메시지 또는 None)
+# ============================================================================
+# 모델 상수 — run_abaqus_new.py 의 HF 모델과 같은 값이어야 한다.
+#   검사: python code/check_model_consistency.py
+# ============================================================================
+MODEL_PREFIX = 'SailModel_Buckle'
+INSTANCE_NAME = 'MEMBRANE-1'
+
+BASE = 20.0   # m
+HEIGHT = 10.0 # m
+THICKNESS = 5.0e-6
+
+V1 = (BASE/2.0, HEIGHT, 0.0) # Top
+V2 = (BASE, 0.0, 0.0)        # Right
+V3 = (0.0, 0.0, 0.0)         # Left
+
+def clamp_coord_L(x): return (10-10*x, 10-10*x, 0)
+def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
+
+# ---- 프리텐션 기본값 (CLI 두 번째 인자로 덮어쓴다) ----
+PRETENSION_SCALE = 10.0
+DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 기본 코너 당김 5e-5 m
+
+# ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
+PERTURBATION = 0.01     # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta)
+N_EIG_BUCKLE = 100      # 추출 요청 고유값 수
+BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (요청 수의 2.5배)
+BUCKLE_MAXITER = 5000
+BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
+BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
+BUCKLE_MIN_EIGEN = 0.0          # LANCZOS 전용 (음의 고유값도 보고 싶으면 -1e30 등)
+BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 넘기지 않는다)
+
+# Abaqus API 는 **심볼릭 상수**를 요구한다. 문자열을 그대로 넘기면
+#   "eigensolver; found string, expecting SUBSPACE, LANCZOS or AMS"
+# 로 즉시 죽는다(2026-09-22 실측: 전 케이스 BUILD_FAIL). 여기서 변환해서 넘긴다.
+EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
+
+SIGMA0 = 500.0          # 초기응력 [Pa] — 수렴 보조 (run_abaqus_new.py 와 동일)
+
+
+# ============================================================================
+# 인자 — 한 번에 한 케이스만 받는다. 스윕 기능은 없다.
+#   abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]
+# ============================================================================
+def parse_args(argv):
+    """스크립트 뒤 숫자 1~2개만 받는다: <x_c> [disp_m].
+
+    추측/치환 금지 규칙: 숫자가 아니거나 개수가 맞지 않으면 조용히 넘어가지 않고
+    사용법을 찍고 예외로 끝낸다 (잘못된 모델로 라이선스 1회를 쓰는 것을 막는다).
     """
-    toks = [a for a in argv if a != '--']
-    # 스크립트 파일명/경로 토큰 제거
-    toks = [a for a in toks
-            if not a.lower().endswith('.py') and not re.match(r'^[A-Za-z]:', a)]
-    if not toks:
-        return None, '인자가 하나도 없습니다'
-
-    # fidelity 토큰은 '첫 토큰'이 아니라 '목록 어디에 있든' 찾는다.
-    #   러너가 접두 토큰을 붙이면(abaqus cae noGUI=...) 첫 토큰이 'cae' 가 되어
-    #   기존 구현은 아래 fallback 으로 떨어져 **마지막 값(=d_c)을 x_c 로** 조용히 반환했다.
-    #   실측(2026-09-22): ['abaqus','cae','noGUI=...py','--','HF','0.5','1.0'] -> '1.0'
-    #   x_c=1.0 은 클램프 패치를 좌/우 정점에 정확히 겹치게 만드는 잘못된 모델이다.
-    _fid = None
-    for _i, _a in enumerate(toks):
-        if _a.upper() in ('LF', 'HF'):
-            _fid = _i
-            break
-    if _fid is not None:
-        _rest = toks[_fid + 1:]
-        if not _rest:
-            return None, 'fidelity 뒤에 x_c 가 없습니다: %s' % toks
-        if len(_rest) >= 2:
-            print("%s 참고: fidelity='%s' 및 d_c='%s' 는 쓰이지 않습니다 "
-                  "(순수 선형 좌굴 전용)." % (TAG, toks[_fid], _rest[1]))
-        return _rest[0], None
-
-    # fidelity 토큰이 없으면 'float 로 해석되는 토큰'만 x_c 후보로 본다 (러너 토큰 배제).
-    #   후보가 2개 이상이면 어느 쪽이 x_c 인지 알 수 없으므로 **추측하지 않고 중단**한다.
-    #   (기존 구현은 이 경우에도 마지막 값을 조용히 반환했다.)
-    def _is_float(_s):
+    toks = [t for t in list(argv[1:]) if t.strip() not in ('--', '')]
+    if toks and toks[0].upper() in ('LF', 'HF'):
+        print("%s NOTE: fidelity token %r is ignored (buckling-only script)." % (TAG, toks[0]))
+        toks = toks[1:]
+    nums = []
+    for t in toks:
         try:
-            float(_s)
-            return True
-        except (TypeError, ValueError):
-            return False
-    _cands = [a for a in toks if _is_float(a)]
-    if not _cands:
-        return None, 'float 로 해석할 수 있는 토큰이 없습니다: %s' % toks
-    if len(_cands) > 1:
-        return None, ('x_c 후보가 %d개입니다 (%s) — 어느 값이 x_c 인지 알 수 없습니다. '
-                      '`-- x_c` 처럼 값을 하나만 넘기세요.'
-                      % (len(_cands), ', '.join(_cands)))
-    return _cands[0], None
+            nums.append(float(t))
+        except ValueError:
+            raise RuntimeError(
+                'Bad argument %r: numbers only.\n'
+                'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]' % (t,))
+    if not (1 <= len(nums) <= 2):
+        raise RuntimeError(
+            'Expected 1 or 2 numeric arguments (<x_c> [disp_m]), got %r.\n'
+            'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]' % (nums,))
+    return nums[0], (nums[1] if len(nums) > 1 else None)
 
 
-_x_c_raw, _cli_err = parse_x_c(sys.argv)
-if _cli_err:
-    print("Error: %s" % _cli_err)
-    print("Usage: abaqus cae noGUI=run_abaqus_buckle.py -- x_c        (예: -- 0.5)")
-    print("       abaqus cae noGUI=run_abaqus_buckle.py -- HF x_c d_c (호환 형식)")
-    raise RuntimeError('CLI 인자를 해석할 수 없습니다: %s (위 Usage 참조). '
-                       'sys.exit 를 쓰지 않는 이유: CAE noGUI 러너에서 종료코드가 0으로 보인다.'
-                       % _cli_err)
-try:
-    x_c = float(_x_c_raw)
-except Exception:
-    raise RuntimeError('x_c 를 float 로 변환할 수 없습니다: %r' % (_x_c_raw,))
-print("%s x_c = %g" % (TAG, x_c))
+x_c, _disp_arg = parse_args(sys.argv)
+DISP = DISP_GLOBAL if _disp_arg is None else _disp_arg
 
-# P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
+if not (0.03 <= x_c <= 0.95):
+    # 원장 M-8: x_c < 0.028 이면 클램프 패치가 정점 패치와 겹치고, x_c ~ 1 이면
+    # 모서리 패치와 겹친다 -> 조용히 다른 모델이 된다. 경고만 찍고 진행한다.
+    print("%s WARNING: x_c=%g is outside the safe band (0.03, 0.95) — "
+          "the clamp patch may overlap a vertex patch (ledger M-8)." % (TAG, x_c))
+if DISP <= 0.0:
+    raise RuntimeError('disp_m must be > 0 (got %r).' % (DISP,))
+
+V_CL = clamp_coord_L(x_c)
+V_CR = clamp_coord_R(x_c)
+
+print("%s x_c=%g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
+print("%s corner pull DISP=%.4e m (= alpha %.4g x 5e-5 m)  perturbation=%.3e m"
+      % (TAG, DISP, DISP / 5.0e-5, PERTURBATION))
+print("%s buckle step: solver=%s numEigen=%d vectors=%d"
+      % (TAG, BUCKLE_SOLVER, N_EIG_BUCKLE, BUCKLE_VECTORS))
+
+# 하중 각도 (28.6도) — 케이블 방향과 동일하게 유지 (하중 경로 동일화)
+angle_deg = 28.6
+angle_rad = np.deg2rad(angle_deg)
+cos_val = float(np.cos(angle_rad))
+sin_val = float(np.sin(angle_rad))
+
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
                   'dat', 'res', 'abq', 'ipm', 'mdl', 'stt', 'cid')
 
 
 def run_job_safely(job_name, model_name=None):
     if model_name is None:
-        raise RuntimeError('run_job_safely: model_name 을 반드시 인자로 넘겨야 합니다 '
-                           '(이 스크립트의 모델 이름은 alpha 마다 동적으로 생성된다).')
+        raise RuntimeError('run_job_safely: model_name is required.')
     for _ext in _JOB_ARTIFACTS:
         _f = '%s.%s' % (job_name, _ext)
         if os.path.exists(_f):
@@ -226,9 +225,7 @@ def run_job_safely(job_name, model_name=None):
 
     time.sleep(1.0)
 
-    # 잡 결과 핵심 줄을 콘솔에 직접 찍는다 (로그 일부만 붙여넣어도 원인 판별 가능)
-    print_job_diag(job_name)
-    dump_job_diag(job_name)
+    # 진단 출력은 호출측에서 report_job() 한 번으로 끝낸다.
 
     # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
     if job.status == ABORTED or not os.path.exists(odb_file):
@@ -270,183 +267,55 @@ def job_completed_ok(job_name):
     return False
 
 
-def dump_job_diag(job_name):
-    """실패 진단에 필요한 것만 파일 하나로 모아 둔다 (사용자가 그 파일만 보내면 되도록).
+def report_job(job_name):
+    """결과 판정에 필요한 줄만 콘솔에 찍고 <job>.diag.txt 로도 남긴다.
 
-    내용: ① .sta 마지막 25줄 ② .msg/.dat 의 원인 판별 키 줄 ③ 완주 판정 결과.
-    파일: <RUN_DIR>/<job>.diag.txt
+    좌굴 잡의 결론은 두 곳에만 있다.
+      .dat -> MODE NO / EIGENVALUE 표 (고유값 원문)
+      .msg -> CONVERGED / REQUESTED BY THE USER / CANNOT BE FOUND / REDUCED TO
+    전체 로그를 다 찍으면 정작 필요한 줄이 묻히므로 그 줄만 뽑는다.
     """
     out = ['===== job_completed_ok = %s =====' % job_completed_ok(job_name)]
-    sta = '%s.sta' % job_name
-    if os.path.exists(sta):
-        with open(sta, 'r', errors='replace') as f:
-            out.append('===== %s (last 25 lines) =====' % sta)
-            out.extend(f.read().splitlines()[-25:])
-    KEYS = ('***ERROR', '***WARNING', 'TOO MANY', 'DISTORT', 'NEGATIVE EIGENVALUE',
-            'HAS COMPLETED', 'NOT BEEN COMPLETED', 'EXCESSIVE', 'CUT BACK',
-            'CANNOT BE', 'ATTEMPT NUMBER  2',
-            'CONSTANT DAMPING', 'OVERCONSTRAINT', 'INACTIVE DOF',
-            'ALLSDTOL', 'SEVERE ELEMENT',
-            'DIVERG', 'MINIMUM SPECIFIED', 'TIME INCREMENT REQUIRED',
-            'LINE SEARCH', 'ANALYSIS SUMMARY', 'CUTBACKS IN AUTOMATIC',
-            # 좌굴 전용 키 (이 스크립트의 핵심 산출물)
-            'EIGEN', 'CONVERGED', 'BUCKLING FACTOR', 'MODE NO')
-    for ext in ('msg', 'dat'):
-        fn = '%s.%s' % (job_name, ext)
-        if not os.path.exists(fn):
-            continue
-        out.append('===== %s (key lines, max 500) =====' % fn)
-        n_hit = 0
+
+    msg_keys = ('CONVERGED', 'REQUESTED BY THE USER', 'CANNOT BE FOUND',
+                'REDUCED TO', 'NEGATIVE EIGENVALUES', 'HAS BEEN COMPLETED',
+                'HAS NOT BEEN COMPLETED', '***ERROR')
+    fn = '%s.msg' % job_name
+    if os.path.exists(fn):
         with open(fn, 'r', errors='replace') as f:
-            for _ln, _line in enumerate(f, 1):
-                _u = _line.upper()
-                if any(_k in _u for _k in KEYS):
-                    out.append('%d: %s' % (_ln, _line.rstrip()))
-                    n_hit += 1
-                    if n_hit >= 500:
-                        out.append('... (truncated at 500)')
-                        break
-    for ext in ('msg', 'dat'):
-        fn = '%s.%s' % (job_name, ext)
-        if not os.path.exists(fn):
-            continue
+            lines = f.read().splitlines()
+        hits = [ln.rstrip() for ln in lines
+                if any(k in ln.upper() for k in msg_keys)]
+        out.append('===== %s : %d lines, %d key hits (last 12) ====='
+                   % (fn, len(lines), len(hits)))
+        out.extend(hits[-12:])
+
+    fn = '%s.dat' % job_name
+    if os.path.exists(fn):
         with open(fn, 'r', errors='replace') as f:
-            _tail = f.read().splitlines()[-45:]
-        out.append('===== %s (TAIL 45 - 진짜 사망 원인/요약은 여기에만 있다) =====' % fn)
-        out.extend(_tail)
-    if len(out) <= 2:
-        out.append('(no .sta/.msg/.dat found)')
+            lines = f.read().splitlines()
+        idx = [i for i, ln in enumerate(lines)
+               if 'MODE NO' in ln.upper() or 'BUCKLING FACTOR' in ln.upper()]
+        if idx:
+            i0, i1 = max(0, idx[0] - 3), min(len(lines), idx[-1] + 14)
+            out.append('===== %s : eigen table (lines %d-%d) ====='
+                       % (fn, i0 + 1, i1))
+            out.extend(lines[i0:i1])
+        else:
+            out.append('===== %s : NO eigen table -> the step produced no modes =====' % fn)
+
+    if len(out) == 1:
+        out.append('(no .msg/.dat found — the job died before writing them)')
+
+    for ln in out:
+        print('      | %s' % ln[:170])
+
     dst = os.path.join(_RUN, '%s.diag.txt' % job_name)
-    # ASCII 내용 + 명시적 UTF-8 저장: 한글 라벨을 쓰면 Windows 기본 인코딩(CP949)으로
-    # 저장되어 다른 도구에서 읽히지 않는다 (2026-09-21 실제 발생).
     import io as _io
     with _io.open(dst, 'w', encoding='utf-8', errors='replace') as f:
         f.write('\n'.join(out) + '\n')
-    print('%s 진단 요약 저장: %s (%d줄)' % (TAG, dst, len(out)))
+    print('%s diag saved: %s (%d lines)' % (TAG, dst, len(out)))
     return dst
-
-
-def print_job_diag(job_name):
-    """잡 산출물(.msg/.dat)의 원인 판별용 핵심 줄만 콘솔에 찍는다."""
-    keys = ('NEGATIVE EIGENVALUES', 'CONVERGED', 'EIGENVALUES CANNOT BE FOUND',
-            'HAS COMPLETED SUCCESSFULLY', 'THE ANALYSIS HAS BEEN COMPLETED',
-            'misplaced', 'STIFFNESS MATRIX IS SINGULAR', 'TOO MANY ATTEMPTS',
-            '***ERROR')
-    for ext in ('msg', 'dat'):
-        fn = '%s.%s' % (job_name, ext)
-        if not os.path.exists(fn):
-            print("[DIAG:%s] %s 없음" % (job_name, fn))
-            continue
-        size = os.path.getsize(fn)
-        # errors='replace': Windows 에서 산출물이 CP949 등 비UTF-8 로 저장될 수 있고,
-        # 그 경우 여기서 UnicodeDecodeError 가 나면 '실패 원인 콘솔 출력' 자체가 죽는다.
-        with open(fn, 'r', errors='replace') as f:
-            if size > 2000000:
-                f.seek(size - 2000000)
-            text = f.read()
-        hits = [ln.strip() for ln in text.splitlines()
-                if ln.strip() and any(k.lower() in ln.lower() for k in keys)]
-        print("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개"
-              % (job_name, fn, size / 1024.0, len(hits)))
-        for ln in hits[-5:]:
-            print("      | %s" % ln[:150])
-
-
-def print_job_eigen(job_name):
-    """좌굴 고유값을 .dat/.msg 에서 '원문 그대로' 출력한다 — 파서 없음.
-
-    과거 A안에서 .dat 헤더 형식을 추정한 파서가 '고유치를 찾지 못했습니다' 로 실패했다.
-    여기서는 EIGEN 류 키워드가 나온 줄 주변을 통째로 덤프해서 사람이 직접 판독한다.
-    """
-    KEYS = ('EIGEN', 'CONVERGED', 'BUCKLING FACTOR', 'MODE NO')
-    for ext in ('dat', 'msg'):
-        fn = '%s.%s' % (job_name, ext)
-        if not os.path.exists(fn):
-            print('%s [EIGEN:%s] %s 없음' % (TAG, job_name, fn))
-            continue
-        with open(fn, 'r', errors='replace') as f:
-            lines = f.read().splitlines()
-        hit = [i for i, ln in enumerate(lines)
-               if any(k in ln.upper() for k in KEYS)]
-        if not hit:
-            print('%s [EIGEN:%s] %s 에 고유값 키워드가 없습니다 (총 %d줄). '
-                  '이 경우 .msg 의 ***ERROR 를 보세요.' % (TAG, job_name, fn, len(lines)))
-            continue
-        keep = set()
-        for i in hit:
-            for j in range(max(0, i - 2), min(len(lines), i + 25)):
-                keep.add(j)
-        print('%s [EIGEN:%s] %s 원문 덤프 — 히트 %d개 / 출력 %d줄'
-              % (TAG, job_name, fn, len(hit), len(keep)))
-        prev = None
-        for j in sorted(keep):
-            if prev is not None and j != prev + 1:
-                print('      ...')
-            print('      | %s' % lines[j][:160])
-            prev = j
-
-
-MODEL_PREFIX = 'SailModel_Buckle'
-INSTANCE_NAME = 'MEMBRANE-1'
-
-BASE = 20.0   # m
-HEIGHT = 10.0 # m
-THICKNESS = 5.0e-6
-
-# 좌표 정의 (run_abaqus_new.py 와 동일)
-V1 = (BASE/2.0, HEIGHT, 0.0) # Top
-V2 = (BASE, 0.0, 0.0)        # Right
-V3 = (0.0, 0.0, 0.0)         # Left
-
-def clamp_coord_L(x): return (10-10*x, 10-10*x, 0)
-def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
-
-V_CL = clamp_coord_L(x_c)
-V_CR = clamp_coord_R(x_c)
-
-# ---- 사전 장력(prestrain) 캘리브레이션 (run_abaqus_new.py 와 동일) ----
-PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
-DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
-
-# ---- 좌굴 전용 상수 ----
-# α 스윕: 프리텐션 수준을 바꿔가며 λ>0 인 base state 를 찾는다.
-ALPHA_LIST = (0.01, 0.05, 0.10, 0.25, 0.50, 1.00)
-# 좌굴 스텝의 perturbation 크기.
-#   근거(A안 주석 + run_abaqus_cable.py 실측): 좌굴 스텝의 nonzero prescribed BC 는
-#   '증분 응력' 을 만들고 그 증분이 미분 초기응력 강성 K_delta 를 만든다.
-#   K_delta 가 K0 대비 너무 작으면 고유값 분리가 나빠져 subspace 가
-#   'EIGENVALUES CANNOT BE FOUND' 로 실패한다. 성공한 대조 스크립트는 0.01 m 를 썼다.
-# ---- 좌굴 솔버 (논문 :247 "The solver subspace interaction is selected" => 기본 SUBSPACE) ----
-#   A/B 시험은 이 상수 한 줄만 바꾼다 (환경변수 금지 원칙).
-#   두 솔버는 인자 이름이 다르다:
-#     SUBSPACE -> vectors        (검증된 대조 run_abaqus_cable.py 와 동일 조합)
-#     LANCZOS  -> blockSize / minEigen / maxEigen
-BUCKLE_SOLVER = 'SUBSPACE'      # 'SUBSPACE' | 'LANCZOS'
-BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
-BUCKLE_MIN_EIGEN = 0.0          # LANCZOS 전용 (음의 고유값도 보고 싶으면 -1e30 등)
-BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 넘기지 않는다)
-
-PERTURBATION = 0.01     # m
-N_EIG_BUCKLE = 100      # 추출 요청 고유값 수 (음수 모드 건너뛰기 위해 100 — 대조 스크립트와 동일)
-BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (numEigen 의 2.5배 — 대조 스크립트와 동일)
-# subspace 반복 상한. c8855cb 에서 하드코딩 5000 을 상수로 바꾸면서 정의를 빠뜨려
-# build_model 이 NameError 로 죽었다(전 alpha BUILD_FAIL, 잡 0건). 값은 대조 스크립트와 동일:
-# run_abaqus_cable.py:345 maxIterations=5000 / run_abaqus.py:504 maxIterations=5000
-BUCKLE_MAXITER = 5000
-SIGMA0 = 500.0          # 수렴 보조용 초기응력 [Pa] (run_abaqus_new.py 와 동일)
-
-print("%s x_c=%.3g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
-print("%s DISP_GLOBAL=%.3e m  PERTURBATION=%.3e m  ALPHA_LIST=%s"
-      % (TAG, DISP_GLOBAL, PERTURBATION, str(ALPHA_LIST)))
-print("%s N_EIG_BUCKLE=%d BUCKLE_VECTORS=%d SUBSPACE" % (TAG, N_EIG_BUCKLE, BUCKLE_VECTORS))
-
-# 하중 각도 (28.6도) — 케이블 방향과 동일하게 유지 (하중 경로 동일화)
-angle_deg = 28.6
-angle_rad = np.deg2rad(angle_deg)
-cos_val = float(np.cos(angle_rad))
-sin_val = float(np.sin(angle_rad))
-
-
 def create_rigid_patch(a, inst_memb, name, coord, radius):
     """
     지정된 좌표 기준 radius 내의 노드들을 묶어 강체운동을 하도록 Tie 설정
@@ -475,15 +344,11 @@ def create_rigid_patch(a, inst_memb, name, coord, radius):
     return rp, rp_region
 
 
-def alpha_tag(alpha):
-    """0.05 -> 'a005'  (모델/잡 이름용, 파일명에 점이 들어가지 않게)"""
-    return 'a%03d' % int(round(alpha * 100.0))
 
-
-def build_model(alpha):
+def build_model(disp):
     """run_abaqus_new.py 의 모델 생성을 '케이블만 제외' 하고 재현한다."""
     global my_model
-    model_name = '%s_%s' % (MODEL_PREFIX, alpha_tag(alpha))
+    model_name = MODEL_PREFIX
     if model_name in mdb.models:
         del mdb.models[model_name]
     my_model = mdb.Model(name=model_name)
@@ -568,7 +433,7 @@ def build_model(alpha):
 
     # ---- 좌굴 스텝: 솔버는 코드 상수 하나로 교체 (SUBSPACE <-> LANCZOS) ----
     _eig = dict(name='Step-Buckle', previous='Step-GlobalTension',
-                numEigen=N_EIG_BUCKLE, eigensolver=BUCKLE_SOLVER)
+                numEigen=N_EIG_BUCKLE, eigensolver=EIGENSOLVER_CONST)
     if BUCKLE_SOLVER == 'SUBSPACE':
         _eig.update(vectors=BUCKLE_VECTORS, maxIterations=BUCKLE_MAXITER)
     else:
@@ -610,7 +475,7 @@ def build_model(alpha):
 
     # Right/Left 정점: GlobalTension 에서 α*DISP_GLOBAL 만큼 당긴다.
     #   케이블 버전의 Disp_Control_Right/Left 와 동일한 방향/크기.
-    disp_a = alpha * DISP_GLOBAL
+    disp_a = disp
     my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
                             region=a.sets['RP_Right_Set'], u1=0, u2=0)
     my_model.DisplacementBC(name='Disp_Control_Left', createStepName='Initial',
@@ -659,82 +524,46 @@ def build_model(alpha):
 
     return model_name
 
-
-# ================= α 스윕 실행 =================
-SUMMARY = []
-for _alpha in ALPHA_LIST:
-    _tag = alpha_tag(_alpha)
-    _model = None
-    _job = 'Buckle_' + _tag
-    print("")
-    print("=" * 78)
-    print("%s ===== alpha=%.4g  (프리텐션 %.4e m)  model=%s_%s  job=%s ====="
-          % (TAG, _alpha, _alpha * DISP_GLOBAL, MODEL_PREFIX, _tag, _job))
-    print("=" * 78)
-    try:
-        _model = build_model(_alpha)
-    except Exception as _e:
-        print("!!! ERROR: alpha=%.4g 모델 생성 실패: %s" % (_alpha, _e))
-        print("----- traceback (실패한 줄을 확인하세요) -----")
-        print(traceback.format_exc())
-        print("---------------------------------------------")
-        SUMMARY.append((_alpha, _job, 'BUILD_FAIL', str(_e)))
-        continue
-
-    # 스윕 중 한 케이스가 죽어도 나머지를 계속 돌린다 (run_job_safely 는 실패 시
-    # RuntimeError 를 올린다 — sys.exit 은 CAE 러너에서 종료코드 0으로 보이므로 쓰지 않는다).
-    _ok = True
-    try:
-        run_job_safely(_job, _model)
-    except Exception as _e:
-        _ok = False
-        print("!!! alpha=%.4g : %s 실패 -> 다음 alpha 로 계속: %s" % (_alpha, _job, _e))
-
-    try:
-        print_job_eigen(_job)
-    except Exception as _e:
-        print("!!! [EIGEN] %s 고유값 덤프 실패: %s" % (_job, _e))
-
-    # base state 의 압축 정도 측정 (λ 판정을 물리와 함께 보기 위해)
-    try:
-        _probe = os.path.join(_HERE, 'base_state_probe.py')
-        _odb = '%s.odb' % _job
-        if os.path.exists(_probe) and os.path.exists(_odb):
-            print("%s base state 측정: %s / Step-GlobalTension" % (TAG, _odb))
-            subprocess.call('abaqus python "%s" "%s" Step-GlobalTension' % (_probe, _odb),
-                            shell=True)
-        else:
-            print("%s base state 측정 건너뜀 (probe=%s, odb=%s)"
-                  % (TAG, os.path.exists(_probe), os.path.exists(_odb)))
-    except Exception as _e:
-        print("%s base state 측정 실패(무시): %s" % (TAG, _e))
-
-    SUMMARY.append((_alpha, _job, 'OK' if _ok else 'JOB_FAIL',
-                    job_completed_ok(_job)))
-
-    # 스윕은 모델을 5개 만든다. 다 쓰면 지운다 (스윕 도중 메모리 부족으로 남은 alpha 가
-    # 죽는 것을 막는다. odb/.dat/.fil 은 이미 디스크에 있으므로 잃는 것이 없다).
-    _freed = False
-    if _model is not None and _model in mdb.models:
-        del mdb.models[_model]
-        _freed = True
-    print("%s alpha=%.4g 종료 (model 해제=%s, 남은 모델 %d개)"
-          % (TAG, _alpha, _freed, len(mdb.models.keys())))
+# ============================================================================
+# 실행 — 한 케이스: 모델 빌드 -> 잡 제출 -> 결과 덤프 -> base state 측정(선택)
+# ============================================================================
+JOB_NAME = 'Buckle_xc%03d_d%03dum' % (int(round(x_c * 100.0)), int(round(DISP * 1.0e6)))
 
 print("")
 print("=" * 78)
-print("%s ===== α 스윕 요약 =====" % TAG)
-print("     alpha        프리텐션[m]     job            완주판정")
-for _row in SUMMARY:
-    _a = _row[0]
-    print("     %-12.4g %-15.4e %-14s %s"
-          % (_a, _a * DISP_GLOBAL, _row[1], _row[-1]))
-if not any(r[2] == 'OK' for r in SUMMARY):
-    raise RuntimeError('전 alpha 에서 잡이 하나도 완주하지 못했습니다 (SUMMARY=%s). '
-                       '위 로그의 첫 ERROR/traceback 을 보세요. '
-                       '이 상태를 exit 0 으로 끝내면 성공처럼 보이므로 예외로 올린다.' % str(SUMMARY))
+print("%s single case: x_c=%g  DISP=%.4e m  model=%s  job=%s"
+      % (TAG, x_c, DISP, MODEL_PREFIX, JOB_NAME))
+print("=" * 78)
 
-print("%s 선택 규칙: 위 .dat 원문 덤프에서 λ1..λ4 > 0 이며 CONVERGED 인 최대 alpha." % TAG)
-print("%s 그 alpha 의 모드를 HF 초기결함으로 쓴다: *IMPERFECTION, FILE=%s, STEP=2"
-      % (TAG, r'..\buckle\Buckle_a<alpha>'))
+try:
+    _model_name = build_model(DISP)
+    run_job_safely(JOB_NAME, _model_name)
+except Exception:
+    print("%s BUILD/RUN FAILED — traceback:" % TAG)
+    print(traceback.format_exc())
+    raise
+
+report_job(JOB_NAME)
+
+# base state 의 압축 정도를 lambda 판정과 함께 보기 위한 선택 단계
+try:
+    _probe = os.path.join(_HERE, 'base_state_probe.py')
+    _odb = '%s.odb' % JOB_NAME
+    if os.path.exists(_probe) and os.path.exists(_odb):
+        print("%s base-state probe: %s / Step-GlobalTension" % (TAG, _odb))
+        subprocess.call('abaqus python "%s" "%s" Step-GlobalTension'
+                        % (_probe, _odb), shell=True)
+    else:
+        print("%s base-state probe skipped (probe=%s, odb=%s)"
+              % (TAG, os.path.exists(_probe), os.path.exists(_odb)))
+except Exception as _e:
+    print("%s base-state probe failed (ignored): %s" % (TAG, _e))
+
+_rel_fil = '..' + os.sep + RUN_DIR_NAME + os.sep + JOB_NAME
+print("")
+print("=" * 78)
+print("%s PASS CRITERION: CONVERGED > 0 and the first eigenvalues positive." % TAG)
+print("%s eigen table: %s.dat" % (TAG, JOB_NAME))
+print("%s HF imperfection keyword for this run:" % TAG)
+print("     *IMPERFECTION, FILE=%s, STEP=2" % _rel_fil)
 print("=" * 78)
