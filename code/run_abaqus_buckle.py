@@ -24,9 +24,11 @@ run_abaqus_new.py 와의 차이 (그 외는 동일해야 한다)
              Top: RP_Top_Set   을 고정 (케이블 버전의 BC_Anchor 대응)
              CL/CR: RP_CL/CR_Set 을 고정 (클램프는 구동하지 않는다 — 논문 (b) 레시피)
     교체 : Step-Trigger -> Step-Buckle (BuckleStep, SUBSPACE, numEigen=100, vectors=250)
-    유지 : 메쉬(seedPart/setMeshControls/setElementType: S8R5+STRI65),
+    유지 : 메쉬(seedPart/setMeshControls/setElementType: S4+S3 — HF 와 같은 요소),
            create_rigid_patch(radius=0.2), Coupling KINEMATIC, SIGMA0,
-           Step-GlobalTension 의 증분/안정화 설정, RUN_DIR_NAME/NUMCPUS.
+           Step-GlobalTension 의 증분/안정화 설정, NUMCPUS.
+    분리 : RUN_DIR_NAME = "buckle" (HF/LF 는 "aba"). 산출물을 섞지 않기 위함이다.
+           -> 이 때문에 HF 의 *IMPERFECTION 경로에 ..\buckle\ 를 붙여야 한다 (아래 참조).
 
 α 스윕 (프리텐션 수준)
     λ>0 인 base state 를 찾기 위해 프리텐션을 α 배로 바꿔가며 한 번에 전부 돌린다.
@@ -44,9 +46,13 @@ Usage
         (두 번째 형식은 기존 호출 습관 호환용. fidelity/d_c 는 쓰이지 않으며 그 사실을 출력한다.)
 
 산출물
-    <RUN_DIR>/Buckle_a<alpha>.odb / .dat / .msg / .sta / .diag.txt
+    code/buckle/Buckle_a<alpha>.odb / .dat / .msg / .sta / .fil / .diag.txt
     .fil 은 *BUCKLE 스텝이 자동 기록한다 (run_abaqus_cable.py 로 검증된 사실).
-    -> HF 쪽에서 *IMPERFECTION, FILE=Buckle_a025, STEP=2 로 읽는다 (STEP=2 = Buckle 스텝).
+    -> HF 쪽에서 읽을 때는 **경로를 붙여야 한다**. HF 잡의 작업 디렉터리는 code/aba 이고
+       좌굴 산출물은 code/buckle 이므로, 그냥 FILE=Buckle_a025 라고 쓰면 못 찾거나
+       (더 나쁘게) code/aba 에 남은 stale .fil 을 조용히 읽는다.
+         *IMPERFECTION, FILE=..\buckle\Buckle_a025, STEP=2   (STEP=2 = Buckle 스텝)
+       ..\buckle\ 로 시작하는 파일명을 피하려면 절대경로를 써도 된다.
 """
 
 from abaqus import *
@@ -92,7 +98,11 @@ def _resolve_here():
     return os.getcwd()
 
 _HERE = _resolve_here()
-RUN_DIR_NAME = "aba"      # run_abaqus_new.py 와 동일 (같은 작업 디렉터리)
+# 작업 디렉터리: 좌굴 산출물 전용.
+#   HF/LF 산출물(run_abaqus_new.py -> code/aba)과 섞으면 두 가지가 조용히 망가진다:
+#     (a) *IMPERFECTION, FILE=... 이 stale .fil 을 읽을 수 있다
+#     (b) .dat/.msg/.sta 진단 로그가 어느 해석 것인지 구분되지 않는다
+RUN_DIR_NAME = "buckle"
 NUMCPUS = 4               # run_abaqus_new.py 와 동일
 _RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
@@ -631,5 +641,5 @@ for _row in SUMMARY:
           % (_a, _a * DISP_GLOBAL, _row[1], _row[-1]))
 print("%s 선택 규칙: 위 .dat 원문 덤프에서 λ1..λ4 > 0 이며 CONVERGED 인 최대 alpha." % TAG)
 print("%s 그 alpha 의 모드를 HF 초기결함으로 쓴다: *IMPERFECTION, FILE=%s, STEP=2"
-      % (TAG, 'Buckle_a<alpha>'))
+      % (TAG, r'..\buckle\Buckle_a<alpha>'))
 print("=" * 78)

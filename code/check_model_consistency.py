@@ -160,10 +160,31 @@ def main():
         print("  %-4s %-22s %d회" % ('OK' if n == 0 else '!!!', k, n))
 
     print()
+    print("--- 작업 디렉터리 분리 (산출물 혼입 방지) ---")
+    def _run_dir_of(path):
+        with io.open(path, encoding='utf-8') as f:
+            txt = f.read()
+        m = re.search(r'RUN_DIR_NAME\s*=\s*["\']([^"\']+)["\']', txt)
+        return m.group(1) if m else None
+    ra, rb = _run_dir_of(NEW), _run_dir_of(BUCKLE)
+    print("  run_abaqus_new.py     RUN_DIR_NAME = %s" % ra)
+    print("  run_abaqus_buckle.py  RUN_DIR_NAME = %s" % rb)
+    bad3 = []
+    if ra is None or rb is None:
+        bad3.append('RUN_DIR_NAME 을 읽지 못함')
+        print("  !!! RUN_DIR_NAME 을 찾지 못했습니다")
+    elif ra == rb:
+        bad3.append('same dir')
+        print("  !!! 두 스크립트가 같은 디렉터리를 쓴다 -> 산출물이 섞이고")
+        print("      *IMPERFECTION, FILE= 이 stale .fil 을 조용히 읽을 수 있다")
+    else:
+        print("  OK  분리됨 (buckle 산출물은 code/%s 에 쌓인다)" % rb)
+
+    print()
     print("=" * 74)
-    if bad or bad2:
-        print("RESULT: !!! 불일치 %d건 (모델 정의) + %d건 (역할 분리)"
-              % (len(bad), len(bad2)))
+    if bad or bad2 or bad3:
+        print("RESULT: !!! 불일치 %d건 (모델 정의) + %d건 (역할 분리) + %d건 (디렉터리)"
+              % (len(bad), len(bad2), len(bad3)))
         print("        모드 노드가 어긋나면 *IMPERFECTION 이 조용히 실패한다.")
         print("        한쪽을 고쳤으면 다른 쪽도 같이 고쳐라.")
         return 1
