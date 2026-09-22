@@ -125,7 +125,7 @@ DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 기본 코너 당김 5e-5 m
 #     'passive' : u3=0, in-plane 자유      -> A-route 의 GlobalTension 직후 (P1)
 #     'driven'  : u3=0 + 법선 방향 구동    -> A-route 의 ClampTension 직후 (P2, 설계 base)
 #     'fixed'   : u1=u2=u3=0 완전 고정     -> 기존 동작 (수치 진단용, P3)
-CLAMP_MODE = 'fixed'
+CLAMP_MODE = 'passive'
 CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c, A-route 와 동일)
 # 오타로 조용히 다른 케이스가 되는 것을 막는다 (값 검증은 메쉬 생성 전에).
 if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
@@ -134,8 +134,8 @@ if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01     # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta)
-N_EIG_BUCKLE = 100      # 추출 요청 고유값 수
-BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (요청 수의 2.5배)
+N_EIG_BUCKLE = 10      # 추출 요청 고유값 수
+BUCKLE_VECTORS = 25    # subspace 기저 벡터 수 (요청 수의 2.5배)
 BUCKLE_MAXITER = 5000
 BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
 BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
