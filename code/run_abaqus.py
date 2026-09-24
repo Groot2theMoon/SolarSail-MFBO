@@ -255,10 +255,17 @@ IMPERFECTION_MAX_MODES = 4          # 상한. 모드표에 있는 모드가 더 
                                     #   [IMPERFECTION] 로그에 조정 사실을 남긴다. 근거: 논문 λ1..4 스프레드는
                                     #   0.036%(준축퇴)라 모드 3·4 의 기여가 작고, 우리 λ1·λ2 차이도 6% 다.
 IMPERFECTION_AMPL_T = 0.10   # 막 두께 배수(Galhofo 채택값 0.10 t). 진폭 민감도 = 0.50 으로 바꿔 재실행
-RUN_SELF_BUCKLE_JOB = True   # 자기(클램프) 좌굴 잡도 계속 돌린다 -> 클램프 base state probe
-                             # (코너 당김 하중분담) + 음수고유값 진단 증거를 함께 얻는다.
-                             # 이 잡이 sys.exit(1) 로 스크립트를 끊으면 False 로 두고,
-                             # 그때는 base state probe 가 '건너뜀' 으로 출력된다.
+RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-24). 이유는 측정된 실패 경로다:
+                             #   이 잡은 _EIGENSOLVER='LANCZOS' 로 제출되는데(아래), 이 모델의 좌굴 base state 는
+                             #   이미 분기하중을 넘은 부정정 상태다(시스템 음수 고유값 실측 56~88개). 매뉴얼이 열거한
+                             #   LANCZOS 금지 조건 중 'preloaded above the bifurcation load' 에 정확히 해당하므로
+                             #   ***ERROR: THE LANCZOS SOLVER CANNOT BE USED FOR BUCKLING ANALYSIS 로 거부된다.
+                             #   run_job_safely 는 ABORTED 를 보면 sys.exit(1) 하므로, 이 잡이 켜져 있으면
+                             #   HF_Postbuckle 이 제출되기도 전에 스크립트가 끝난다(제출 순서: LF 840 -> Buckle 862 -> HF 1010).
+                             # SUBSPACE 로 바꿔도 클램프 모델은 좌굴모드 0개로 죽어 같은 경로다. 모드 추출은 이제
+                             #   ODB 모드표 경로(run_abaqus_mode.py -> modes_ClampFree_Buckle.txt)가 담당하므로
+                             #   이 진단 잡은 불필요하다. 클램프 base state 증거가 다시 필요하면 True 로 되돌리되
+                             #   그때는 _EIGENSOLVER 와 제출 순서를 함께 손봐야 한다.
 if MODE_SOURCE not in ('external', 'self'):
     raise RuntimeError("MODE_SOURCE 는 'external' 또는 'self' 여야 합니다 (현재 %r)" % (MODE_SOURCE,))
 
