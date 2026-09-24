@@ -487,15 +487,14 @@ if not ok or n_modes <= 0:
     print("  라이선스 0: 위 [DIAG] 의 '음수 고유값 N개 vs 요청 M개' 판정을 먼저 본다.")
     sys.exit(1)
 
-print("RESULT:MODE_OK — 모드 %d개 계산. .odb=%s" % (n_modes, os.path.abspath(JOB_NAME + '.odb')))
-print("  스텝=%s(%s) / *NODE FILE 요청=%s (.fil 기록은 주파수 스텝에서만 가능)"
+print("RESULT:MODE_OK — 모드 %d개 계산. 파일: %s" % (n_modes, os.path.abspath(JOB_NAME + '.fil')))
+print("  스텝=%s(%s) / *NODE FILE 요청=%s (주파수 스텝이므로 .fil 기록이 허용된다)"
       % (MODE_STEP_TYPE, MODE_STEP_NAME, INSERT_NODE_FILE))
-print("  [기본 경로] 모드표 추출(새 해석 없음, 토큰만) — code\\ 에서 실행:")
+print("  [기본 경로] run_abaqus.py 가 이 .fil 을 IMPERFECTION_NAME=%s 로 스테이징해"
+      " *IMPERFECTION, FILE= 로 주입한다" % 'ClampFree_Buckle')
+print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>")
+print("  [대체 경로] .fil 에 모드가 0개면(위 DIAG 가 MODE_FAIL) ODB 모드표로 우회 - code\\ 에서:")
 print("    abaqus python aba_mode_from_odb.py %s %s modes_ClampFree_Buckle.txt %d"
       % (JOB_NAME + '.odb', MODE_STEP_NAME, N_MODE_FILE))
-print("  (run_abaqus.py 는 ..\\modes_ClampFree_Buckle.txt = code\\modes_ClampFree_Buckle.txt 를 읽는다)")
-print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>"
-      "   (run_abaqus.py 기본 IMPERFECTION_MODE='odb_table' 가 위 모드표를 읽는다)")
-print("  (.fil 경로를 쓰려면 run_abaqus.py 에서 IMPERFECTION_MODE='file' 로 바꾸고,"
-      " 위 .fil 을 ..\\ClampFree_Buckle.fil 로 복사)")
+print("    -> run_abaqus.py 에서 IMPERFECTION_MODE='odb_table' 로 바꾼다")
 print("=" * 74)

@@ -254,12 +254,14 @@ if MODE_SOURCE not in ('external', 'self'):
     raise RuntimeError("MODE_SOURCE 는 'external' 또는 'self' 여야 합니다 (현재 %r)" % (MODE_SOURCE,))
 
 # ---- 임퍼펙션 주입 방식 (2026-09-22) --------------------------------------
-#   'odb_table' = ODB 에서 뽑은 모드표로 HF 모델의 노드 좌표를 직접 섭동한다.
-#                 원본(업스트림) run_abaqus.py docstring 의 계획 경로:
-#                   "2차: 1차 해석 결과(.odb)에서 고유모드를 추출하여 초기 결함으로 주입"
-#                 *BUCKLE 스텝의 파일출력 금지(실측 ClampFree_Buckle.dat:7025)를 우회한다.
-#   'file'      = .fil 을 스테이징해 *IMPERFECTION, FILE= 로 주입(기존 경로; *FREQUENCY 스텝에서만 유효).
-IMPERFECTION_MODE = 'odb_table'
+#   'file'      = [기본 / 사용자 원본 방식] 모드 소스의 .fil 을 스테이징해 *IMPERFECTION, FILE= 로 주입.
+#                 사용자 원본(08d4cbc)과 동일 메커니즘:
+#                   imp_text = "*IMPERFECTION, FILE=Buckle_Analysis, STEP=3\n1, %e\n2, %e ..." (mode, scale)
+#                 조건: 모드 소스의 고유 스텝이 *FREQUENCY 여야 한다 - *BUCKLE 은 .fil 출력이 금지된다(실측:
+#                       ClampFree_Buckle.dat:7025 "FILE OUTPUT IS NOT AVAILABLE FOR BUCKLING ANALYSIS").
+#   'odb_table' = [대체 경로] ODB 모드 프레임에서 뽑은 모드표로 노드 좌표를 직접 섭동.
+#                 .fil/스텝타입 제약이 없다(모드 소스가 *BUCKLE 이어도 동작). `abaqus python aba_mode_from_odb.py`.
+IMPERFECTION_MODE = 'file'
 MODE_TABLE = os.path.join('..', 'modes_ClampFree_Buckle.txt')   # code\aba -> code\
 #   (출처 ODB/스텝은 상수로 중복 기재하지 않고 모드표 헤더에서 읽어 로그에 남긴다)
 if IMPERFECTION_MODE not in ('odb_table', 'file'):
