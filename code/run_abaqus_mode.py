@@ -54,7 +54,7 @@ import subprocess
 import time
 import numpy as np
 
-print("DEBUG: All sys.argv: " + str(sys.argv))
+log("DEBUG: All sys.argv: " + str(sys.argv))
 
 # ---- 스크립트 위치(_HERE): base_state_probe.py / aba_imperfection.py 를 찾기 위해 ----
 def _resolve_here():
@@ -75,7 +75,41 @@ _HERE = _resolve_here()
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from aba_imperfection import count_modes, parse_eigenvalues                 # noqa: E402
-print("[run_abaqus_mode] _HERE = %s" % _HERE)
+try:
+    sys.stdout.reconfigure(line_buffering=True)   # Abaqus noGUI 에서 버퍼 유실 방지
+except Exception:
+    pass
+
+_LOG_PATH = os.path.join(_HERE, 'mode_run_log.txt')
+try:
+    with open(_LOG_PATH, 'w') as _f:              # 매 런마다 새로 시작(최신 런만 남긴다)
+        _f.write("[run_abaqus_mode] log start %s\n" % time.strftime('%Y-%m-%d %H:%M:%S'))
+except Exception:
+    pass
+
+
+def log(*a):
+    """stdout + 파일 동시 기록 (2026-09-24 실측으로 발견한 버퍼 유실 대응).
+
+    왜 필요한가: Abaqus `cae noGUI=...` 는 이 스크립트의 stdout 을 블록 버퍼링한 뒤 프로세스를
+    flush 없이 teardown 하는 경우가 있다. 그때 print() 는 콘솔에서 통째로 사라지고, 별도
+    프로세스로 뜬 base_state_probe 의 [R-13] 출력만 남는다(실측: 4회차·9회차 콘솔 모두 그랬다).
+    -> 라인 버퍼링 + 매 호출 flush + 파일 미러(_LOG_PATH)로 해결한다.
+    """
+    msg = ' '.join(str(x) for x in a)
+    print(msg)
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+    try:
+        with open(_LOG_PATH, 'a') as _f:
+            _f.write(msg + '\n')
+    except Exception:
+        pass
+
+
+log("[run_abaqus_mode] _HERE = %s" % _HERE)
 
 
 def run_job_safely(job_name, model_name=None):
@@ -85,23 +119,23 @@ def run_job_safely(job_name, model_name=None):
                  'dat', 'res', 'abq', 'ipm', 'mdl', 'stt', 'cid'):
         _f = '%s.%s' % (job_name, _ext)
         if os.path.exists(_f):
-            print("Removing stale artifact: %s" % _f)
+            log("Removing stale artifact: %s" % _f)
             try:
                 os.remove(_f)
             except OSError as _e:
-                print("  (warning) could not remove %s: %s" % (_f, _e))
+                log("  (warning) could not remove %s: %s" % (_f, _e))
     if job_name in mdb.jobs:
         del mdb.jobs[job_name]
     job = mdb.Job(name=job_name, model=model_name)
-    print("Submitting Job: %s" % job_name)
+    log("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
     job.submit(consistencyChecking=OFF)
     job.waitForCompletion()
     time.sleep(1.0)
     if job.status == ABORTED or not os.path.exists(job_name + '.odb'):
-        print("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
+        log("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
         return False
-    print("Job %s finished (Status: %s)." % (job_name, str(job.status)))
+    log("Job %s finished (Status: %s)." % (job_name, str(job.status)))
     return True
 
 
@@ -114,7 +148,7 @@ def print_job_diag(job_name):
     for ext in ('msg', 'dat'):
         fn = '%s.%s' % (job_name, ext)
         if not os.path.exists(fn):
-            print("[DIAG:%s] %s 없음" % (job_name, fn))
+            log("[DIAG:%s] %s 없음" % (job_name, fn))
             continue
         size = os.path.getsize(fn)
         with open(fn, 'r', errors='replace') as f:
@@ -128,14 +162,14 @@ def print_job_diag(job_name):
                 if ln.strip() and any(k.lower() in ln.lower() for k in keys)]
         hits += ['[뒤] ' + ln.strip() for ln in tail.splitlines()
                  if ln.strip() and any(k.lower() in ln.lower() for k in keys)]
-        print("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개" % (job_name, fn, size / 1024.0, len(hits)))
+        log("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개" % (job_name, fn, size / 1024.0, len(hits)))
         for ln in hits[-10:]:
-            print("      | %s" % ln[:150])
+            log("      | %s" % ln[:150])
 
     # 좌굴모드의 실제 산출물은 ODB 다(*BUCKLE 은 .fil 출력이 금지된다 — 실측 7025).
     #   ODB 프레임/모드표 생성은 잡 후 8단계에서 한 번만 한다(여기서는 파일 존재만 본다).
     fn = '%s.odb' % job_name
-    print("[DIAG:%s] ODB %s (%.0f KB)"
+    log("[DIAG:%s] ODB %s (%.0f KB)"
           % (job_name, 'OK' if os.path.exists(fn) else '없음',
              (os.path.getsize(fn) / 1024.0) if os.path.exists(fn) else 0.0))
 
@@ -154,21 +188,21 @@ def print_job_diag(job_name):
             if tok and tok[0].isdigit():
                 neg = int(tok[0])
         if neg is None:
-            print("[DIAG:%s] 'SYSTEM MATRIX HAS ... NEGATIVE EIGENVALUES' 를 못 찾음" % job_name)
+            log("[DIAG:%s] 'SYSTEM MATRIX HAS ... NEGATIVE EIGENVALUES' 를 못 찾음" % job_name)
         else:
-            print("[DIAG:%s] base state 음수 고유값 %d개 vs 요청 %d개" % (job_name, neg, N_EIG_BUCKLE))
-            print("[DIAG:%s]   -> %s" % (job_name,
+            log("[DIAG:%s] base state 음수 고유값 %d개 vs 요청 %d개" % (job_name, neg, N_EIG_BUCKLE))
+            log("[DIAG:%s]   -> %s" % (job_name,
                   '요청 수가 충분하다(창 안에 양수 모드가 들어온다)'
                   if N_EIG_BUCKLE > neg else
                   '요청 수 부족 (N_EIG_BUCKLE <= 음수 개수) — 래더 L4'))
             if neg > 0:
-                print("[DIAG:%s]   !! 음수 고유값 %d개 = base state 자체가 이미 좌굴/압축 상태다."
+                log("[DIAG:%s]   !! 음수 고유값 %d개 = base state 자체가 이미 좌굴/압축 상태다."
                       % (job_name, neg))
-                print("[DIAG:%s]      (Abaqus 오류문의 'INSTABILITIES IN THE BASE STATE' 와 같은 진단)"
+                log("[DIAG:%s]      (Abaqus 오류문의 'INSTABILITIES IN THE BASE STATE' 와 같은 진단)"
                       % job_name)
-                print("[DIAG:%s]      창을 넓히는 것만으로는 안 풀린다 — 4회차 실측: 88개 / 양수 모드 0개."
+                log("[DIAG:%s]      창을 넓히는 것만으로는 안 풀린다 — 4회차 실측: 88개 / 양수 모드 0개."
                       % job_name)
-                print("[DIAG:%s]      위 [R-13] 의 '면내 압축(<0) 면적비' 를 먼저 확인해라(프리텐션 부족 여부)."
+                log("[DIAG:%s]      위 [R-13] 의 '면내 압축(<0) 면적비' 를 먼저 확인해라(프리텐션 부족 여부)."
                       % job_name)
 
 
@@ -378,7 +412,7 @@ def connect_cable(name, part, sail_corner, vector_dir, radius=1e-4):
     a.translate(instanceList=(inst_name,), vector=sail_corner)
     node_start = inst.nodes.getByBoundingSphere(center=sail_corner, radius=radius)
     if len(node_start) == 0:
-        print("Warning: Node not found by sphere, trying closest for " + name)
+        log("Warning: Node not found by sphere, trying closest for " + name)
         node_start = inst.nodes.getClosest(coordinates=sail_corner)
     region_start = regionToolset.Region(nodes=node_start)
     cable_len = LEN_TOP if 'Top' in name else LEN_BOT
@@ -467,10 +501,10 @@ if PRETENSION_MODE == 'paper3':
     my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
         stepName='Step-GlobalTension', u1=0.0, u2=DISP_GLOBAL * DISP_TOP_OVER_CORNER
     )
-    print("[run_abaqus_mode] 프리텐션 = paper3 (3꼭짓점 당김): 아래 %.4e m / 위 %.4e m"
+    log("[run_abaqus_mode] 프리텐션 = paper3 (3꼭짓점 당김): 아래 %.4e m / 위 %.4e m"
           % (DISP_GLOBAL, DISP_GLOBAL * DISP_TOP_OVER_CORNER))
 else:
-    print("[run_abaqus_mode] 프리텐션 = corner2 (아래 두 꼭짓점만 %.4e m, 비대칭)" % DISP_GLOBAL)
+    log("[run_abaqus_mode] 프리텐션 = corner2 (아래 두 꼭짓점만 %.4e m, 비대칭)" % DISP_GLOBAL)
 
 # 초기 가짜 응력 (수렴 보조)
 my_model.Stress(
@@ -517,7 +551,7 @@ if PRETENSION_MODE == 'paper3':
     my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
         stepName=MODE_STEP_NAME, u1=0.0, u2=PATTERN_SIGN * PERTURBATION * DISP_TOP_OVER_CORNER
     )
-print("[MODE] 좌굴 하중 패턴 부호 PATTERN_SIGN=%+0.1f (%s) — 크기 %g m"
+log("[MODE] 좌굴 하중 패턴 부호 PATTERN_SIGN=%+0.1f (%s) — 크기 %g m"
       % (PATTERN_SIGN, '안쪽(당김을 푸는 방향)' if PATTERN_SIGN < 0 else '바깥 당김', PERTURBATION))
 my_model.boundaryConditions['BC_Stabilize_Z'].deactivate(MODE_STEP_NAME)
 a.Set(name='All_Edges', edges=inst_memb.edges)
@@ -549,29 +583,29 @@ try:
                 _hf_step_no = int(_ln.split('=', 1)[1].split('#')[0].strip())
                 break
 except Exception as _e:
-    print("[run_abaqus_mode] HF 상수 교차확인 건너뜀: %s" % _e)
+    log("[run_abaqus_mode] HF 상수 교차확인 건너뜀: %s" % _e)
 if _hf_step_no is not None and _hf_step_no != BUCKLE_STEP_NO:
     raise RuntimeError("HF 의 MODE_SOURCE_STEP=%d <> 모드 소스의 BUCKLE_STEP_NO=%d — 모드표 스텝이 어긋난다."
                        % (_hf_step_no, BUCKLE_STEP_NO))
-print("[run_abaqus_mode] 스텝 순서 확인: %s (BUCKLE_STEP_NO=%d, HF MODE_SOURCE_STEP=%s)"
+log("[run_abaqus_mode] 스텝 순서 확인: %s (BUCKLE_STEP_NO=%d, HF MODE_SOURCE_STEP=%s)"
       % (_step_seq, BUCKLE_STEP_NO, _hf_step_no))
 
 # -------------------------------------------------------------
 # 7. (삭제) *NODE FILE 삽입 — *BUCKLE 은 .fil 출력이 금지되므로(실측 7025) 요청 자체가 무효다.
 #    좌굴모드는 ODB 모드 프레임에만 있으며, 아래 8단계에서 모드표로 뽑는다(키워드 조작 불필요).
 # -------------------------------------------------------------
-print("[run_abaqus_mode] *NODE FILE 삽입 없음 — *BUCKLE 좌굴모드는 ODB 에서 뽑는다")
+log("[run_abaqus_mode] *NODE FILE 삽입 없음 — *BUCKLE 좌굴모드는 ODB 에서 뽑는다")
 
 # -------------------------------------------------------------
 # 8. 실행 -> 좌굴모드 확인 -> 모드표 생성 (이 스크립트가 끝나면 HF 가 바로 돌 수 있다)
 # -------------------------------------------------------------
-print("=" * 74)
-print("모드 소스 런: %s  (선형 좌굴해석 %s, 프리텐션 %s, 꼭짓점 당김 %.3e m / SIGMA0 %.1f Pa / 안정화 %.4f)"
+log("=" * 74)
+log("모드 소스 런: %s  (선형 좌굴해석 %s, 프리텐션 %s, 꼭짓점 당김 %.3e m / SIGMA0 %.1f Pa / 안정화 %.4f)"
       % (JOB_NAME, MODE_STEP_NAME, PRETENSION_MODE, DISP_GLOBAL, SIGMA0, MODE_STABILIZATION))
-print("  모델: 클램프 없음 / 케이블 3개 / 꼭짓점 강체패치 — 구동 = %s"
+log("  모델: 클램프 없음 / 케이블 3개 / 꼭짓점 강체패치 — 구동 = %s"
       % ('3꼭짓점 = 논문 좌굴모델' if PRETENSION_MODE == 'paper3' else '아래 2꼭짓점'))
-print("  요청 고유값 %d개 / 기저벡터 %d / 최대반복 5000 (SUBSPACE)" % (N_EIG_BUCKLE, BUCKLE_VECTORS))
-print("=" * 74)
+log("  요청 고유값 %d개 / 기저벡터 %d / 최대반복 5000 (SUBSPACE)" % (N_EIG_BUCKLE, BUCKLE_VECTORS))
+log("=" * 74)
 
 ok = run_job_safely(JOB_NAME)
 print_job_diag(JOB_NAME)
@@ -581,13 +615,13 @@ if RUN_BASE_STATE_PROBE:
     try:
         _probe = os.path.join(_HERE, 'base_state_probe.py')
         if os.path.exists(_probe) and os.path.exists(JOB_NAME + '.odb'):
-            print("[MODE] base state 측정: %s.odb" % JOB_NAME)
+            log("[MODE] base state 측정: %s.odb" % JOB_NAME)
             subprocess.call('abaqus python "%s" "%s" Step-GlobalTension'
                             % (_probe, JOB_NAME + '.odb'), shell=True)
         else:
-            print("[MODE] base state 측정 건너뜀 (probe=%s)" % os.path.exists(_probe))
+            log("[MODE] base state 측정 건너뜀 (probe=%s)" % os.path.exists(_probe))
     except Exception as _e:
-        print("[MODE] base state 측정 실패(무시): %s" % _e)
+        log("[MODE] base state 측정 실패(무시): %s" % _e)
 
 # --- 모드 확인: 두 경로를 교차 확인한다 -------------------------------------
 #   (1) .dat MODE NO 표  = Abaqus 가 수렴시킨 고유값 개수(λ 포함)
@@ -600,8 +634,8 @@ try:
         with open(_dat, 'r', errors='replace') as _f:
             lams = parse_eigenvalues(_f.read())
 except Exception as _e:
-    print("[MODE] λ 읽기 실패(무시): %s" % _e)
-print("[MODE] .dat 고유값 %d개 %s" % (len(lams), ['%.6e' % v for v in lams[:6]]))
+    log("[MODE] λ 읽기 실패(무시): %s" % _e)
+log("[MODE] .dat 고유값 %d개 %s" % (len(lams), ['%.6e' % v for v in lams[:6]]))
 
 n_modes = 0
 if ok and WRITE_MODE_TABLE:
@@ -610,35 +644,35 @@ if ok and WRITE_MODE_TABLE:
         n_modes, _msgs = write_mode_table(JOB_NAME + '.odb', MODE_STEP_NAME, MODE_TABLE, N_MODES,
                                           INSTANCE_NAME)
     except Exception as _e:
-        print("!!! 모드표 생성 실패: %s" % _e)
-        print("    (수동 확인: abaqus python aba_mode_from_odb.py %s.odb %s %s %d %s)"
+        log("!!! 모드표 생성 실패: %s" % _e)
+        log("    (수동 확인: abaqus python aba_mode_from_odb.py %s.odb %s %s %d %s)"
               % (JOB_NAME, MODE_STEP_NAME, MODE_TABLE, N_MODES, INSTANCE_NAME))
 if n_dat != n_modes:
-    print("!!! WARNING: .dat 고유값 %d개 <> ODB 모드 프레임 %d개 -> 어느 쪽이 맞는지 확인 필요"
+    log("!!! WARNING: .dat 고유값 %d개 <> ODB 모드 프레임 %d개 -> 어느 쪽이 맞는지 확인 필요"
           % (n_dat, n_modes))
 
-print("=" * 74)
+log("=" * 74)
 if not ok or n_modes <= 0:
-    print("RESULT:MODE_FAIL — ODB 모드 %d개 / .dat 고유값 %d개 (job_ok=%s)." % (n_modes, n_dat, ok))
-    print("  원인 판정 순서(라이선스 0):")
-    print("    1) ITERATION 2 이후에 양수 고유값이 하나도 없는가? -> base state 프리텐션 크기 문제다.")
-    print("       실측 추이: 양수 4개(5e-5 m) -> 3~4개(1e-7 m) -> 0개(1e-3 m, 면내 68.7 kPa).")
-    print("       [R-13] 의 '목표 7000 Pa 대비 배율'로 DISP_GLOBAL 을 1.8e-5 m 근처로 맞춘다(래더 L1).")
-    print("    2) [DIAG] 의 base state 음수 고유값 개수는 참고용이다 — 오라클은 76개여도 성공했다.")
-    print("       다만 개수가 100 에 근접하면 subspace 창이 부족하므로 N_EIG_BUCKLE 을 올린다(래더 L4).")
-    print("  래더(1줄씩, 1회 ~2분):")
-    print("    L1  DISP_GLOBAL 스케일 — 1.8e-5(오라클 검증) <-> base_state_probe 배율 보정값")
-    print("    L2  SIGMA0 = 700.0 (케이블 런 값) + MODE_STABILIZATION = 0.0005")
-    print("    L3  PRETENSION_MODE='corner2' 로 되돌려 3꼭짓점 대칭 효과와 교란 분리")
-    print("    L4  N_EIG_BUCKLE = 200 + BUCKLE_VECTORS = 500  (요청 수 > 음수 고유값 수)")
-    print("    L5  0.4 m 강체 패치 + KINEMATIC 커플링으로 로드 분산 — 응력집중 완화")
-    print("        (오라클 run_abaqus_cable.py:144 create_rigid_patch 가 쓰는 장치. 실측 응력비 maxP/mean = 52배)")
+    log("RESULT:MODE_FAIL — ODB 모드 %d개 / .dat 고유값 %d개 (job_ok=%s)." % (n_modes, n_dat, ok))
+    log("  원인 판정 순서(라이선스 0):")
+    log("    1) ITERATION 2 이후에 양수 고유값이 하나도 없는가? -> base state 프리텐션 크기 문제다.")
+    log("       실측 추이: 양수 4개(5e-5 m) -> 3~4개(1e-7 m) -> 0개(1e-3 m, 면내 68.7 kPa).")
+    log("       [R-13] 의 '목표 7000 Pa 대비 배율'로 DISP_GLOBAL 을 1.8e-5 m 근처로 맞춘다(래더 L1).")
+    log("    2) [DIAG] 의 base state 음수 고유값 개수는 참고용이다 — 오라클은 76개여도 성공했다.")
+    log("       다만 개수가 100 에 근접하면 subspace 창이 부족하므로 N_EIG_BUCKLE 을 올린다(래더 L4).")
+    log("  래더(1줄씩, 1회 ~2분):")
+    log("    L1  DISP_GLOBAL 스케일 — 1.8e-5(오라클 검증) <-> base_state_probe 배율 보정값")
+    log("    L2  SIGMA0 = 700.0 (케이블 런 값) + MODE_STABILIZATION = 0.0005")
+    log("    L3  PRETENSION_MODE='corner2' 로 되돌려 3꼭짓점 대칭 효과와 교란 분리")
+    log("    L4  N_EIG_BUCKLE = 200 + BUCKLE_VECTORS = 500  (요청 수 > 음수 고유값 수)")
+    log("    L5  0.4 m 강체 패치 + KINEMATIC 커플링으로 로드 분산 — 응력집중 완화")
+    log("        (오라클 run_abaqus_cable.py:144 create_rigid_patch 가 쓰는 장치. 실측 응력비 maxP/mean = 52배)")
     sys.exit(1)
 
-print("RESULT:MODE_OK — 좌굴모드 %d개. ODB=%s" % (n_modes, os.path.abspath(JOB_NAME + '.odb')))
-print("  모드표: %s" % os.path.abspath(MODE_TABLE))
-print("  스텝=%s / λ(하중계수) %s" % (MODE_STEP_NAME, ['%.6e' % v for v in lams[:N_MODES]]))
-print("  참고: Galhofo2022 λ1..4 = 3.18260/3.18295/3.18341/3.18374e-4 (스프레드 0.036%)")
-print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>"
+log("RESULT:MODE_OK — 좌굴모드 %d개. ODB=%s" % (n_modes, os.path.abspath(JOB_NAME + '.odb')))
+log("  모드표: %s" % os.path.abspath(MODE_TABLE))
+log("  스텝=%s / λ(하중계수) %s" % (MODE_STEP_NAME, ['%.6e' % v for v in lams[:N_MODES]]))
+log("  참고: Galhofo2022 λ1..4 = 3.18260/3.18295/3.18341/3.18374e-4 (스프레드 0.036%)")
+log("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>"
       "   (IMPERFECTION_MODE='odb_table' 가 이 모드표를 노드 좌표 섭동으로 주입)")
-print("=" * 74)
+log("=" * 74)
