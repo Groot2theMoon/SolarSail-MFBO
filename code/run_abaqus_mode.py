@@ -27,6 +27,8 @@ run_abaqus_cable.py 와 다른 점
     0 = 모드 1개 이상 추출 / 1 = 0개(실패) 또는 잡 이상 -> 상위 스크립트가 판정 가능
 """
 
+from matplotlib.image import LANCZOS
+
 from abaqus import *
 from abaqusConstants import *
 from step import *
@@ -183,13 +185,12 @@ sin_val = float(np.sin(angle_rad))
 #   HF(run_abaqus.py) 의 코너 당김 5e-5 m·SIGMA0 500 Pa·안정화 2e-4 와 맞춘다.
 #   실패하면 케이블 런 값으로 되돌린다: PRETENSION_SCALE=3.6(=1.8e-5/5e-6) / SIGMA0=700.0 /
 #   안정화 0.0005. (그 경우 '클램프 유무' 외에 파라미터도 달라진다는 사실을 논문에 명시할 것.)
-PRETENSION_SCALE = 10.0
-DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # = 5e-5 m
-SIGMA0 = 500.0                               # 초기 가짜 응력(수렴 보조) [Pa]
-MODE_STABILIZATION = 0.0002                  # GlobalTension 안정화 계수 (HF 정렬)
+DISP_GLOBAL = 1e-7   # = 5e-5 m
+SIGMA0 = 800.0                               # 초기 가짜 응력(수렴 보조) [Pa]
+MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수 (HF 정렬)
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 (케이블 런·HF 와 동일)
-N_EIG_BUCKLE = 100                           # subspace 요청 고유값 수
-BUCKLE_VECTORS = 250                         # subspace 기저 벡터 수
+N_EIG_BUCKLE = 10                            # subspace 요청 고유값 수
+BUCKLE_VECTORS = 25                          # subspace 기저 벡터 수
 N_MODE_FILE = 4                              # .fil 에 기록할 모드 수 (*NODE FILE, LAST MODE)
 INSERT_NODE_FILE = True                      # 좌굴모드 .fil 기록을 키워드로 '명시 요청'할지.
                                              #   케이블 런(성공)에는 이 요청이 없다 -> 2026-09-22 실패
