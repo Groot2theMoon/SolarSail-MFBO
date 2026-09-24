@@ -491,7 +491,7 @@ print("RESULT:MODE_OK — 모드 %d개 계산. 파일: %s" % (n_modes, os.path.a
 print("  스텝=%s(%s) / *NODE FILE 요청=%s (주파수 스텝이므로 .fil 기록이 허용된다)"
       % (MODE_STEP_TYPE, MODE_STEP_NAME, INSERT_NODE_FILE))
 print("  [기본 경로] run_abaqus.py 가 이 .fil 을 IMPERFECTION_NAME=%s 로 스테이징해"
-      " *IMPERFECTION, FILE= 로 주입한다" % 'ClampFree_Buckle')
+      " 임퍼펙션 키워드(FILE=)로 주입한다" % 'ClampFree_Buckle')
 print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>")
 print("  [대체 경로] .fil 에 모드가 0개면(위 DIAG 가 MODE_FAIL) ODB 모드표로 우회 - code\\ 에서:")
 print("    abaqus python aba_mode_from_odb.py %s %s modes_ClampFree_Buckle.txt %d"
