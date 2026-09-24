@@ -248,7 +248,12 @@ MODE_SOURCE_MSG = os.path.join('..', 'ClampFree_Buckle.msg')
 MODE_SOURCE_STEP = 2         # 소스 .fil 안의 스텝 번호 (케이블 런: 1=GlobalTension 2=Buckle)
 IMPERFECTION_NAME = 'ClampFree_Buckle'   # 모드 소스 잡 이름과 '같은' 이름 -> 원장 C-1(조용한 0-모드 소비) 차단
                                          # (MODE_SOURCE_FIL 의 basename 과 함께 움직여야 한다)
-IMPERFECTION_MODES = (1, 2, 3, 4)
+IMPERFECTION_MODES = (1, 2, 3, 4)   # 기본 = 논문(Galhofo) 주입 모드 1~4.
+IMPERFECTION_MAX_MODES = 4          # 상한. 모드표에 있는 모드가 더 적으면 그만큼만 쓴다(아래에서 자동 조정).
+                                    #   2026-09-24 실측: 좌굴 런이 양수 λ 모드 2개만 수렴시켰다
+                                    #   (subspace 가 선형종속으로 250 -> 2 로 붕괴). 논문 4개 대비 편차이므로
+                                    #   [IMPERFECTION] 로그에 조정 사실을 남긴다. 근거: 논문 λ1..4 스프레드는
+                                    #   0.036%(준축퇴)라 모드 3·4 의 기여가 작고, 우리 λ1·λ2 차이도 6% 다.
 IMPERFECTION_AMPL_T = 0.10   # 막 두께 배수(Galhofo 채택값 0.10 t). 진폭 민감도 = 0.50 으로 바꿔 재실행
 RUN_SELF_BUCKLE_JOB = True   # 자기(클램프) 좌굴 잡도 계속 돌린다 -> 클램프 base state probe
                              # (코너 당김 하중분담) + 음수고유값 진단 증거를 함께 얻는다.
@@ -277,7 +282,33 @@ if IMPERFECTION_MODE not in ('odb_table', 'file'):
 _pert = None
 _mode_table = None
 _labels = ()
+def _available_mode_numbers(path):
+    """모드표에 실제로 들어 있는 모드 번호를 오름차순으로 돌려준다(없으면 빈 리스트)."""
+    nums = []
+    if not os.path.exists(path):
+        return nums
+    with open(path, "r") as f:
+        for line in f:
+            s = line.strip()
+            if not s or s.startswith('#'):
+                continue
+            if s.upper().startswith('MODE '):
+                try:
+                    nums.append(int(s.split()[1]))
+                except (IndexError, ValueError):
+                    pass
+    return sorted(nums)
+
+
 if IMPERFECTION_MODE == 'odb_table':
+    # 모드표가 정본이다: 표에 있는 모드만 주입할 수 있으므로 상수를 표에 맞춰 조정한다.
+    _avail = _available_mode_numbers(MODE_TABLE)
+    if _avail:
+        _want = tuple(_avail[:IMPERFECTION_MAX_MODES])
+        if _want != tuple(IMPERFECTION_MODES):
+            print("[IMPERFECTION] 모드표의 모드 %s -> 주입 모드 %s 로 조정 (상수 %s, 상한 %d)"
+                  % (_avail, list(_want), list(IMPERFECTION_MODES), IMPERFECTION_MAX_MODES))
+        IMPERFECTION_MODES = _want
     try:
         _mode_table = load_mode_table(MODE_TABLE, IMPERFECTION_MODES)
     except ImperfectionSourceError as _imp_err_tab:
