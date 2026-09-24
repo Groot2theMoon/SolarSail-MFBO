@@ -197,10 +197,10 @@ PERTURBATION = 0.01                          # 좌굴 스텝 섭동 (케이블 �
 N_EIG_BUCKLE = 100                           # subspace 요청 고유값 수
 BUCKLE_VECTORS = 250                         # subspace 기저 벡터 수
 MODE_FREQ_NUM_EIGEN = 10                     # 주파수 스텝 요청 모드 수 (업스트림 원본과 동일)
-N_MODE_FILE = 4                              # .fil 에 기록할 모드 수 (*NODE FILE, LAST MODE)
-INSERT_NODE_FILE = True                      # 좌굴모드 .fil 기록을 키워드로 '명시 요청'할지.
-                                             #   케이블 런(성공)에는 이 요청이 없다 -> 2026-09-22 실패
-                                             #   (모드 0)의 비물리적 후보 1순위. False 래더(L1)로 검증.
+N_MODE_FILE = 4                              # ODB/모드표에서 뽑을 모드 수
+INSERT_NODE_FILE = False                     # *NODE FILE 요청은 *FREQUENCY 전용이다.
+                                             #   *BUCKLE 은 .fil 출력 자체가 금지(실측 7025) -> 넣어도 no-op.
+                                             #   (MODE_STEP_TYPE='frequency' 로 바꿀 때만 True 로 올린다)
 JOB_NAME = 'ClampFree_Buckle'
 BUCKLE_STEP_NO = 2                           # 이 모델의 스텝 순서: 1=GlobalTension 2=Buckle
 
@@ -380,13 +380,22 @@ my_model.Stress(
 # Step 2: 모드 추출 스텝
 #   실측(ClampFree_Buckle.dat:7025): '*BUCKLE' 스텝은 .fil 출력이 금지된다
 #     "***WARNING: FILE OUTPUT IS NOT AVAILABLE FOR BUCKLING ANALYSIS"
-#   -> *NODE FILE 로 모드를 .fil 에 넣는 경로가 구조적으로 막혀 있다(요청이 무의미).
-#   같은 base state 위의 '주파수 추출'은 .fil 출력이 허용된다 -> 모드 소스는 이쪽을 쓴다.
-#   λ(좌굴 고유치)만 필요하면 MODE_STEP_TYPE='buckle' -> .dat 의 MODE NO 표를 읽는다.
-MODE_STEP_TYPE = 'frequency'   # 'frequency' = 모드 소스(.fil 기록 가능) | 'buckle' = λ 비교용
+#   -> *BUCKLE 로 찾은 좌굴모드는 .fil 에 넣을 수 없다(실측: ClampFree_Buckle.dat:7025
+#      "FILE OUTPUT IS NOT AVAILABLE FOR BUCKLING ANALYSIS").
+#      따라서 좌굴모드 추출은 **ODB 경로**로 한다(모드 프레임은 ODB 에 항상 기록된다):
+#        abaqus python aba_mode_from_odb.py <job>.odb <step> modes_ClampFree_Buckle.txt 4
+#      HF(run_abaqus.py)는 IMPERFECTION_MODE='odb_table' 로 그 표를 노드 좌표 섭동으로 주입한다.
+MODE_STEP_TYPE = 'buckle'   # [기본/정본] 'buckle' = 선형 좌굴해석(*BUCKLE)으로 좌굴모드 추출
+                            #   -> 모드는 ODB 에만 기록된다(*BUCKLE 은 .fil 출력 금지, 실측).
+                            #   'frequency' = 진동 고유모드(*FREQUENCY). .fil 이 기록되지만
+                            #   좌굴모드가 아니라 물리적으로 다른 모드다 -> 2026-09-22 사용자 지시로 기본에서 뺐다.
 if MODE_STEP_TYPE not in ('frequency', 'buckle'):
     raise RuntimeError("MODE_STEP_TYPE 은 'frequency' 또는 'buckle' 여야 합니다 (현재 %r)"
                        % (MODE_STEP_TYPE,))
+#   *BUCKLE 은 .fil 출력이 금지되므로 INSERT_NODE_FILE=True 는 조용한 no-op 이 된다 -> 즉시 중단.
+if MODE_STEP_TYPE == 'buckle' and INSERT_NODE_FILE:
+    raise RuntimeError("MODE_STEP_TYPE='buckle' 에서 INSERT_NODE_FILE=True 는 무효다"
+                       "(*BUCKLE 스텝은 .fil 출력 금지). 좌굴모드는 ODB 에서 꺼낸다.")
 MODE_STEP_NAME = 'Step-Mode' if MODE_STEP_TYPE == 'frequency' else 'Step-Buckle'
 if MODE_STEP_NAME in my_model.steps:
     del my_model.steps[MODE_STEP_NAME]
@@ -487,14 +496,15 @@ if not ok or n_modes <= 0:
     print("  라이선스 0: 위 [DIAG] 의 '음수 고유값 N개 vs 요청 M개' 판정을 먼저 본다.")
     sys.exit(1)
 
-print("RESULT:MODE_OK — 모드 %d개 계산. 파일: %s" % (n_modes, os.path.abspath(JOB_NAME + '.fil')))
-print("  스텝=%s(%s) / *NODE FILE 요청=%s (주파수 스텝이므로 .fil 기록이 허용된다)"
-      % (MODE_STEP_TYPE, MODE_STEP_NAME, INSERT_NODE_FILE))
-print("  [기본 경로] run_abaqus.py 가 이 .fil 을 IMPERFECTION_NAME=%s 로 스테이징해"
-      " 임퍼펙션 키워드(FILE=)로 주입한다" % 'ClampFree_Buckle')
-print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>")
-print("  [대체 경로] .fil 에 모드가 0개면(위 DIAG 가 MODE_FAIL) ODB 모드표로 우회 - code\\ 에서:")
-print("    abaqus python aba_mode_from_odb.py %s %s modes_ClampFree_Buckle.txt %d"
-      % (JOB_NAME + '.odb', MODE_STEP_NAME, N_MODE_FILE))
-print("    -> run_abaqus.py 에서 IMPERFECTION_MODE='odb_table' 로 바꾼다")
+print("RESULT:MODE_OK — 좌굴모드 %d개 계산. ODB=%s" % (n_modes, os.path.abspath(JOB_NAME + '.odb')))
+print("  스텝=%s(%s) / *NODE FILE 요청=%s" % (MODE_STEP_TYPE, MODE_STEP_NAME, INSERT_NODE_FILE))
+if MODE_STEP_TYPE == 'buckle':
+    print("  *BUCKLE 은 .fil 출력 금지(실측 7025) -> 모드는 ODB 에서 꺼낸다(해석 없음, 토큰만):")
+    print("    abaqus python aba_mode_from_odb.py %s %s modes_ClampFree_Buckle.txt %d"
+          % (JOB_NAME + '.odb', MODE_STEP_NAME, N_MODE_FILE))
+    print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>"
+          "   (기본 IMPERFECTION_MODE='odb_table' 가 위 모드표를 섭동으로 주입)")
+else:
+    print("  *FREQUENCY 는 .fil 기록이 허용된다 -> 스테이징 경로(IMPERFECTION_MODE='file')도 가능")
+    print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>")
 print("=" * 74)
