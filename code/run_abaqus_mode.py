@@ -207,7 +207,10 @@ sin_val = float(np.sin(angle_rad))
 #   '세 꼭짓점에 prescribed displacement 로 초기 프리텐션' + 좌굴 BC(정점 u_y=1e-3 m,
 #   아래 두 꼭짓점 성분 (5e-4,-5e-4) m) -> 3중 대칭으로 세 꼭짓점을 모두 당긴다.
 # CHECKER-DIVERGENCE: DISP_GLOBAL, SIGMA0, PRETENSION_SCALE, stabilizationMagnitude, radius
-#   radius(=PATCH_RADIUS 0.4 vs HF 0.2)가 2026-09-24 추가됐다: 오라클 재현 실험 때문이다.
+#   radius 는 오라클 재현 런(0.4)을 위해 추가했다. 지금은 0.2 로 복원되어 '값'은 HF 와 같다.
+#   다만 값이 PATCH_RADIUS 상수로 들어가므로 검사기가 찾는 리터럴 'radius=0.2' 는 코드에 없고,
+#   결과는 DIVRG(선언됨) 로 표시된다. 즉 이 선언이 남아 있는 동안에는 PATCH_RADIUS 를 0.9 등으로
+#   바꿔도 검사기가 통과시킨다 -> PATCH_RADIUS 를 바꿀 때는 사람이 HF 값(0.2)과 직접 대조할 것.
 #   HF(run_abaqus.py)와 이 모드 소스는 base state 프리텐션 정의가 다르다(모드 소스는 3꼭짓점 프리텐션).
 #   메쉬/형상/요소/재료는 동일하므로 모드 노드 라벨 매핑은 그대로 성립한다.
 #   논문에는 '클램프 유무' 외에 이 프리텐션 정의 차이도 함께 명시할 것.
@@ -279,11 +282,14 @@ BUCKLE_VECTORS = 250                         # 기저 벡터(요청 수 x 2.5) �
                                              #              기저 400 -> CONVERGED=0 (ITER4 396개까지 추적 후 붕괴).
                                              #   -> '기저를 키우면 붕괴가 지연된다'는 가설은 400 실측으로 반증됐다.
 N_MODES = 4                                  # HF 에 주입할 모드 수(= ODB 모드 프레임에서 뽑는 개수)
-PATCH_RADIUS = 0.4                           # 꼭짓점 강체패치 반경 [m]. 오라클 값 = 0.4 (HF 는 0.2).
-                                             #   [2026-09-24 오라클 재현] 성공한 케이블 런은 0.4 를 쓴다
-                                             #   (run_abaqus_cable.py:144 create_rigid_patch 기본값).
-                                             #   HF 와의 차이는 CHECKER-DIVERGENCE 에 'radius' 로 선언했다:
-                                             #   coupling 은 기존 노드 집합에 걸리므로 노드 라벨 매핑은 깨지지 않는다.
+PATCH_RADIUS = 0.2                           # 꼭짓점 강체패치 반경 [m] — HF 와 동일값(0.2)으로 복원.
+                                             #   [2026-09-24 bisect 2단계, 사용자 지시] 4모드를 낸 조합은 0.4 였다.
+                                             #   이제 반경만 0.2 로 되돌려 '패치 반경이 스펙트럼을 좌우하는가'를
+                                             #   단독으로 판정한다(구동 방식 corner2 / 1.8e-5 / SIGMA0 700 은 그대로).
+                                             #   판독 규칙(사전등록): 4개 수렴 + 0 ERROR -> 반경은 무관
+                                             #     = HF 정합 회복(최상). 0~2개 -> 0.4 가 결정적이었다 -> 0.4 복귀.
+                                             #   lambda 값 자체는 base state 변화로 이동하는 것이 정상이다(개수로 판정).
+                                             #   되돌리기: 0.4 (오라클 값, run_abaqus_cable.py:144).
 MODE_STEP_NAME = 'Step-Buckle'               # 이 모델의 2번째 스텝(HF 의 MODE_SOURCE_STEP=2 와 짝)
 JOB_NAME = 'ClampFree_Buckle'
 MODE_TABLE = 'modes_%s.txt' % JOB_NAME       # HF 는 ..\modes_ClampFree_Buckle.txt 를 읽는다
