@@ -191,16 +191,24 @@ cos_val = float(np.cos(angle_rad))
 sin_val = float(np.sin(angle_rad))
 
 # ---- 정렬: 프리텐션 정의 (HF 와 동일한 줄) ----
-#   [2026-09-24 사용자 튜닝] base state 를 분기점 '앞'에 두기 위해 코너 당김을 크게 줄이고
-#   사전장력을 올렸다: DISP_GLOBAL 5e-5 -> 1e-7 m, SIGMA0 500 -> 800 Pa, 안정화 2e-4 -> 5e-4.
-#   이 값들이 base state 의 음수 고유값 개수를 바꾸므로, 실행 로그의 [DIAG] 판정을 함께 본다.
-#   (논문에는 '클램프 유무' 외에 파라미터도 달라진다는 사실을 명시할 것.)
+#   [2026-09-24 3회차 실측 -> 근본 수정] 코너 2개만 1e-7 m 당기면 base state 가 slack 이 되고,
+#   좌굴 스펙트럼이 뭉개진다(실측: ITER2 양수 모드가 1회차 4.6e-5~3.1e-3 -> 3회차 6.9e-7~1.8e-5,
+#   즉 요구 모드가 사실상 영에너지 모드로 퇴화). 논문 Galhofo2022 의 좌굴 모델은
+#   '세 꼭짓점에 prescribed displacement 로 초기 프리텐션' + 좌굴 BC(정점 u_y=1e-3 m,
+#   아래 두 꼭짓점 성분 (5e-4,-5e-4) m) -> 3중 대칭으로 세 꼭짓점을 모두 당긴다.
 # CHECKER-DIVERGENCE: DISP_GLOBAL, SIGMA0, PRETENSION_SCALE, stabilizationMagnitude
-#   HF(run_abaqus.py)와 이 모드 소스는 base state 파라미터가 다르다(위 사용자 튜닝).
+#   HF(run_abaqus.py)와 이 모드 소스는 base state 프리텐션 정의가 다르다(모드 소스는 3꼭짓점 프리텐션).
 #   메쉬/형상/요소/재료는 동일하므로 모드 노드 라벨 매핑은 그대로 성립한다.
-#   논문에는 '클램프 유무' 외에 이 파라미터 차이도 함께 명시할 것.
-DISP_GLOBAL = 1e-7                           # 코너 당김 [m] (HF 정렬값 5e-5 의 1/500)
-SIGMA0 = 800.0                               # 초기 가짜 응력(수렴 보조) [Pa]
+#   논문에는 '클램프 유무' 외에 이 프리텐션 정의 차이도 함께 명시할 것.
+PRETENSION_MODE = 'paper3'   # 'paper3' = 논문 좌굴모델: 꼭짓점 3개(케이블 끝)를 모두 바깥으로 당김 [정본]
+                             # 'corner2' = 기존: 아래 두 모서리만 당김(비대칭, slack) -> 스펙트럼 퇴화(실측)
+DISP_GLOBAL = 1.0e-3         # 아래 두 꼭짓점 당김 [m]. 논문 프리텐션 스케일 alpha=20 (= 1e-3 m).
+                             #   기존 1e-7 m 는 논문의 1/1e4 = 사실상 0 이었다(실측으로 slack 확인).
+                             #   base_state_probe 가 'TARGET_STRESS(7000 Pa) 대비 배율'을 출력하므로,
+                             #   그 배율로 이 값을 선형 보정한다(응력 ∝ 변위, 해석 1회면 충분).
+# 논문 좌굴 BC 의 방향비: 정점 u_y=1e-3 / 아래 두 꼭짓점 |(5e-4,-5e-4)|=7.071e-4  ->  비 = √2
+DISP_TOP_OVER_CORNER = 1.4142135623
+SIGMA0 = 800.0                               # 초기 가짜 응력(수렴 보조) [Pa] — 프리텐션의 대체물이 아니다
 MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 (케이블 런·HF 와 동일)
 N_EIG_BUCKLE = 100                           # [2026-09-24 실측 근거] subspace 요청 고유값 수
@@ -382,6 +390,17 @@ my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
 my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
     stepName='Step-GlobalTension', u1=-DISP_GLOBAL * cos_val, u2=-DISP_GLOBAL * sin_val
 )
+# [paper3] 위 꼭짓점도 바깥(+y = 위 케이블 축)으로 당긴다 -> 3중 대칭 프리텐션 (논문 좌굴모델).
+#   BC_Anchor_Top 은 Initial 에서 u1=u2=u3=SET(완전고정) 이므로 여기서 u1/u2 를 값으로 덮어쓴다.
+#   u3/회전은 고정 유지 -> 면외 구속 조건은 그대로다.
+if PRETENSION_MODE == 'paper3':
+    my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
+        stepName='Step-GlobalTension', u1=0.0, u2=DISP_GLOBAL * DISP_TOP_OVER_CORNER
+    )
+    print("[run_abaqus_mode] 프리텐션 = paper3 (3꼭짓점 당김): 아래 %.4e m / 위 %.4e m"
+          % (DISP_GLOBAL, DISP_GLOBAL * DISP_TOP_OVER_CORNER))
+else:
+    print("[run_abaqus_mode] 프리텐션 = corner2 (아래 두 꼭짓점만 %.4e m, 비대칭)" % DISP_GLOBAL)
 
 # 초기 가짜 응력 (수렴 보조)
 my_model.Stress(
@@ -407,13 +426,19 @@ my_model.BuckleStep(
     vectors=BUCKLE_VECTORS,
     maxIterations=5000
 )
-# 좌굴 스텝의 '하중 패턴': 코너 당김을 PERTURBATION 만큼 키운다(λ 를 이 패턴 기준으로 얻는다).
+# 좌굴 스텝의 '하중 패턴': 꼭짓점 당김을 PERTURBATION 만큼 키운다(λ 를 이 패턴 기준으로 얻는다).
+#   논문 좌굴 BC = 정점 u_y=1e-3 m ↑ + 아래 두 꼭짓점 성분 (5e-4,-5e-4) m -> 방향비 √2 를 그대로 쓴다.
+#   (패턴이 비대칭이면 좌굴 스펙트럼이 뭉개진다 — 3회차 실측의 교훈)
 my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
     stepName=MODE_STEP_NAME, u1=PERTURBATION * cos_val, u2=-PERTURBATION * sin_val
 )
 my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
     stepName=MODE_STEP_NAME, u1=-PERTURBATION * cos_val, u2=-PERTURBATION * sin_val
 )
+if PRETENSION_MODE == 'paper3':
+    my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
+        stepName=MODE_STEP_NAME, u1=0.0, u2=PERTURBATION * DISP_TOP_OVER_CORNER
+    )
 my_model.boundaryConditions['BC_Stabilize_Z'].deactivate(MODE_STEP_NAME)
 a.Set(name='All_Edges', edges=inst_memb.edges)
 my_model.DisplacementBC(
@@ -461,9 +486,10 @@ print("[run_abaqus_mode] *NODE FILE 삽입 없음 — *BUCKLE 좌굴모드는 OD
 # 8. 실행 -> 좌굴모드 확인 -> 모드표 생성 (이 스크립트가 끝나면 HF 가 바로 돌 수 있다)
 # -------------------------------------------------------------
 print("=" * 74)
-print("모드 소스 런: %s  (선형 좌굴해석 %s, 코너 당김 %.3e m / SIGMA0 %.1f Pa / 안정화 %.4f)"
-      % (JOB_NAME, MODE_STEP_NAME, DISP_GLOBAL, SIGMA0, MODE_STABILIZATION))
-print("  모델: 클램프 없음 / 케이블 3개 / 꼭짓점 앵커 / 두 아래 모서리 구동 (논문 좌굴 모델 구성)")
+print("모드 소스 런: %s  (선형 좌굴해석 %s, 프리텐션 %s, 꼭짓점 당김 %.3e m / SIGMA0 %.1f Pa / 안정화 %.4f)"
+      % (JOB_NAME, MODE_STEP_NAME, PRETENSION_MODE, DISP_GLOBAL, SIGMA0, MODE_STABILIZATION))
+print("  모델: 클램프 없음 / 케이블 3개 / 꼭짓점 강체패치 — 구동 = %s"
+      % ('3꼭짓점 = 논문 좌굴모델' if PRETENSION_MODE == 'paper3' else '아래 2꼭짓점'))
 print("  요청 고유값 %d개 / 기저벡터 %d / 최대반복 5000 (SUBSPACE)" % (N_EIG_BUCKLE, BUCKLE_VECTORS))
 print("=" * 74)
 
@@ -520,7 +546,8 @@ if not ok or n_modes <= 0:
     print("    2) 'THE EIGENVALUES CANNOT BE FOUND' -> base state 가 분기점을 넘었다(래더 L2/L3)")
     print("  래더(1줄씩, 1회 ~61초):")
     print("    L2  SIGMA0 = 700.0 + MODE_STABILIZATION = 0.0005  (사전장력 상승 -> 음수 고유값 감소, 케이블 런 값)")
-    print("    L3  DISP_GLOBAL = 1.8e-5 (코너 당김 = 케이블 런과 같은 인장) + SIGMA0 = 700.0")
+    print("    L3  DISP_GLOBAL 을 base_state_probe 의 '목표 7000 Pa 대비 배율'로 선형 보정(응력 ∝ 변위)")
+    print("    L5  PRETENSION_MODE='corner2' 로 되돌려 3회차 조건과 교란 분리 비교")
     print("    L4  N_EIG_BUCKLE = 200 + BUCKLE_VECTORS = 500  (요청 수 > 음수 고유값 수)")
     sys.exit(1)
 
