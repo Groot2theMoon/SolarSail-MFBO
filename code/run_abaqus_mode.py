@@ -212,26 +212,36 @@ sin_val = float(np.sin(angle_rad))
 #   논문에는 '클램프 유무' 외에 이 프리텐션 정의 차이도 함께 명시할 것.
 PRETENSION_MODE = 'paper3'   # 'paper3' = 논문 좌굴모델: 꼭짓점 3개(케이블 끝)를 모두 바깥으로 당김 [정본]
                              # 'corner2' = 기존: 아래 두 모서리만 당김(비대칭, slack) -> 스펙트럼 퇴화(실측)
-DISP_GLOBAL = 1.0e-3         # 아래 두 꼭짓점 당김 [m]. 논문 프리텐션 스케일 alpha=20 (= 1e-3 m).
-                             #   기존 1e-7 m 는 논문의 1/1e4 = 사실상 0 이었다(실측으로 slack 확인).
-                             #   base_state_probe 가 'TARGET_STRESS(7000 Pa) 대비 배율'을 출력하므로,
-                             #   그 배율로 이 값을 선형 보정한다(응력 ∝ 변위, 해석 1회면 충분).
-# 논문 좌굴 BC 의 방향비: 정점 u_y=1e-3 / 아래 두 꼭짓점 |(5e-4,-5e-4)|=7.071e-4  ->  비 = √2
+DISP_GLOBAL = 1.8e-5         # 꼭짓점 당김 [m] — 프리텐션 크기. 2026-09-24 실측으로 정한 값.
+                             #   근거 1(계측): base_state_probe 헤드라인 = 평균 면내응력 6.874e+04 Pa,
+                             #     면내평균<0 면적비 0.0000, minP<0 0.0017, |u3|max 5.6e-22 m (=주름 0, 완전 평탄).
+                             #     목표 7000 Pa 대비 배율 9.820 -> 1e-3 m 는 운용점의 약 10배로 과대했다.
+                             #   근거 2(회차별 대조): 양수 좌굴모드가 나온 회차는 전부 저프리텐션이다.
+                             #     1e-7 m  -> 양수 3~4개 (2·3회차)  /  5e-5 m -> 양수 4개 (1회차)
+                             #     1e-3 m  -> 양수 0개 (4회차, 면내 68.7 kPa)  ← 양수가 사라지는 구간
+                             #   근거 3(양성 대조군): 성공한 케이블 런(run_abaqus_cable.py, CONVERGED=4)은
+                             #     DISP_MAG = 1.8e-5 m 이다. 같은 값으로 맞춘다.
+                             #   주의: 이 값은 '좌굴모드를 뽑기 위한 저프리텐션'이다. HF 운용점(7000 Pa)과 다르며
+                             #         그 차이는 HF/모드소스 분기로 이미 선언돼 있다(check_model_consistency.py).
 DISP_TOP_OVER_CORNER = 1.4142135623
 SIGMA0 = 800.0                               # 초기 가짜 응력(수렴 보조) [Pa] — 프리텐션의 대체물이 아니다
 MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 크기 [m] (케이블 런·HF 와 동일)
-PATTERN_SIGN = -1.0                          # 좌굴 '하중 패턴'의 부호 (2026-09-24 실측 근거)
-                                             #   1.0 = 바깥으로 더 당김 / -1.0 = 안쪽(당김을 푸는 방향)
-                                             #   1~4회차는 모두 패턴이 '바깥 당김'이었고 스펙트럼이 전부 λ<0
-                                             #   이었다(양수 모드 0~4개, CONVERGED=0, EIGENVALUES CANNOT BE FOUND).
-                                             #   좌굴 고유문제는 패턴에 선형이므로(선형 섭동 스텝) 부호를 뒤집으면
-                                             #   λ -> -λ 로 스펙트럼이 정확히 거울상이 된다 -> 양수 모드가 지배적이
-                                             #   되어 subspace 가 수렴할 창이 생긴다.
+PATTERN_SIGN = 1.0                           # 좌굴 '하중 패턴'의 부호: 1.0 = 바깥으로 더 당김 (오라클과 동일)
+                                             #   [2026-09-24 철회] 직전에 -1.0 으로 뒤집었다가 되돌렸다.
+                                             #   뒤집은 근거였던 "4회차 스펙트럼이 전부 λ<0 이니 패턴 부호 문제"는
+                                             #   양성 대조군으로 반증되었다: 성공한 케이블 런(CONVERGED=4)도
+                                             #   패턴이 똑같이 '바깥 당김'(+PERTURBATION)이고 λ 4개가 양수다.
+                                             #   -> λ 의 부호를 정하는 것은 패턴 부호가 아니라 base state(프리텐션 크기)다.
+                                             #      실측: 1e-7 m 와 5e-5 m 에서는 양수 모드가 나왔고(3~4개),
+                                             #            1e-3 m(면내 68.7 kPa)에서는 0개였다.
+                                             #   -> 원인은 DISP_GLOBAL 이며, 위 상수에서 1.8e-5 m 로 내렸다.
 N_EIG_BUCKLE = 100                           # [2026-09-24 실측 근거] subspace 요청 고유값 수
                                              #   규칙: '요청 수 > base state 음수 고유값 수' 여야 양수 좌굴모드가 창에 들어온다.
-                                             #   실측: 케이블 런(음수 52)에서 100 요청 -> CONVERGED=4 (성공).
+                                             #   실측: 케이블 런(음수 76)에서 100 요청 -> CONVERGED=4 (성공).
                                              #         이 모델의 2회차 런(음수 16)에서 10 요청 -> CONVERGED=0 (실패).
+                                             #   [2026-09-24 정정] 음수 개수 자체는 치명적이지 않다 — 오라클은 76개인데
+                                             #         성공했고, 이 모델은 88개였다. 결정적 차이는 프리텐션 크기였다(위 DISP_GLOBAL).
                                              #   업스트림 저자 주석(run_abaqus_cable.py:338)도 같은 이유를 적었다:
                                              #     "numEigen=100 # [핵심] 76개의 음수 모드를 건너뛰기 위해 100개 요청"
                                              #   (10 은 원본 FrequencyStep 의 값이었다 — 좌굴 스텝에는 부족하다.)
@@ -444,10 +454,11 @@ my_model.BuckleStep(
     maxIterations=5000
 )
 # 좌굴 스텝의 '하중 패턴': 꼭짓점 당김을 PERTURBATION * PATTERN_SIGN 만큼 준다(λ 를 이 패턴 기준으로 얻는다).
-#   4회차 실측: 패턴이 '바깥 당김'(+1)이면 스펙트럼이 전부 λ<0 (양수 모드 0개) 이고 subspace 가 수렴하지 못했다.
-#   좌굴 하중계수는 패턴에 선형이므로 부호를 뒤집으면 λ -> -λ (스펙트럼이 거울상, 양수 모드가 지배적으로 온다).
-#   주의: 여기서 뒤집는 것은 '좌굴 섭동 패턴'뿐이다. 베이스스테이트 프리텐션(Step-GlobalTension)은 그대로 바깥 당김이다.
-#   논문 좌굴 BC = 정점 u_y=1e-3 m ↑ + 아래 두 꼭짓점 성분 (5e-4,-5e-4) m -> 방향비 √2 를 그대로 쓴다.
+#   4회차 스펙트럼이 전부 λ<0 이었지만, 그 원인은 패턴 부호가 아니라 base state 프리텐션 과대였다
+#   (성공한 케이블 런도 같은 '바깥 당김' 패턴으로 λ 4개가 양수다 — 위 PATTERN_SIGN 주석 참조).
+#   하중 패턴은 오라클·논문과 같은 방향(바깥 당김)으로 유지한다.
+#   논문 좌굴 BC 의 '방향비'만 가져온다: 정점 u_y / 아래 두 꼭짓점 |(5e-4,-5e-4)| = 1e-3/7.071e-4 = √2
+#   (절대 크기는 논문값이 아니라 DISP_GLOBAL = 1.8e-5 m 를 쓴다 — 위 상수 근거 참조)
 #   (패턴이 비대칭이면 좌굴 스펙트럼이 뭉개진다 — 3회차 실측의 교훈)
 my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
     stepName=MODE_STEP_NAME,
@@ -567,17 +578,18 @@ print("=" * 74)
 if not ok or n_modes <= 0:
     print("RESULT:MODE_FAIL — ODB 모드 %d개 / .dat 고유값 %d개 (job_ok=%s)." % (n_modes, n_dat, ok))
     print("  원인 판정 순서(라이선스 0):")
-    print("    1) 위 [DIAG] 의 'base state 음수 고유값 N개' -> N 이 크면 base state 가 이미 좌굴/압축 상태")
-    print("       (Abaqus 오류문 'INSTABILITIES IN THE BASE STATE' 와 같은 진단). 이때는 요청 수를 늘려도 안 풀린다.")
-    print("       -> 위 [R-13] 의 '면내 압축(<0) 면적비' 로 프리텐션을 키워 압축 영역을 없앤다(래더 L7).")
-    print("    2) ITERATION 2 이후에 양수 고유값이 하나도 안 보이면 하중 패턴 부호가 반대다(PATTERN_SIGN).")
-    print("       좌굴 하중계수는 패턴에 선형이므로 부호를 뒤집으면 λ -> -λ 로 스펙트럼이 거울상이 된다.")
+    print("    1) ITERATION 2 이후에 양수 고유값이 하나도 없는가? -> base state 프리텐션 크기 문제다.")
+    print("       실측 추이: 양수 4개(5e-5 m) -> 3~4개(1e-7 m) -> 0개(1e-3 m, 면내 68.7 kPa).")
+    print("       [R-13] 의 '목표 7000 Pa 대비 배율'로 DISP_GLOBAL 을 1.8e-5 m 근처로 맞춘다(래더 L1).")
+    print("    2) [DIAG] 의 base state 음수 고유값 개수는 참고용이다 — 오라클은 76개여도 성공했다.")
+    print("       다만 개수가 100 에 근접하면 subspace 창이 부족하므로 N_EIG_BUCKLE 을 올린다(래더 L4).")
     print("  래더(1줄씩, 1회 ~2분):")
-    print("    L1  PATTERN_SIGN = +1.0  (4회차 조건으로 되돌리기 — 대조군)")
-    print("    L2  SIGMA0 = 700.0 + MODE_STABILIZATION = 0.0005  (케이블 런 값)")
-    print("    L3  PRETENSION_MODE='corner2' 로 되돌려 3회차 조건과 교란 분리 비교")
+    print("    L1  DISP_GLOBAL 스케일 — 1.8e-5(오라클 검증) <-> base_state_probe 배율 보정값")
+    print("    L2  SIGMA0 = 700.0 (케이블 런 값) + MODE_STABILIZATION = 0.0005")
+    print("    L3  PRETENSION_MODE='corner2' 로 되돌려 3꼭짓점 대칭 효과와 교란 분리")
     print("    L4  N_EIG_BUCKLE = 200 + BUCKLE_VECTORS = 500  (요청 수 > 음수 고유값 수)")
-    print("    L7  DISP_GLOBAL 을 base_state_probe 배율로 선형 보정해 '면내 압축 면적비' 를 0 근처로")
+    print("    L5  0.4 m 강체 패치 + KINEMATIC 커플링으로 로드 분산 — 응력집중 완화")
+    print("        (오라클 run_abaqus_cable.py:144 create_rigid_patch 가 쓰는 장치. 실측 응력비 maxP/mean = 52배)")
     sys.exit(1)
 
 print("RESULT:MODE_OK — 좌굴모드 %d개. ODB=%s" % (n_modes, os.path.abspath(JOB_NAME + '.odb')))
