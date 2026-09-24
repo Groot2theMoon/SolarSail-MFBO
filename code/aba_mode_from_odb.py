@@ -20,6 +20,8 @@
     ...
     u3 를 max|u3| = 1 로 모드별 정규화한다(모드 형상의 절대 크기는 의미가 없다).
     부호는 max|u3| 노드를 + 로 고정 -> 같은 ODB 에서 항상 같은 표가 나온다(재현성).
+    λ(하중계수)는 프레임의 frameValue 에서 읽으며, **λ > 0 인 모드만** 표에 넣는다
+    (요청 수를 늘리면 음수 λ 모드도 ODB 에 들어오는데, 임퍼펙션에 쓸 모드는 양수 λ 쪽이다).
 
 종료 코드: 0 정상 / 2 인자 / 3 odbAccess 없음 / 4 odb 없음 / 5 스텝 없음 / 6 인스턴스 없음 / 7 값 없음
 """
@@ -27,6 +29,21 @@ import os
 import sys
 
 DEFAULT_INSTANCE = 'MEMBRANE-1'
+
+
+def pick_mode_frames(lambdas, n_modes):
+    """λ > 0 인 프레임을 앞에서부터 n_modes 개 고른다(음수/NaN λ 는 건너뛴다).
+
+    반환: 0-based 프레임 인덱스 리스트(순서 보존, 길이 <= n_modes).
+    순수 함수로 분리한 이유: odbAccess 없이 로컬에서 단위검증할 수 있게 하기 위해서.
+    """
+    pick = []
+    for i, v in enumerate(lambdas):
+        if v == v and v > 0.0:          # v == v -> NaN 제외
+            pick.append(i)
+            if len(pick) >= n_modes:
+                break
+    return pick
 
 
 def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_INSTANCE,
@@ -58,50 +75,68 @@ def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_
                            % (instance, sorted(odb.rootAssembly.instances.keys())))
 
         frames = step.frames
+        # 각 프레임의 하중계수(λ)를 읽는다. 좌굴 스텝에서 frameValue = 그 모드의 하중계수.
+        #   (2026-09-24 실측) 요청 수를 늘리면(numEigen=100) ODB 에 음수 λ 모드도 함께 들어온다.
+        #   HF 에 넣을 임퍼펙션은 양수 λ 모드여야 한다 -> 양수만 고르고, 고른 결과를 로그로 남긴다.
+        lam = []
+        for fr in frames:
+            try:
+                lam.append(float(fr.frameValue))
+            except Exception:
+                lam.append(float('nan'))
         _say("[MODES] %s / %s : 프레임 %d개 (요청 %d모드) / 인스턴스 %s"
              % (os.path.basename(odb_path), step_name, len(frames), n_modes, instance))
-        if len(frames) < n_modes:
-            _say("[MODES] 경고: 프레임 %d개 < 요청 %d모드 -> 있는 만큼만 쓴다"
-                 % (len(frames), n_modes))
-            n_modes = len(frames)
-        if n_modes <= 0:
-            raise ValueError("모드 프레임이 없다 -> 이 스텝이 고유치 결과를 내지 못했다"
-                             " (base state 가 분기점을 넘었거나 요청 수가 부족하다)")
+        if lam:
+            _say("[MODES] 하중계수 λ(앞 12개): %s" % ', '.join('%.6e' % v for v in lam[:12]))
+
+        pick = pick_mode_frames(lam, n_modes)
+        if not pick:
+            raise ValueError("양수 λ 모드가 없다 -> 좌굴모드가 수렴하지 않았다. λ: %s"
+                             % ', '.join('%.6e' % v for v in lam[:12]))
+        if len(pick) < n_modes:
+            _say("[MODES] 경고: 쓸 수 있는 양수 λ 모드 %d개 < 요청 %d개 -> 있는 만큼만 쓴다"
+                 % (len(pick), n_modes))
+        _say("[MODES] 선택한 프레임 %s (λ %s)"
+             % ([p + 1 for p in pick], ['%.6e' % lam[p] for p in pick]))
 
         blocks = []
-        for i in range(n_modes):
+        for k, i in enumerate(pick):
             try:
                 fo = frames[i].fieldOutputs['U'].getSubset(region=inst)
             except KeyError:
-                raise KeyError("모드 %d: 'U' 필드가 없다. 이 프레임의 필드: %s"
+                raise KeyError("프레임 %d: 'U' 필드가 없다. 이 프레임의 필드: %s"
                                % (i + 1, sorted(frames[i].fieldOutputs.keys())))
             u3_at = {}
             for v in fo.values:
                 u3_at[v.nodeLabel] = v.data[2]
             if not u3_at:
-                raise ValueError("모드 %d: U 값이 비어 있다" % (i + 1))
+                raise ValueError("프레임 %d: U 값이 비어 있다" % (i + 1))
             sign_node, u3_ref = max(u3_at.items(), key=lambda kv: abs(kv[1]))
             umax = abs(u3_ref)
             if umax <= 0.0:
-                raise ValueError("모드 %d: u3 가 전부 0 (면외 성분 없음)" % (i + 1))
+                raise ValueError("프레임 %d: u3 가 전부 0 (면외 성분 없음)" % (i + 1))
             sign = 1.0 if u3_ref >= 0 else -1.0
-            lines = ["# MODE %d raw_max_u3=%.6e sign_node=%d" % (i + 1, u3_ref, sign_node),
-                     "MODE %d" % (i + 1)]
+            lines = ["# MODE %d frame=%d lambda=%.6e raw_max_u3=%.6e sign_node=%d"
+                     % (k + 1, i + 1, lam[i], u3_ref, sign_node),
+                     "MODE %d" % (k + 1)]
             for lab in sorted(u3_at):
                 lines.append("%d %.9e" % (lab, sign * u3_at[lab] / umax))
             blocks.append("\n".join(lines) + "\n")
-            _say("[MODES] 모드 %d: 노드 %d개, raw max|u3|=%.3e (부호기준 노드 %d)"
-                 % (i + 1, len(u3_at), umax, sign_node))
+            _say("[MODES] 모드 %d <- 프레임 %d: 노드 %d개, λ=%.6e, raw max|u3|=%.3e (부호기준 노드 %d)"
+                 % (k + 1, i + 1, len(u3_at), lam[i], umax, sign_node))
 
         header = ["# source=%s" % os.path.abspath(odb_path),
                   "# step=%s" % step_name,
                   "# instance=%s" % instance,
-                  "# u3 은 모드별 max|u3|=1 정규화. 부호는 max|u3| 노드를 + 로 고정."]
+                  "# u3 은 모드별 max|u3|=1 정규화. 부호는 max|u3| 노드를 + 로 고정.",
+                  "# table_modes=%d / source_frames=%s / lambdas=%s"
+                  % (len(pick), [p + 1 for p in pick],
+                     ['%.6e' % lam[p] for p in pick])]
         with open(out_path, 'w') as f:
             f.write("\n".join(header) + "\n")
             f.write("".join(blocks))
-        _say("[MODES] 저장: %s (모드 %d개)" % (os.path.abspath(out_path), n_modes))
-        return n_modes, msgs
+        _say("[MODES] 저장: %s (모드 %d개)" % (os.path.abspath(out_path), len(pick)))
+        return len(pick), msgs
     finally:
         odb.close()
 

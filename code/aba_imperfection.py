@@ -159,6 +159,8 @@ def mode_table_info(path):
             if not s.startswith('#'):
                 break
             body = s.lstrip('#').strip()
+            if body.upper().startswith('MODE '):
+                break          # '# MODE n frame=... lambda=...' = 모드 데이터 시작 -> 헤더 끝
             if '=' in body:
                 k, v = body.split('=', 1)
                 info[k.strip()] = v.strip()

@@ -203,11 +203,14 @@ DISP_GLOBAL = 1e-7                           # 코너 당김 [m] (HF 정렬값 5
 SIGMA0 = 800.0                               # 초기 가짜 응력(수렴 보조) [Pa]
 MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 (케이블 런·HF 와 동일)
-N_EIG_BUCKLE = 10                            # [사용자 튜닝 2026-09-24] subspace 요청 고유값 수
-                                             #   주의: '요청 수 > base state 음수 고유값 수' 여야 양수 좌굴모드가
-                                             #   subspace 창에 들어온다(케이블 런: 음수 52 < 100 -> CONVERGED=4).
-                                             #   실행 로그 [DIAG] 의 판정을 먼저 보고 필요하면 올린다(래더 L4).
-BUCKLE_VECTORS = 25                          # [사용자 튜닝] subspace 기저 벡터 수
+N_EIG_BUCKLE = 100                           # [2026-09-24 실측 근거] subspace 요청 고유값 수
+                                             #   규칙: '요청 수 > base state 음수 고유값 수' 여야 양수 좌굴모드가 창에 들어온다.
+                                             #   실측: 케이블 런(음수 52)에서 100 요청 -> CONVERGED=4 (성공).
+                                             #         이 모델의 2회차 런(음수 16)에서 10 요청 -> CONVERGED=0 (실패).
+                                             #   업스트림 저자 주석(run_abaqus_cable.py:338)도 같은 이유를 적었다:
+                                             #     "numEigen=100 # [핵심] 76개의 음수 모드를 건너뛰기 위해 100개 요청"
+                                             #   (10 은 원본 FrequencyStep 의 값이었다 — 좌굴 스텝에는 부족하다.)
+BUCKLE_VECTORS = 250                         # 기저 벡터 = 요청 수 x 2.5 (케이블 런 성공 조합)
 N_MODES = 4                                  # HF 에 주입할 모드 수(= ODB 모드 프레임에서 뽑는 개수)
 MODE_STEP_NAME = 'Step-Buckle'               # 이 모델의 2번째 스텝(HF 의 MODE_SOURCE_STEP=2 와 짝)
 JOB_NAME = 'ClampFree_Buckle'
