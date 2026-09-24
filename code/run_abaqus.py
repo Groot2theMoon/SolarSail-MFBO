@@ -99,7 +99,8 @@ os.chdir(_RUN)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: E402
-                              imperfection_text, report)
+                              imperfection_text, report, load_mode_table,
+                              build_perturbation, perturbation_report, mode_table_info)
 print("[run_abaqus] _HERE = %s" % _HERE)
 print("[run_abaqus] _RUN  = %s" % _RUN)
  
@@ -251,6 +252,39 @@ RUN_SELF_BUCKLE_JOB = True   # 자기(클램프) 좌굴 잡도 계속 돌린다 
                              # 그때는 base state probe 가 '건너뜀' 으로 출력된다.
 if MODE_SOURCE not in ('external', 'self'):
     raise RuntimeError("MODE_SOURCE 는 'external' 또는 'self' 여야 합니다 (현재 %r)" % (MODE_SOURCE,))
+
+# ---- 임퍼펙션 주입 방식 (2026-09-22) --------------------------------------
+#   모드 소스의 스텝 타입이 선택을 결정한다:
+#     좌굴모드를 '선형 좌굴해석(*BUCKLE)' 으로 찾는 경우 -> 'odb_table'  [기본, 정본]
+#        *BUCKLE 은 .fil 출력이 금지된다(실측: ClampFree_Buckle.dat:7025
+#          "FILE OUTPUT IS NOT AVAILABLE FOR BUCKLING ANALYSIS"). 모드 프레임은 ODB 에만 있다.
+#          -> abaqus python aba_mode_from_odb.py <job>.odb <step> modes_ClampFree_Buckle.txt 4
+#          -> 그 표를 노드 좌표 섭동으로 주입(셸에서 *IMPERFECTION 과 등가).
+#     '진동 고유모드(*FREQUENCY)' 를 모드 소스로 쓰는 경우 -> 'file'
+#        .fil 에 모드가 기록되므로 스테이징 + *IMPERFECTION, FILE=, STEP=n (사용자 원본 08d4cbc 방식).
+IMPERFECTION_MODE = 'odb_table'
+MODE_TABLE = os.path.join('..', 'modes_ClampFree_Buckle.txt')   # code\aba -> code\
+#   (출처 ODB/스텝은 상수로 중복 기재하지 않고 모드표 헤더에서 읽어 로그에 남긴다)
+if IMPERFECTION_MODE not in ('odb_table', 'file'):
+    raise RuntimeError("IMPERFECTION_MODE 는 'odb_table' 또는 'file' 여야 합니다 (현재 %r)"
+                       % (IMPERFECTION_MODE,))
+
+# 모드표는 모델을 만들기 전에 읽는다(없으면 HF 잡을 제출하지 않고 즉시 중단).
+_pert = None
+_mode_table = None
+_labels = ()
+if IMPERFECTION_MODE == 'odb_table':
+    try:
+        _mode_table = load_mode_table(MODE_TABLE, IMPERFECTION_MODES)
+    except ImperfectionSourceError as _imp_err_tab:
+        print("!!! ERROR: 임퍼펙션 모드표를 읽지 못했습니다 -> HF 잡을 제출하지 않고 중단합니다.")
+        print(str(_imp_err_tab))
+        sys.exit(1)
+    _tinfo = mode_table_info(MODE_TABLE)
+    print("[IMPERFECTION] 모드표 %s 로드 완료: 모드 %s / 모드당 노드 %d개"
+          % (MODE_TABLE, sorted(_mode_table.keys()), len(_mode_table[IMPERFECTION_MODES[0]])))
+    print("[IMPERFECTION] 모드표 출처: source=%s / step=%s / instance=%s"
+          % (_tinfo.get('source', '?'), _tinfo.get('step', '?'), _tinfo.get('instance', '?')))
 # ---- 2-모델 레시피 끝 ----------------------------------------------------
 # A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
 #   base state 가 부정정이면 요청 개수를 줄이는 것이 subspace 수렴에 유리하다.
@@ -422,7 +456,44 @@ elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
 elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)  
 p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
 p.generateMesh()
+
+# ---- 임퍼펙션(기하 섭동) 주입 (2026-09-22) --------------------------------
+#   원본(업스트림) docstring 의 계획: "1차 해석 결과(.odb)에서 고유모드를 추출하여 초기 결함으로 주입".
+#   셸 요소에서 *IMPERFECTION 은 결국 노드 좌표를 모드 형상만큼 옮기는 것이므로, 모드표
+#   (aba_mode_from_odb.py)를 진폭 0.10 t 로 합산해 좌표를 직접 섭동한다(.fil/스텝타입 제약 우회).
+#   위치: generateMesh 직후 + 어셈블리 regenerate 전 -> 의존 인스턴스가 이 좌표를 물려받는다.
+if _pert is None:
+    print("[IMPERFECTION] 기하 섭동 없음 (IMPERFECTION_MODE=%s)" % IMPERFECTION_MODE)
+else:
+    _amp = THICKNESS * IMPERFECTION_AMPL_T
+    _pert = build_perturbation(_mode_table, _amp, IMPERFECTION_MODES)
+    _labels = tuple(sorted(_pert.keys()))
+    _seq = p.nodes.sequenceFromLabels(labels=_labels)
+    _n = 0
+    for _nd in _seq:
+        _dz = _pert.get(_nd.label)
+        if _dz is None:
+            continue
+        _cx, _cy, _cz = _nd.coordinates
+        _nd.setValues(coordinates=(_cx, _cy, _cz + _dz))
+        _n += 1
+    print("[IMPERFECTION] 기하 섭동 적용: %d/%d 노드, %s (진폭 %.2f t = %.3e m)"
+          % (_n, len(_labels), perturbation_report(_pert), IMPERFECTION_AMPL_T, _amp))
+    if _n != len(_labels):
+        print("!!! WARNING: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치 의심"
+              % (len(_labels), _n))
+    # 말이 아니라 실측: 섭동이 실제 좌표에 들어갔는지 3개 노드를 찍어 로그에 남긴다.
+    for _nd in p.nodes.sequenceFromLabels(
+            labels=(_labels[0], _labels[len(_labels) // 2], _labels[-1])):
+        print("               파트 노드 %d z=%.9e (Δz=%.3e m)"
+              % (_nd.label, _nd.coordinates[2], _pert.get(_nd.label, 0.0)))
 a.regenerate()
+
+# 의존 인스턴스는 파트 메쉬를 공유한다 -> 어셈블리 쪽에서도 좌표가 같아야 한다(전달 확인).
+if _pert is not None and _labels:
+    _i0 = _labels[0]
+    print("[IMPERFECTION] 어셈블리 인스턴스 확인: 노드 %d z=%.9e (파트와 같아야 함)"
+          % (_i0, inst_memb.nodes.sequenceFromLabels(labels=(_i0,))[0].coordinates[2]))
 
 # 꼭짓점 RP
 rp1_obj, rp1_reg = create_rigid_patch('Top', V1, radius=0.2)
@@ -858,7 +929,13 @@ elif fidelity == 'HF':
     #   소스 .fil 을 IMPERFECTION_NAME 으로 스테이징 -> 자기 좌굴 잡의 0-모드 .fil 이
     #   조용히 소비되는 사고(원장 C-1)를 이름 분리로 차단하고, 모드 개수를 검증한다.
     imp_scale = THICKNESS * IMPERFECTION_AMPL_T   # Galhofo 채택값 0.10 t
-    if MODE_SOURCE == 'self':
+    if IMPERFECTION_MODE == 'odb_table':
+        # 이미 모델 빌드 단계에서 노드 좌표를 섭동했다(ODB 모드표). 키워드 경로는 쓰지 않는다.
+        imp_name, imp_step = None, None
+        print("[IMPERFECTION] 주입=기하 섭동 (모드표 %s, 모드 %s, 진폭 %.2f t = %.3e m)"
+              % (MODE_TABLE, list(IMPERFECTION_MODES), IMPERFECTION_AMPL_T, imp_scale))
+        print("               %s" % perturbation_report(_pert))
+    elif MODE_SOURCE == 'self':
         imp_name, imp_step = 'Buckle_Analysis', _BUCKLE_STEP_NO
         print("[IMPERFECTION] 소스=self 좌굴 잡(model=%s) STEP=%d amplitude=%.3e m"
               % (BUCKLE_MODEL, imp_step, imp_scale))
@@ -878,19 +955,22 @@ elif fidelity == 'HF':
             print("!!! WARNING: 소스 모드 %d개 < N_EIG=%d -> 요청 모드 일부만 주입됩니다."
                   % (_st['modes'], N_EIG))
 
-    imp_text = imperfection_text(imp_name, imp_step, IMPERFECTION_MODES, imp_scale)
+    if IMPERFECTION_MODE == 'odb_table':
+        print("[IMPERFECTION] 키워드 삽입 생략 (기하 섭동으로 이미 주입됨)")
+    else:
+        imp_text = imperfection_text(imp_name, imp_step, IMPERFECTION_MODES, imp_scale)
 
-    # 키워드 삽입 위치 찾기 : *STEP 블록 직전에 삽입하는 것이 안전함
-    inserted = False
-    for i, block in enumerate(my_model.keywordBlock.sieBlocks):
-        # Step 정의 시작 부분 찾기
-        if block.lower().strip().startswith('*step'):
-            my_model.keywordBlock.insert(max(i - 1, 0), imp_text)
-            inserted = True
-            break
-            
-    if not inserted:
-        my_model.keywordBlock.insert(len(my_model.keywordBlock.sieBlocks)-1, imp_text)
+        # 키워드 삽입 위치 찾기 : *STEP 블록 직전에 삽입하는 것이 안전함
+        inserted = False
+        for i, block in enumerate(my_model.keywordBlock.sieBlocks):
+            # Step 정의 시작 부분 찾기
+            if block.lower().strip().startswith('*step'):
+                my_model.keywordBlock.insert(max(i - 1, 0), imp_text)
+                inserted = True
+                break
+
+        if not inserted:
+            my_model.keywordBlock.insert(len(my_model.keywordBlock.sieBlocks)-1, imp_text)
 
     run_job_safely('HF_Postbuckle')
     

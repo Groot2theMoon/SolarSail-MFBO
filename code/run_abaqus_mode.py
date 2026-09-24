@@ -1,14 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""클램프 없는 모델에서 '좌굴모드만' 추출하는 전용 스크립트 (2026-09-22)
+"""클램프 없는 모델에서 '고유모드'를 추출해 .fil 로 넘기는 전용 스크립트 (2026-09-22)
 
 목적 — 2-모델 레시피의 '모드 소스'
     run_abaqus.py -- HF 는 클램프가 있는 모델이라 선형 좌굴 스펙트럼을 주지 못한다
     (실측: 시스템행렬 음수 고유값 598~2897개 / CONVERGED=0 / EIGENVALUES CANNOT BE FOUND).
     그래서 모드는 '클램프 없는' 이 모델에서 뽑아 .fil 로 넘긴다(Galhofo2022 의 2-모델 구조).
 
+    [중요, 2026-09-22 실측] '*BUCKLE' 스텝은 .fil 출력이 금지된다:
+      ClampFree_Buckle.dat:7025 -> "***WARNING: FILE OUTPUT IS NOT AVAILABLE FOR BUCKLING ANALYSIS"
+    즉 좌굴 스텝에 *NODE FILE 을 넣어 모드를 .fil 로 보내는 경로는 구조적으로 막혀 있다.
+    그래서 기본 모드 스텝은 '*FREQUENCY'(같은 base state 위의 주파수 추출, .fil 허용)다.
+    λ(좌굴 고유치) 비교가 필요하면 MODE_STEP_TYPE='buckle' 로 바꾼다(그때는 .dat 의 MODE NO 표를 읽는다).
+
 run_abaqus_cable.py 와 다른 점
-    1) 좌굴모드 추출만 한다 — 포스트버클링/LF/HF 잡을 돌리지 않으므로 라이선스 소모가 최소다.
+    1) 모드 추출만 한다 — 포스트버클링/LF/HF 잡을 돌리지 않으므로 라이선스 소모가 최소다.
     2) 베이스 스테이트 파라미터를 HF 와 정렬한다(아래 '정렬' 주석 참조):
          코너 당김 DISP_GLOBAL = 5e-5 m / SIGMA0 = 500 Pa / 안정화 = 2e-4
        -> 모드 소스와 HF 가 '클램프 유무' 만 다른 비교가 된다(교란 제거).
@@ -17,7 +23,7 @@ run_abaqus_cable.py 와 다른 점
        (이름 분리 -> 자기 좌굴 잡의 0-모드 .fil 이 조용히 소비되는 사고를 차단, 원장 C-1).
     4) 메쉬/형상/BC/프리텐션 정의 줄은 run_abaqus_new.py(HF)·run_abaqus_buckle.py 와
        '문자 그대로' 같아야 한다 -> check_model_consistency.py 가 제출 전에 정적으로 검사한다.
-       (좌굴모드는 HF 와 같은 노드 라벨에 정의되어야 *IMPERFECTION 으로 이식된다.)
+       (모드는 HF 와 같은 노드 라벨에 정의되어야 *IMPERFECTION 으로 이식된다.)
 
 실행
     abaqus cae noGUI=run_abaqus_mode.py
@@ -189,12 +195,22 @@ DISP_GLOBAL = 1e-7   # = 5e-5 m
 SIGMA0 = 800.0                               # 초기 가짜 응력(수렴 보조) [Pa]
 MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수 (HF 정렬)
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 (케이블 런·HF 와 동일)
+<<<<<<< HEAD
 N_EIG_BUCKLE = 10                            # subspace 요청 고유값 수
 BUCKLE_VECTORS = 25                          # subspace 기저 벡터 수
 N_MODE_FILE = 4                              # .fil 에 기록할 모드 수 (*NODE FILE, LAST MODE)
 INSERT_NODE_FILE = True                      # 좌굴모드 .fil 기록을 키워드로 '명시 요청'할지.
                                              #   케이블 런(성공)에는 이 요청이 없다 -> 2026-09-22 실패
                                              #   (모드 0)의 비물리적 후보 1순위. False 래더(L1)로 검증.
+=======
+N_EIG_BUCKLE = 100                           # subspace 요청 고유값 수
+BUCKLE_VECTORS = 250                         # subspace 기저 벡터 수
+MODE_FREQ_NUM_EIGEN = 10                     # 주파수 스텝 요청 모드 수 (업스트림 원본과 동일)
+N_MODE_FILE = 4                              # ODB/모드표에서 뽑을 모드 수
+INSERT_NODE_FILE = False                     # *NODE FILE 요청은 *FREQUENCY 전용이다.
+                                             #   *BUCKLE 은 .fil 출력 자체가 금지(실측 7025) -> 넣어도 no-op.
+                                             #   (MODE_STEP_TYPE='frequency' 로 바꿀 때만 True 로 올린다)
+>>>>>>> 325b8b6130b53f6fc19d7e2f4e16060232a4e342
 JOB_NAME = 'ClampFree_Buckle'
 BUCKLE_STEP_NO = 2                           # 이 모델의 스텝 순서: 1=GlobalTension 2=Buckle
 
@@ -371,27 +387,61 @@ my_model.Stress(
     sigma12=0.0, sigma13=0.0, sigma23=0.0
 )
 
-# Step 2: Buckle (모드 추출)
-if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
-my_model.BuckleStep(
-    name='Step-Buckle',
-    previous='Step-GlobalTension',
-    numEigen=N_EIG_BUCKLE,
-    eigensolver=SUBSPACE,
-    vectors=BUCKLE_VECTORS,
-    maxIterations=5000
-)
-my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
-    stepName='Step-Buckle', u1=PERTURBATION * cos_val, u2=-PERTURBATION * sin_val
-)
-my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
-    stepName='Step-Buckle', u1=-PERTURBATION * cos_val, u2=-PERTURBATION * sin_val
-)
-my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
+# Step 2: 모드 추출 스텝
+#   실측(ClampFree_Buckle.dat:7025): '*BUCKLE' 스텝은 .fil 출력이 금지된다
+#     "***WARNING: FILE OUTPUT IS NOT AVAILABLE FOR BUCKLING ANALYSIS"
+#   -> *BUCKLE 로 찾은 좌굴모드는 .fil 에 넣을 수 없다(실측: ClampFree_Buckle.dat:7025
+#      "FILE OUTPUT IS NOT AVAILABLE FOR BUCKLING ANALYSIS").
+#      따라서 좌굴모드 추출은 **ODB 경로**로 한다(모드 프레임은 ODB 에 항상 기록된다):
+#        abaqus python aba_mode_from_odb.py <job>.odb <step> modes_ClampFree_Buckle.txt 4
+#      HF(run_abaqus.py)는 IMPERFECTION_MODE='odb_table' 로 그 표를 노드 좌표 섭동으로 주입한다.
+MODE_STEP_TYPE = 'buckle'   # [기본/정본] 'buckle' = 선형 좌굴해석(*BUCKLE)으로 좌굴모드 추출
+                            #   -> 모드는 ODB 에만 기록된다(*BUCKLE 은 .fil 출력 금지, 실측).
+                            #   'frequency' = 진동 고유모드(*FREQUENCY). .fil 이 기록되지만
+                            #   좌굴모드가 아니라 물리적으로 다른 모드다 -> 2026-09-22 사용자 지시로 기본에서 뺐다.
+if MODE_STEP_TYPE not in ('frequency', 'buckle'):
+    raise RuntimeError("MODE_STEP_TYPE 은 'frequency' 또는 'buckle' 여야 합니다 (현재 %r)"
+                       % (MODE_STEP_TYPE,))
+#   *BUCKLE 은 .fil 출력이 금지되므로 INSERT_NODE_FILE=True 는 조용한 no-op 이 된다 -> 즉시 중단.
+if MODE_STEP_TYPE == 'buckle' and INSERT_NODE_FILE:
+    raise RuntimeError("MODE_STEP_TYPE='buckle' 에서 INSERT_NODE_FILE=True 는 무효다"
+                       "(*BUCKLE 스텝은 .fil 출력 금지). 좌굴모드는 ODB 에서 꺼낸다.")
+MODE_STEP_NAME = 'Step-Mode' if MODE_STEP_TYPE == 'frequency' else 'Step-Buckle'
+if MODE_STEP_NAME in my_model.steps:
+    del my_model.steps[MODE_STEP_NAME]
+if MODE_STEP_TYPE == 'frequency':
+    # 업스트림 원본과 같은 설정(numEigen=10, LANCZOS). 원본 주석 그대로:
+    #   "BuckleStep을 사용하는 것이 정석이고 옳으나, 매우 얇은 solar-sail 자체의 불안정성에 의해
+    #    negative eigenvalue만 찾는 경우가 대부분이라, mfbo 적용을 위해 Abaqus FrequencyStep으로 대체."
+    # CAE FrequencyStep 은 vectors/maxIterations 를 받지 않는 형태가 원본에서 검증됐다.
+    my_model.FrequencyStep(
+        name=MODE_STEP_NAME,
+        previous='Step-GlobalTension',
+        numEigen=MODE_FREQ_NUM_EIGEN,
+        eigensolver=LANCZOS
+    )
+else:
+    my_model.BuckleStep(
+        name=MODE_STEP_NAME,
+        previous='Step-GlobalTension',
+        numEigen=N_EIG_BUCKLE,
+        eigensolver=SUBSPACE,
+        vectors=BUCKLE_VECTORS,
+        maxIterations=5000
+    )
+    # 좌굴 스텝에만 있는 '하중 패턴'(섭동) -> λ 를 그 패턴 기준으로 얻는다.
+    # (주파수 추출에는 하중 패턴 개념이 없으므로 이 섭동을 주지 않는다)
+    my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
+        stepName=MODE_STEP_NAME, u1=PERTURBATION * cos_val, u2=-PERTURBATION * sin_val
+    )
+    my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
+        stepName=MODE_STEP_NAME, u1=-PERTURBATION * cos_val, u2=-PERTURBATION * sin_val
+    )
+my_model.boundaryConditions['BC_Stabilize_Z'].deactivate(MODE_STEP_NAME)
 a.Set(name='All_Edges', edges=inst_memb.edges)
 my_model.DisplacementBC(
     name='BC_Edges_Only_Z',
-    createStepName='Step-Buckle',
+    createStepName=MODE_STEP_NAME,
     region=a.sets['All_Edges'],
     u3=SET
 )
@@ -424,8 +474,8 @@ else:
 # 8. 실행
 # -------------------------------------------------------------
 print("=" * 74)
-print("모드 소스 런: %s  (코너 당김 %.3e m / SIGMA0 %.1f Pa / 안정화 %.4f)"
-      % (JOB_NAME, DISP_GLOBAL, SIGMA0, MODE_STABILIZATION))
+print("모드 소스 런: %s  (스텝=%s/%s, 코너 당김 %.3e m / SIGMA0 %.1f Pa / 안정화 %.4f)"
+      % (JOB_NAME, MODE_STEP_TYPE, MODE_STEP_NAME, DISP_GLOBAL, SIGMA0, MODE_STABILIZATION))
 print("  모델: 클램프 없음 / 케이블 3개 / 꼭짓점 앵커 / 두 아래 모서리 구동 (논문 좌굴 모델 구성)")
 print("=" * 74)
 
@@ -447,18 +497,24 @@ except Exception as _e:
 n_modes = count_modes(JOB_NAME + '.dat', JOB_NAME + '.msg')
 print("=" * 74)
 if not ok or n_modes <= 0:
-    print("RESULT:MODE_FAIL — 모드 %d개 (job_ok=%s)." % (n_modes, ok))
-    print("  이 런이 실패했다는 것은 '클램프가 있어서 실패했다'는 설명이 틀렸다는 뜻이다")
-    print("  (모드 소스에는 클램프가 없고 나머지 base state 값은 HF 와 같다). 1줄씩 바꿔 래더로 좁힌다:")
-    print("    L1  INSERT_NODE_FILE = False          # 비물리적 요인 제거(*NODE FILE 명시 요청)")
-    print("    L2  PRETENSION_SCALE = 3.6            # 코너 당김 1.8e-5 (케이블과 같은 인장)")
-    print("    L3  SIGMA0 = 700.0 / MODE_STABILIZATION = 0.0005")
-    print("  라이선스 0: 위 [DIAG] 줄에서 'USER INPUT PROCESSING' 개수와")
-    print("    'misplaced' / 'NOT A VALID' 유무(= 키워드 위치 문제인지)를 먼저 확인한다.")
+    print("RESULT:MODE_FAIL — 모드 %d개 (job_ok=%s, 스텝=%s)." % (n_modes, ok, MODE_STEP_TYPE))
+    print("  래더(1줄씩, 1회 ~61초):")
+    print("    L1  MODE_STEP_TYPE='frequency' (기본값) — .fil 출력이 허용되는 유일한 스텝")
+    print("    L2  SIGMA0 = 700.0 + MODE_STABILIZATION = 0.0005   (수치 보조, 더 보수적)")
+    print("    L3  PRETENSION_SCALE = 3.6   (코너 당김 1.8e-5 = 케이블 런과 같은 인장)")
+    print("    L4  N_EIG_BUCKLE = 200 + BUCKLE_VECTORS = 500   (요청 수 > 음수 고유값 수)")
+    print("  라이선스 0: 위 [DIAG] 의 '음수 고유값 N개 vs 요청 M개' 판정을 먼저 본다.")
     sys.exit(1)
 
-print("RESULT:MODE_OK — 모드 %d개 추출. 파일: %s" % (n_modes, os.path.abspath(JOB_NAME + '.fil')))
-print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>")
-print("  (run_abaqus.py 는 이 .fil 을 IMPERFECTION_NAME=%s 로 스테이징해 주입한다)"
-      % 'ClampFree_Buckle')   # run_abaqus.py 의 IMPERFECTION_NAME 과 같아야 한다
+print("RESULT:MODE_OK — 좌굴모드 %d개 계산. ODB=%s" % (n_modes, os.path.abspath(JOB_NAME + '.odb')))
+print("  스텝=%s(%s) / *NODE FILE 요청=%s" % (MODE_STEP_TYPE, MODE_STEP_NAME, INSERT_NODE_FILE))
+if MODE_STEP_TYPE == 'buckle':
+    print("  *BUCKLE 은 .fil 출력 금지(실측 7025) -> 모드는 ODB 에서 꺼낸다(해석 없음, 토큰만):")
+    print("    abaqus python aba_mode_from_odb.py %s %s modes_ClampFree_Buckle.txt %d"
+          % (JOB_NAME + '.odb', MODE_STEP_NAME, N_MODE_FILE))
+    print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>"
+          "   (기본 IMPERFECTION_MODE='odb_table' 가 위 모드표를 섭동으로 주입)")
+else:
+    print("  *FREQUENCY 는 .fil 기록이 허용된다 -> 스테이징 경로(IMPERFECTION_MODE='file')도 가능")
+    print("  다음 단계: abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>")
 print("=" * 74)
