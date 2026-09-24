@@ -156,10 +156,20 @@ def print_job_diag(job_name):
         if neg is None:
             print("[DIAG:%s] 'SYSTEM MATRIX HAS ... NEGATIVE EIGENVALUES' 를 못 찾음" % job_name)
         else:
-            print("[DIAG:%s] 음수 고유값 %d개 vs 요청 %d개 -> %s"
-                  % (job_name, neg, N_EIG_BUCKLE,
-                     'OK (창에 양수 모드가 들어온다)' if N_EIG_BUCKLE > neg
-                     else '!!! 요청 수를 늘려야 한다 (N_EIG_BUCKLE <= 음수 개수)'))
+            print("[DIAG:%s] base state 음수 고유값 %d개 vs 요청 %d개" % (job_name, neg, N_EIG_BUCKLE))
+            print("[DIAG:%s]   -> %s" % (job_name,
+                  '요청 수가 충분하다(창 안에 양수 모드가 들어온다)'
+                  if N_EIG_BUCKLE > neg else
+                  '요청 수 부족 (N_EIG_BUCKLE <= 음수 개수) — 래더 L4'))
+            if neg > 0:
+                print("[DIAG:%s]   !! 음수 고유값 %d개 = base state 자체가 이미 좌굴/압축 상태다."
+                      % (job_name, neg))
+                print("[DIAG:%s]      (Abaqus 오류문의 'INSTABILITIES IN THE BASE STATE' 와 같은 진단)"
+                      % job_name)
+                print("[DIAG:%s]      창을 넓히는 것만으로는 안 풀린다 — 4회차 실측: 88개 / 양수 모드 0개."
+                      % job_name)
+                print("[DIAG:%s]      위 [R-13] 의 '면내 압축(<0) 면적비' 를 먼저 확인해라(프리텐션 부족 여부)."
+                      % job_name)
 
 
 # =====================================================================
@@ -210,7 +220,14 @@ DISP_GLOBAL = 1.0e-3         # 아래 두 꼭짓점 당김 [m]. 논문 프리텐
 DISP_TOP_OVER_CORNER = 1.4142135623
 SIGMA0 = 800.0                               # 초기 가짜 응력(수렴 보조) [Pa] — 프리텐션의 대체물이 아니다
 MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
-PERTURBATION = 0.01                          # 좌굴 스텝 섭동 (케이블 런·HF 와 동일)
+PERTURBATION = 0.01                          # 좌굴 스텝 섭동 크기 [m] (케이블 런·HF 와 동일)
+PATTERN_SIGN = -1.0                          # 좌굴 '하중 패턴'의 부호 (2026-09-24 실측 근거)
+                                             #   1.0 = 바깥으로 더 당김 / -1.0 = 안쪽(당김을 푸는 방향)
+                                             #   1~4회차는 모두 패턴이 '바깥 당김'이었고 스펙트럼이 전부 λ<0
+                                             #   이었다(양수 모드 0~4개, CONVERGED=0, EIGENVALUES CANNOT BE FOUND).
+                                             #   좌굴 고유문제는 패턴에 선형이므로(선형 섭동 스텝) 부호를 뒤집으면
+                                             #   λ -> -λ 로 스펙트럼이 정확히 거울상이 된다 -> 양수 모드가 지배적이
+                                             #   되어 subspace 가 수렴할 창이 생긴다.
 N_EIG_BUCKLE = 100                           # [2026-09-24 실측 근거] subspace 요청 고유값 수
                                              #   규칙: '요청 수 > base state 음수 고유값 수' 여야 양수 좌굴모드가 창에 들어온다.
                                              #   실측: 케이블 런(음수 52)에서 100 요청 -> CONVERGED=4 (성공).
@@ -426,19 +443,28 @@ my_model.BuckleStep(
     vectors=BUCKLE_VECTORS,
     maxIterations=5000
 )
-# 좌굴 스텝의 '하중 패턴': 꼭짓점 당김을 PERTURBATION 만큼 키운다(λ 를 이 패턴 기준으로 얻는다).
+# 좌굴 스텝의 '하중 패턴': 꼭짓점 당김을 PERTURBATION * PATTERN_SIGN 만큼 준다(λ 를 이 패턴 기준으로 얻는다).
+#   4회차 실측: 패턴이 '바깥 당김'(+1)이면 스펙트럼이 전부 λ<0 (양수 모드 0개) 이고 subspace 가 수렴하지 못했다.
+#   좌굴 하중계수는 패턴에 선형이므로 부호를 뒤집으면 λ -> -λ (스펙트럼이 거울상, 양수 모드가 지배적으로 온다).
+#   주의: 여기서 뒤집는 것은 '좌굴 섭동 패턴'뿐이다. 베이스스테이트 프리텐션(Step-GlobalTension)은 그대로 바깥 당김이다.
 #   논문 좌굴 BC = 정점 u_y=1e-3 m ↑ + 아래 두 꼭짓점 성분 (5e-4,-5e-4) m -> 방향비 √2 를 그대로 쓴다.
 #   (패턴이 비대칭이면 좌굴 스펙트럼이 뭉개진다 — 3회차 실측의 교훈)
 my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
-    stepName=MODE_STEP_NAME, u1=PERTURBATION * cos_val, u2=-PERTURBATION * sin_val
+    stepName=MODE_STEP_NAME,
+    u1=PATTERN_SIGN * PERTURBATION * cos_val,
+    u2=-PATTERN_SIGN * PERTURBATION * sin_val
 )
 my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
-    stepName=MODE_STEP_NAME, u1=-PERTURBATION * cos_val, u2=-PERTURBATION * sin_val
+    stepName=MODE_STEP_NAME,
+    u1=-PATTERN_SIGN * PERTURBATION * cos_val,
+    u2=-PATTERN_SIGN * PERTURBATION * sin_val
 )
 if PRETENSION_MODE == 'paper3':
     my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
-        stepName=MODE_STEP_NAME, u1=0.0, u2=PERTURBATION * DISP_TOP_OVER_CORNER
+        stepName=MODE_STEP_NAME, u1=0.0, u2=PATTERN_SIGN * PERTURBATION * DISP_TOP_OVER_CORNER
     )
+print("[MODE] 좌굴 하중 패턴 부호 PATTERN_SIGN=%+0.1f (%s) — 크기 %g m"
+      % (PATTERN_SIGN, '안쪽(당김을 푸는 방향)' if PATTERN_SIGN < 0 else '바깥 당김', PERTURBATION))
 my_model.boundaryConditions['BC_Stabilize_Z'].deactivate(MODE_STEP_NAME)
 a.Set(name='All_Edges', edges=inst_memb.edges)
 my_model.DisplacementBC(
@@ -541,14 +567,17 @@ print("=" * 74)
 if not ok or n_modes <= 0:
     print("RESULT:MODE_FAIL — ODB 모드 %d개 / .dat 고유값 %d개 (job_ok=%s)." % (n_modes, n_dat, ok))
     print("  원인 판정 순서(라이선스 0):")
-    print("    1) 위 [DIAG] 의 '음수 고유값 N개 vs 요청 %d개' -> N >= %d 이면 요청 수 부족(래더 L4)"
-          % (N_EIG_BUCKLE, N_EIG_BUCKLE))
-    print("    2) 'THE EIGENVALUES CANNOT BE FOUND' -> base state 가 분기점을 넘었다(래더 L2/L3)")
-    print("  래더(1줄씩, 1회 ~61초):")
-    print("    L2  SIGMA0 = 700.0 + MODE_STABILIZATION = 0.0005  (사전장력 상승 -> 음수 고유값 감소, 케이블 런 값)")
-    print("    L3  DISP_GLOBAL 을 base_state_probe 의 '목표 7000 Pa 대비 배율'로 선형 보정(응력 ∝ 변위)")
-    print("    L5  PRETENSION_MODE='corner2' 로 되돌려 3회차 조건과 교란 분리 비교")
+    print("    1) 위 [DIAG] 의 'base state 음수 고유값 N개' -> N 이 크면 base state 가 이미 좌굴/압축 상태")
+    print("       (Abaqus 오류문 'INSTABILITIES IN THE BASE STATE' 와 같은 진단). 이때는 요청 수를 늘려도 안 풀린다.")
+    print("       -> 위 [R-13] 의 '면내 압축(<0) 면적비' 로 프리텐션을 키워 압축 영역을 없앤다(래더 L7).")
+    print("    2) ITERATION 2 이후에 양수 고유값이 하나도 안 보이면 하중 패턴 부호가 반대다(PATTERN_SIGN).")
+    print("       좌굴 하중계수는 패턴에 선형이므로 부호를 뒤집으면 λ -> -λ 로 스펙트럼이 거울상이 된다.")
+    print("  래더(1줄씩, 1회 ~2분):")
+    print("    L1  PATTERN_SIGN = +1.0  (4회차 조건으로 되돌리기 — 대조군)")
+    print("    L2  SIGMA0 = 700.0 + MODE_STABILIZATION = 0.0005  (케이블 런 값)")
+    print("    L3  PRETENSION_MODE='corner2' 로 되돌려 3회차 조건과 교란 분리 비교")
     print("    L4  N_EIG_BUCKLE = 200 + BUCKLE_VECTORS = 500  (요청 수 > 음수 고유값 수)")
+    print("    L7  DISP_GLOBAL 을 base_state_probe 배율로 선형 보정해 '면내 압축 면적비' 를 0 근처로")
     sys.exit(1)
 
 print("RESULT:MODE_OK — 좌굴모드 %d개. ODB=%s" % (n_modes, os.path.abspath(JOB_NAME + '.odb')))
