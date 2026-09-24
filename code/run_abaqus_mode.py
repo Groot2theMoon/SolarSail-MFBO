@@ -195,6 +195,10 @@ sin_val = float(np.sin(angle_rad))
 #   사전장력을 올렸다: DISP_GLOBAL 5e-5 -> 1e-7 m, SIGMA0 500 -> 800 Pa, 안정화 2e-4 -> 5e-4.
 #   이 값들이 base state 의 음수 고유값 개수를 바꾸므로, 실행 로그의 [DIAG] 판정을 함께 본다.
 #   (논문에는 '클램프 유무' 외에 파라미터도 달라진다는 사실을 명시할 것.)
+# CHECKER-DIVERGENCE: DISP_GLOBAL, SIGMA0, PRETENSION_SCALE, stabilizationMagnitude
+#   HF(run_abaqus.py)와 이 모드 소스는 base state 파라미터가 다르다(위 사용자 튜닝).
+#   메쉬/형상/요소/재료는 동일하므로 모드 노드 라벨 매핑은 그대로 성립한다.
+#   논문에는 '클램프 유무' 외에 이 파라미터 차이도 함께 명시할 것.
 DISP_GLOBAL = 1e-7                           # 코너 당김 [m] (HF 정렬값 5e-5 의 1/500)
 SIGMA0 = 800.0                               # 초기 가짜 응력(수렴 보조) [Pa]
 MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
@@ -336,7 +340,7 @@ my_model.Tie(name='Tie_Left', main=a.sets['RP_Left_Set'], secondary=start_c3, po
 # Step 1: Global Tension (= 좌굴의 base state)
 my_model.StaticStep(
     name='Step-GlobalTension', previous='Initial', nlgeom=ON,
-    stabilizationMagnitude=0.0002,
+    stabilizationMagnitude=MODE_STABILIZATION,
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
     continueDampingFactors=False,
     adaptiveDampingRatio=0.05,
@@ -421,6 +425,28 @@ my_model.fieldOutputRequests['F-Output-1'].setValues(
     variables=('S', 'E', 'U', 'RF', 'COORD', 'EVOL'),
     frequency=1
 )
+
+# --- 스텝 순서 가드: HF 는 MODE_SOURCE_STEP 번째 스텝의 프레임을 모드 소스로 읽는다 ------
+#   (2026-09-24) 이 상수가 '정의만 되고 안 쓰이던' 죽은 상수였고, 스텝 순서가 밀리면
+#   HF 가 엉뚱한 스텝의 프레임을 조용히 읽는다 -> 여기서 즉시 중단한다.
+_step_seq = [s for s in my_model.steps.keys() if s != 'Initial']
+if len(_step_seq) != BUCKLE_STEP_NO or _step_seq[BUCKLE_STEP_NO - 1] != MODE_STEP_NAME:
+    raise RuntimeError("스텝 순서 불일치: %s (기대: %s) — HF 의 MODE_SOURCE_STEP=%d 와 어긋난다."
+                       % (_step_seq, ['Step-GlobalTension', MODE_STEP_NAME], BUCKLE_STEP_NO))
+_hf_step_no = None
+try:
+    with open(os.path.join(_HERE, 'run_abaqus.py'), 'r', errors='replace') as _f:
+        for _ln in _f:
+            if _ln.lstrip().startswith('MODE_SOURCE_STEP'):
+                _hf_step_no = int(_ln.split('=', 1)[1].split('#')[0].strip())
+                break
+except Exception as _e:
+    print("[run_abaqus_mode] HF 상수 교차확인 건너뜀: %s" % _e)
+if _hf_step_no is not None and _hf_step_no != BUCKLE_STEP_NO:
+    raise RuntimeError("HF 의 MODE_SOURCE_STEP=%d <> 모드 소스의 BUCKLE_STEP_NO=%d — 모드표 스텝이 어긋난다."
+                       % (_hf_step_no, BUCKLE_STEP_NO))
+print("[run_abaqus_mode] 스텝 순서 확인: %s (BUCKLE_STEP_NO=%d, HF MODE_SOURCE_STEP=%s)"
+      % (_step_seq, BUCKLE_STEP_NO, _hf_step_no))
 
 # -------------------------------------------------------------
 # 7. (삭제) *NODE FILE 삽입 — *BUCKLE 은 .fil 출력이 금지되므로(실측 7025) 요청 자체가 무효다.

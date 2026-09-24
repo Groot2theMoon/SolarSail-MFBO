@@ -79,6 +79,31 @@ SHARED = [
 # 나머지는 전부 같아야 한다: *IMPERFECTION 은 노드 라벨로 매핑되기 때문.
 SHARED_MODE = [s for s in SHARED if 'clamp_coord' not in s]
 
+# 모드 소스와 HF 가 '선언하면' 달라져도 되는 항목 = base state/스텝 물리 파라미터.
+#   이유: 모드 소스는 좌굴모드를 얻기 위해 base state 를 안정 영역에 둘 필요가 있다(사용자 튜닝).
+#   메쉬/형상/요소/재료(SHARED 의 앞부분)는 절대 달라지면 안 된다 — 노드 라벨 매핑이 깨진다.
+#   선언은 모드 소스 안의 `# CHECKER-DIVERGENCE: <이름,...>` 주석으로만 인정한다(논문 공개 의무).
+DECLARABLE = [
+    "PRETENSION_SCALE = 10.0",
+    "DISP_GLOBAL = 0.000005 * PRETENSION_SCALE",
+    "SIGMA0 = 500.0",
+    "stabilizationMagnitude=0.0002,",
+]
+
+
+def declared_divergences(path):
+    """`# CHECKER-DIVERGENCE:` 주석에 적힌 이름들을 돌려준다(정규화)."""
+    with io.open(path, encoding='utf-8') as f:
+        txt = f.read()
+    hit = set()
+    for ln in txt.splitlines():
+        if 'CHECKER-DIVERGENCE:' in ln:
+            tail = ln.split('CHECKER-DIVERGENCE:', 1)[1]
+            for piece in tail.replace(';', ',').split(','):
+                if norm(piece):
+                    hit.add(norm(piece))
+    return hit
+
 # 좌굴 스크립트에 '있으면 안 되는' HF/LF 전용 것들 (역할 분리 검사)
 FORBIDDEN_IN_BUCKLE = [
     "Step-ClampTension",
@@ -174,14 +199,23 @@ def main():
     print("--- 모드 소스(run_abaqus_mode.py) 와 HF 의 모델 정의 일치 ---")
     print("    *IMPERFECTION 은 노드 라벨로 매핑되므로 메쉬/형상/프리텐션 정의가 같아야 한다.")
     print("    (제외: clamp_coord_* — 이 모델에는 클램프가 없다)")
+    declared = declared_divergences(MODE)
+    if declared:
+        print("    [선언된 분기] %s" % ', '.join(sorted(declared)))
     bad4 = []
     for k in SHARED_MODE:
         nk = norm(k)
         ia, ic = nk in a, nk in c
-        if not (ia and ic):
+        decl = ia and (not ic) and any(dn in nk for dn in declared)
+        if not (ia and ic) and not decl:
             bad4.append(k)
-        print("  %-4s HF=%-5s mode=%-5s  %s"
-              % ('OK' if (ia and ic) else '!!!', ia, ic, k[:60]))
+        print("  %-5s HF=%-5s mode=%-5s  %s"
+              % ('OK' if (ia and ic) else ('DIVRG' if decl else '!!!'), ia, ic, k[:60]))
+    if declared and not bad4:
+        print("    -> 프리텐션/base state 분기 %d건은 모드 소스에 선언됨(메쉬 정의는 전부 일치)."
+              % len([k for k in SHARED_MODE
+                     if norm(k) in a and norm(k) not in c
+                     and any(dn in norm(k) for dn in declared)]))
 
     print()
     print("--- 좌굴 스크립트에 HF/LF 전용이 섞여 있지 않은지 (0 이어야 정상) ---")

@@ -21,12 +21,16 @@ Flow (Simulation Logic):
          - 주름(Wrinkle) 거동을 무시하고 선형적(혹은 단순 기하 비선형) 강성을 빠르게 계산.
          - 임퍼펙션(*IMPERFECTION) 없음 -> 좌굴(Buckle) 잡도 돌리지 않는다(모드 불필요).
        [HF 모드]  (클램프 있음 + 임퍼펙션 주입 = 2-모델 레시피, 2026-09-22)
-         - 1차: 모드 소스는 '클램프 없는' 별도 모델의 좌굴 런이다(run_abaqus_cable.py 또는
-                전용 모드 스크립트). 클램프가 있는 base state 는 선형 좌굴 스펙트럼을 주지
-                못한다(실측: 음수고유값 598~2897 / CONVERGED=0 / EIGENVALUES CANNOT BE FOUND).
-         - 2차: 그 .fil 을 IMPERFECTION_NAME 으로 스테이징해 초기 결함으로 주입한다.
+         - 1차: 모드 소스는 '클램프 없는' 별도 모델에서 **선형 좌굴해석(*BUCKLE)** 으로 모드를
+                뽑는다(run_abaqus_mode.py). 클램프가 있는 base state 는 선형 좌굴 스펙트럼을
+                주지 못한다(실측: 음수고유값 598~2897 / CONVERGED=0 / EIGENVALUES CANNOT BE FOUND).
+                *BUCKLE 은 .fil 출력이 금지되므로(실측 7025) 모드는 ODB 모드 프레임에만 있다
+                -> aba_mode_from_odb.py 가 그 ODB 를 모드표(modes_ClampFree_Buckle.txt)로 만든다.
+         - 2차: 그 모드표를 노드 좌표 섭동으로 주입한다(IMPERFECTION_MODE='odb_table' = 기본).
                 aba_imperfection.py 가 모드 개수를 검증하고, 부족하면 HF 제출 전에 중단한다.
                 자기 좌굴 잡(Buckle_Analysis)은 클램프 base state 증거용으로만 유지한다.
+                (옵션 IMPERFECTION_MODE='file' = .fil 스테이징 + *IMPERFECTION, FILE=, STEP=n:
+                 사용자 원본 08d4cbc 방식. 단 좌굴모드에는 쓸 수 없다 — *BUCKLE 은 .fil 금지.)
          - 3차: 'Step-Postbuckle' 수행 (Riks/Stabilization). 주름 거동을 포함한 비선형 해석.
     4. Post-Processing:
        - 'eval_abaqus.py'를 subprocess로 호출하여 ODB에서 필요한 값(추력, 면적 등)만 추출.
