@@ -206,14 +206,19 @@ sin_val = float(np.sin(angle_rad))
 #   즉 요구 모드가 사실상 영에너지 모드로 퇴화). 논문 Galhofo2022 의 좌굴 모델은
 #   '세 꼭짓점에 prescribed displacement 로 초기 프리텐션' + 좌굴 BC(정점 u_y=1e-3 m,
 #   아래 두 꼭짓점 성분 (5e-4,-5e-4) m) -> 3중 대칭으로 세 꼭짓점을 모두 당긴다.
-# CHECKER-DIVERGENCE: DISP_GLOBAL, SIGMA0, PRETENSION_SCALE, stabilizationMagnitude
+# CHECKER-DIVERGENCE: DISP_GLOBAL, SIGMA0, PRETENSION_SCALE, stabilizationMagnitude, radius
+#   radius(=PATCH_RADIUS 0.4 vs HF 0.2)가 2026-09-24 추가됐다: 오라클 재현 실험 때문이다.
 #   HF(run_abaqus.py)와 이 모드 소스는 base state 프리텐션 정의가 다르다(모드 소스는 3꼭짓점 프리텐션).
 #   메쉬/형상/요소/재료는 동일하므로 모드 노드 라벨 매핑은 그대로 성립한다.
 #   논문에는 '클램프 유무' 외에 이 프리텐션 정의 차이도 함께 명시할 것.
-PRETENSION_MODE = 'paper3'   # 'paper3' = 논문 좌굴모델: 꼭짓점 3개(케이블 끝)를 모두 바깥으로 당김 [정본]
-                             # 'corner2' = 기존: 아래 두 모서리만 당김(비대칭, slack) -> 스펙트럼 퇴화(실측)
-DISP_GLOBAL = 5.0e-6         # 꼭짓점 당김 [m] — 프리텐션 크기. 2026-09-24 실측으로 정한 값.
-                             #   [2026-09-24 7회차 -> 5.0e-6] 창/기저 레버가 모두 소진되어 base state 축으로 내려왔다.
+PRETENSION_MODE = 'corner2'  # [2026-09-24 오라클 재현] 케이블 런(run_abaqus_cable.py)과 동일한 구동:
+                             #   정점(BC_Anchor_Top)은 완전 고정한 채, 아래 두 꼭짓점만 케이블 축으로 당긴다.
+                             #   성공 실적: 이 설정에서 CONVERGED=4 (양수 λ 4개).
+                             # 'paper3' = 논문 좌굴모델: 꼭짓점 3개를 모두 당김(3중 대칭).
+                             #   5·7회차 실측: 양수 2개 / 0개 -> 재현 실험 뒤 bisect 단계에서 하나씩 되돌린다.
+DISP_GLOBAL = 1.8e-5         # 꼭짓점 당김 [m] — 프리텐션 크기. [2026-09-24 오라클 재현] 케이블 런 DISP_MAG 와 동일값.
+                             #   [2026-09-24 오라클 재현 실험] 아래 '창/기저 소진' 기록은 그대로 유효하다.
+                             #     프리텐션 5.0e-6 하향은 이 재현 실험 뒤 bisect 단계로 미룬다(한 번에 한 축).
                              #     실측: 요청 100/기저 400 -> CONVERGED=0 (ITER4 에서 396개까지 추적 후 붕괴) /
                              #           요청 60/기저 120 -> CONVERGED=0 (창 부족: 필요 총개수 63 > 요청 60) /
                              #           요청 100/기저 250 -> 양수 2개 수렴 (이 배치의 최선).
@@ -234,7 +239,8 @@ DISP_GLOBAL = 5.0e-6         # 꼭짓점 당김 [m] — 프리텐션 크기. 202
                              #   주의: 이 값은 '좌굴모드를 뽑기 위한 저프리텐션'이다. HF 운용점(7000 Pa)과 다르며
                              #         그 차이는 HF/모드소스 분기로 이미 선언돼 있다(check_model_consistency.py).
 DISP_TOP_OVER_CORNER = 1.4142135623
-SIGMA0 = 800.0                               # 초기 가짜 응력(수렴 보조) [Pa] — 프리텐션의 대체물이 아니다
+SIGMA0 = 700.0                               # 초기 가짜 응력(수렴 보조) [Pa] — 프리텐션의 대체물이 아니다
+                                             #   [2026-09-24 오라클 재현] 케이블 런 값 = 700.0 (HF 는 500.0)
 MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 크기 [m] (케이블 런·HF 와 동일)
 PATTERN_SIGN = 1.0                           # 좌굴 '하중 패턴'의 부호: 1.0 = 바깥으로 더 당김 (오라클과 동일)
@@ -273,6 +279,11 @@ BUCKLE_VECTORS = 250                         # 기저 벡터(요청 수 x 2.5) �
                                              #              기저 400 -> CONVERGED=0 (ITER4 396개까지 추적 후 붕괴).
                                              #   -> '기저를 키우면 붕괴가 지연된다'는 가설은 400 실측으로 반증됐다.
 N_MODES = 4                                  # HF 에 주입할 모드 수(= ODB 모드 프레임에서 뽑는 개수)
+PATCH_RADIUS = 0.4                           # 꼭짓점 강체패치 반경 [m]. 오라클 값 = 0.4 (HF 는 0.2).
+                                             #   [2026-09-24 오라클 재현] 성공한 케이블 런은 0.4 를 쓴다
+                                             #   (run_abaqus_cable.py:144 create_rigid_patch 기본값).
+                                             #   HF 와의 차이는 CHECKER-DIVERGENCE 에 'radius' 로 선언했다:
+                                             #   coupling 은 기존 노드 집합에 걸리므로 노드 라벨 매핑은 깨지지 않는다.
 MODE_STEP_NAME = 'Step-Buckle'               # 이 모델의 2번째 스텝(HF 의 MODE_SOURCE_STEP=2 와 짝)
 JOB_NAME = 'ClampFree_Buckle'
 MODE_TABLE = 'modes_%s.txt' % JOB_NAME       # HF 는 ..\modes_ClampFree_Buckle.txt 를 읽는다
@@ -332,7 +343,7 @@ a.DatumCsysByDefault(CARTESIAN)
 inst_memb = a.Instance(name=INSTANCE_NAME, part=p, dependent=ON)
 
 
-def create_rigid_patch(name, coord, radius=0.2):
+def create_rigid_patch(name, coord, radius=PATCH_RADIUS):
     """강체 패치 = 기존 노드에 Coupling(KINEMATIC). face partition 을 하지 않으므로
     메쉬(노드 좌표/라벨)를 바꾸지 않는다 -> HF 와 노드 라벨이 일치한다."""
     rp = a.ReferencePoint(point=coord)
@@ -381,9 +392,9 @@ p.generateMesh()
 a.regenerate()
 
 # 2. 꼭짓점 강체 패치 3개 (클램프 패치는 만들지 않는다 — 이 모델의 요점)
-rp1_obj, rp1_reg = create_rigid_patch('Top', V1, radius=0.2)
-rp2_obj, rp2_reg = create_rigid_patch('Right', V2, radius=0.2)
-rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
+rp1_obj, rp1_reg = create_rigid_patch('Top', V1)
+rp2_obj, rp2_reg = create_rigid_patch('Right', V2)
+rp3_obj, rp3_reg = create_rigid_patch('Left', V3)
 
 # 3. 케이블 연결: 정점은 위로, 두 아래 모서리는 각 케이블 축(28.6도) 방향
 start_c1, end_c1 = connect_cable('Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))
