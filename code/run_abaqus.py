@@ -327,6 +327,40 @@ if IMPERFECTION_MODE == 'odb_table':
           % (MODE_TABLE, sorted(_mode_table.keys()), len(_mode_table[IMPERFECTION_MODES[0]])))
     print("[IMPERFECTION] 모드표 출처: source=%s / step=%s / instance=%s"
           % (_tinfo.get('source', '?'), _tinfo.get('step', '?'), _tinfo.get('instance', '?')))
+    # ---- 모드표 재사용 게이트 (2026-09-24) ------------------------------------------
+    # 좌굴모드는 클램프 없는 모델에서 한 번만 계산해 재사용한다(케이스 파라미터 x_c/d_c 는
+    # 클램프 부착위치와 당김비율만 바꾸므로 클램프-프리 모델의 모드에 영향이 없다).
+    # 다만 모드 소스의 상수(프리텐션/패치/안정화 등)를 바꾼 뒤 다시 뽑지 않으면 '다른 형상의
+    # 모드'를 조용히 주입하게 된다 -> 표에 박힌 지문과 현재 소스 지문을 대조해 기록한다.
+    # 판정만 하고 HF 는 계속 진행한다(차단하지 않음). 콘솔 로그가 사라지는 환경도 있으므로
+    # 판정 결과를 mode_table_check.txt 파일로도 남긴다.
+    try:
+        from aba_imperfection import model_fingerprint, table_fingerprint
+        _src_mode = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 'run_abaqus_mode.py')
+        _fp_now = model_fingerprint(_src_mode)[0]
+        _fp_tbl = table_fingerprint(MODE_TABLE)
+        if _fp_tbl is None:
+            _fp_msg = ("[MODE-TABLE] 지문 없음(표가 구버전) -> 지금 표가 이 모드 소스에서 나온 "
+                       "것인지 확인할 수 없다. 의심되면 다시 뽑을 것: "
+                       "abaqus cae noGUI=run_abaqus_mode.py")
+        elif _fp_now == _fp_tbl:
+            _fp_msg = ("[MODE-TABLE] 지문 일치 OK sha1=%s -> 모드 소스가 표 생성 이후 바뀌지 "
+                       "않았다(재사용 안전)" % _fp_tbl)
+        else:
+            _fp_msg = ("[MODE-TABLE] !! STALE: 지문 불일치(현재 소스 %s / 표 %s) -> 모드 소스가 "
+                       "바뀌었다. 좌굴모드를 다시 뽑아야 한다: "
+                       "abaqus cae noGUI=run_abaqus_mode.py" % (_fp_now, _fp_tbl))
+        print(_fp_msg)
+        try:
+            with open('mode_table_check.txt', 'w') as _fpc:
+                _fpc.write('%s\ntable=%s\nsource_sha1=%s\ntable_sha1=%s\ntime=%s\n'
+                           % (_fp_msg, os.path.abspath(MODE_TABLE), _fp_now, _fp_tbl,
+                              time.strftime('%Y-%m-%d %H:%M:%S')))
+        except Exception:
+            pass
+    except Exception:
+        pass
 # ---- 2-모델 레시피 끝 ----------------------------------------------------
 # A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
 #   base state 가 부정정이면 요청 개수를 줄이는 것이 subspace 수렴에 유리하다.

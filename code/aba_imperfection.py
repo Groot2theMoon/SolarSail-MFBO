@@ -30,6 +30,7 @@ abaqus 모듈을 쓰지 않는다(stdlib only) -> 하네스에서 단위시험 �
 
 from __future__ import print_function
 
+import hashlib
 import os
 import re
 import shutil
@@ -42,6 +43,62 @@ except Exception:                                        # pragma: no cover
     parse_eigenvalues = None
 
 _ROW_RE = re.compile(r"^\s*(\d{1,6})\s+([-+0-9.][0-9eEdD+\-. ]*)\s*$")
+
+# ---- 모드표 지문 (2026-09-24) ----------------------------------------------------
+# 좌굴모드는 '클램프 없는' 모델에서 한 번만 계산해 두고 HF 가 재사용한다. 그런데 모드 소스의
+# 상수(프리텐션/패치/안정화 등)를 바꾼 뒤 다시 뽑지 않으면 HF 는 '다른 형상에서 나온 모드'를
+# 조용히 주입하게 된다. 그래서 표 헤더에 모드 소스의 지문을 박아 두고 HF 가 대조한다.
+FINGERPRINT_PREFIX = '# FINGERPRINT'
+FINGERPRINT_KEYS = ('BASE', 'HEIGHT', 'THK', 'SIGMA0', 'PRETENSION_MODE', 'DISP_GLOBAL',
+                    'PATCH_RADIUS', 'MODE_STABILIZATION', 'PERTURBATION', 'PATTERN_SIGN',
+                    'N_EIG_BUCKLE', 'BUCKLE_VECTORS', 'N_MODES', 'JOB_NAME', 'MODE_STEP_NAME')
+
+
+def model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
+    """모드 소스 스크립트에서 모델/모드 정의 상수만 뽑아 sha1 지문(16자)을 만든다.
+
+    반환: (지문 or None, {상수: 값}). 소스를 못 읽거나 상수를 하나도 못 찾으면 (None, {}).
+    """
+    vals = []
+    try:
+        with open(source_path, 'r') as f:
+            for line in f.read().splitlines():
+                code = line.split('#')[0].strip()
+                for k in keys:
+                    m = re.match(r'^%s\s*=\s*(.+)$' % re.escape(k), code)
+                    if m:
+                        vals.append('%s=%s' % (k, m.group(1).strip()))
+    except Exception:
+        return None, {}
+    if not vals:
+        return None, {}
+    digest = hashlib.sha1('|'.join(vals).encode('utf-8')).hexdigest()[:16]
+    return digest, dict(v.split('=', 1) for v in vals)
+
+
+def model_fingerprint_line(source_path):
+    """모드표 헤더에 넣을 '# FINGERPRINT sha1=... src=...' 줄. 못 만들면 None."""
+    digest, _vals = model_fingerprint(source_path)
+    if not digest:
+        return None
+    return '%s sha1=%s src=%s' % (FINGERPRINT_PREFIX, digest, os.path.basename(source_path))
+
+
+def table_fingerprint(table_path):
+    """모드표 헤더에서 지문을 읽는다. 없으면 None(모드 데이터 행을 만나면 중단)."""
+    try:
+        with open(table_path, 'r') as f:
+            for line in f:
+                s = line.strip()
+                if s.startswith(FINGERPRINT_PREFIX):
+                    for tok in s.split():
+                        if tok.startswith('sha1='):
+                            return tok.split('=', 1)[1]
+                if s.startswith('MODE ') or s.upper().startswith('# MODE'):
+                    break
+    except Exception:
+        return None
+    return None
 
 
 class ImperfectionSourceError(RuntimeError):

@@ -677,8 +677,12 @@ n_modes = 0
 if ok and WRITE_MODE_TABLE:
     try:
         from aba_mode_from_odb import write_mode_table
+        from aba_imperfection import model_fingerprint_line
+        _fp_line = model_fingerprint_line(os.path.join(_HERE, 'run_abaqus_mode.py'))
         n_modes, _msgs = write_mode_table(JOB_NAME + '.odb', MODE_STEP_NAME, MODE_TABLE, N_MODES,
-                                          INSTANCE_NAME)
+                                          INSTANCE_NAME,
+                                          extra_header=[_fp_line] if _fp_line else None)
+        emit("[MODE] 재사용 지문 %s" % (_fp_line or '없음(생략)'))
     except Exception as _e:
         emit("!!! 모드표 생성 실패: %s" % _e)
         emit("    (수동 확인: abaqus python aba_mode_from_odb.py %s.odb %s %s %d %s)"

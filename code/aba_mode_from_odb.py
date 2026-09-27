@@ -47,7 +47,7 @@ def pick_mode_frames(lambdas, n_modes):
 
 
 def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_INSTANCE,
-                     verbose=True):
+                     verbose=True, extra_header=None):
     """ODB 모드 프레임에서 u3 를 뽑아 모드표를 쓴다. 반환: (쓴 모드 수, 메시지 리스트).
 
     실패를 조용히 넘기지 않고 예외로 올린다(호출측 -- run_abaqus_mode.py / CLI -- 이 판단한다).
@@ -132,6 +132,7 @@ def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_
                   "# table_modes=%d / source_frames=%s / lambdas=%s"
                   % (len(pick), [p + 1 for p in pick],
                      ['%.6e' % lam[p] for p in pick])]
+        header += list(extra_header or [])      # 예: '# FINGERPRINT sha1=...'
         with open(out_path, 'w') as f:
             f.write("\n".join(header) + "\n")
             f.write("".join(blocks))
