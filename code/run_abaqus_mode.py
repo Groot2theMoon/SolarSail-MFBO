@@ -54,48 +54,75 @@ import subprocess
 import time
 import numpy as np
 
-# ---- 로깅 (2026-09-24 실측으로 발견한 문제 대응) --------------------------------
-# 왜 필요한가: Abaqus `cae noGUI=...` 는 이 스크립트의 stdout 을 블록 버퍼링한 뒤 프로세스를
-#   flush 없이 teardown 하는 경우가 있다. 그때 print() 는 콘솔에서 통째로 사라지고, 별도
-#   프로세스로 뜬 base_state_probe 의 [R-13] 출력만 남는다(실측: 4회차 9회차 콘솔 모두 그랬다).
-#   게다가 Abaqus CAE 네임스페이스에는 이미 `log` 가 있어 그 이름으로 정의하면 호출이 내장 log 로
-#   가서 `TypeError: illegal argument type for built-in operation` 으로 죽는다(실측).
-#   -> 이름을 emit 으로 두고, 정의를 첫 호출보다 앞에 두고, 절대 예외를 올리지 않게 한다.
+# ---- 로깅 (2026-09-24 실측으로 발견한 두 문제 대응) ------------------------------
+# 문제 1) Abaqus `cae noGUI` 에서 이 스크립트의 print 는 콘솔에 안 보이고 CAE 메시지 영역으로 갈 수
+#         있다(자식 프로세스로 뜬 base_state_probe 의 [R-13] 만 콘솔에 보였다 — 실측).
+#         -> 따라서 **파일이 주 채널**이다.
+# 문제 2) noGUI 는 스크립트를 execfile 로 실행하므로 __file__ 이 없다. __file__ 로만 경로를 잡으면
+#         NameError 가 나고 (try/except 로 감싸면) 조용히 파일이 하나도 안 생긴다 — 실측으로 물렸다.
+#         -> 후보 경로를 여러 개 잡고 각각에 append 한다.
+# canary: 이 파일이 실제로 실행되는지부터 확인한다(실패해도 무해).
 try:
-    sys.stdout.reconfigure(line_buffering=True)
+    with open('mode_run_log.txt', 'w') as _cf:
+        _cf.write('[canary] run_abaqus_mode.py start %s  cwd=%s  argv=%s\n'
+                  % (time.strftime('%Y-%m-%d %H:%M:%S'), os.getcwd(), list(sys.argv)))
 except Exception:
     pass
 
-_EMIT_LOG_PATH = None
+try:
+    sys.stdout.reconfigure(line_buffering=True)      # 되면 좋고, 안 되면 파일 채널이 담당한다
+except Exception:
+    pass
+
+_EMIT_PATHS = None
+
+
+def _emit_paths():
+    """로그 파일 후보 경로(첫 번째가 주 경로). __file__ 이 없는 execfile 환경을 전제로 한다."""
+    cand = []
+    here = globals().get('_HERE')                    # _resolve_here() 가 고른 스크립트 폴더
+    if here:
+        cand.append(here)
+    try:
+        if sys.argv and sys.argv[0]:
+            cand.append(os.path.dirname(os.path.abspath(sys.argv[0])))
+    except Exception:
+        pass
+    cand.append(os.getcwd())                         # Abaqus 실행 CWD ( = code\ )
+    out, seen = [], set()
+    for d in cand:
+        if not d:
+            continue
+        p = os.path.join(d, 'mode_run_log.txt')
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
 
 
 def emit(*a):
-    """콘솔 + mode_run_log.txt 동시 기록. **어떤 경우에도 예외를 올리지 않는다**(로깅이 해석을 죽이면 안 된다)."""
-    global _EMIT_LOG_PATH
+    """콘솔 + mode_run_log.txt(후보 경로 전부) 기록. **어떤 경우에도 예외를 올리지 않는다**."""
+    global _EMIT_PATHS
     try:
         msg = ' '.join(str(x) for x in a)
     except Exception:
         msg = '<emit: 인자 변환 실패>'
     try:
         print(msg)
-    except Exception:
-        pass
-    try:
         sys.stdout.flush()
     except Exception:
         pass
     try:
-        if _EMIT_LOG_PATH is None:
-            _EMIT_LOG_PATH = os.path.join(
-                os.path.dirname(os.path.abspath(__file__)), 'mode_run_log.txt')
-            with open(_EMIT_LOG_PATH, 'w') as _f:      # 첫 호출에서 truncate(최신 런만 남긴다)
-                _f.write('[run_abaqus_mode] log start %s\n'
-                         % time.strftime('%Y-%m-%d %H:%M:%S'))
-        with open(_EMIT_LOG_PATH, 'a') as _f:
-            _f.write(msg + '\n')
+        if _EMIT_PATHS is None:
+            _EMIT_PATHS = _emit_paths()
+        for p in _EMIT_PATHS:
+            try:
+                with open(p, 'a') as f:
+                    f.write(msg + '\n')
+            except Exception:
+                pass
     except Exception:
         pass
-
 
 emit("DEBUG: All sys.argv: " + str(sys.argv))
 
