@@ -155,8 +155,12 @@ def emit(*a):
             _EMIT_PATHS = _emit_paths()
         for p in _EMIT_PATHS:
             try:
-                with open(p, 'a') as f:
-                    f.write(msg + '\n')
+                try:
+                    f = open(p, 'a', encoding='utf-8', errors='replace')
+                except TypeError:          # encoding 인자를 모르는 파이썬이면 폴백
+                    f = open(p, 'a')
+                f.write(msg + '\n')
+                f.close()
             except Exception:
                 pass
     except Exception:
@@ -393,6 +397,7 @@ if IMPERFECTION_MODE == 'odb_table':
         _mode_table = load_mode_table(MODE_TABLE, IMPERFECTION_MODES)
     except ImperfectionSourceError as _imp_err_tab:
         emit("!!! ERROR: 임퍼펙션 모드표를 읽지 못했습니다 -> HF 잡을 제출하지 않고 중단합니다.")
+        emit("[ERROR-EN] imperfection mode table missing/unreadable -> aborting BEFORE HF job submit.")
         emit(str(_imp_err_tab))
         sys.exit(1)
     _tinfo = mode_table_info(MODE_TABLE)

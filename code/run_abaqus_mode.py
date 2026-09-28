@@ -117,8 +117,12 @@ def emit(*a):
             _EMIT_PATHS = _emit_paths()
         for p in _EMIT_PATHS:
             try:
-                with open(p, 'a') as f:
-                    f.write(msg + '\n')
+                try:
+                    f = open(p, 'a', encoding='utf-8', errors='replace')
+                except TypeError:          # encoding 인자를 모르는 파이썬이면 폴백
+                    f = open(p, 'a')
+                f.write(msg + '\n')
+                f.close()
             except Exception:
                 pass
     except Exception:
@@ -685,6 +689,7 @@ if ok and WRITE_MODE_TABLE:
         emit("[MODE] 재사용 지문 %s" % (_fp_line or '없음(생략)'))
     except Exception as _e:
         emit("!!! 모드표 생성 실패: %s" % _e)
+        emit("[ERROR-EN] mode table write FAILED: %s: %s" % (type(_e).__name__, _e))
         emit("    (수동 확인: abaqus python aba_mode_from_odb.py %s.odb %s %s %d %s)"
               % (JOB_NAME, MODE_STEP_NAME, MODE_TABLE, N_MODES, INSTANCE_NAME))
 if n_dat != n_modes:
