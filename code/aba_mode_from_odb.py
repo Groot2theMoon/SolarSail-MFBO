@@ -69,7 +69,12 @@ def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_
             raise KeyError("스텝 '%s' 없음. 있는 스텝: %s"
                            % (step_name, sorted(odb.steps.keys())))
         step = odb.steps[step_name]
-        inst = odb.rootAssembly.instances.get(instance)
+        # (2026-09-28 실측) odb.rootAssembly.instances 는 Abaqus 의 Repository 라서 .get() 이 없다.
+        #   .get() 을 쓰면 AttributeError: 'Repository' object has no attribute 'get' 로 죽고,
+        #   호출측(모드 스크립트)의 try/except 에 삼켜져 '모드표가 조용히 안 만들어지는' 원인이 됐다.
+        #   Repository 는 in / [] / keys() 를 지원한다.
+        inst = (odb.rootAssembly.instances[instance]
+                if instance in odb.rootAssembly.instances else None)
         if inst is None:
             raise KeyError("인스턴스 '%s' 없음. 있는 것: %s"
                            % (instance, sorted(odb.rootAssembly.instances.keys())))
@@ -168,6 +173,10 @@ def main(argv):
     except ValueError as e:
         print("[MODES] %s" % e)
         return 7
+    except Exception as e:
+        # 예상 못 한 예외도 traceback 으로만 끝나지 않게 ASCII 한 줄 + 고유 종료코드로 남긴다.
+        print("[MODES] UNEXPECTED %s: %s" % (type(e).__name__, e))
+        return 8
     return 0
 
 
