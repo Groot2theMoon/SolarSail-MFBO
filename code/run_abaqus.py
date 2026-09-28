@@ -81,7 +81,7 @@ def _resolve_here():
     for c in cand:
         if _ok(c):
             return os.path.abspath(c)
-    print("!!! WARNING: eval_abaqus.py 위치를 찾지 못했습니다. cwd=%s" % os.getcwd())
+    emit("!!! WARNING: eval_abaqus.py 위치를 찾지 못했습니다. cwd=%s" % os.getcwd())
     return os.getcwd()
 
 _HERE = _resolve_here()
@@ -105,10 +105,83 @@ if _HERE not in sys.path:
 from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: E402
                               imperfection_text, report, load_mode_table,
                               build_perturbation, perturbation_report, mode_table_info)
-print("[run_abaqus] _HERE = %s" % _HERE)
-print("[run_abaqus] _RUN  = %s" % _RUN)
+# ---- 로깅 (2026-09-24): HF 콘솔이 비어 보이는 문제 대응 --------------------------
+# Abaqus `cae noGUI` 는 스크립트의 stdout 을 콘솔이 아니라 CAE 메시지 영역으로 보낼 수 있다.
+# 그래서 이 스크립트의 출력이 통째로 안 보이는 경우가 있다(실측). 게다가 execfile 로 실행되면
+# __file__ 이 없으므로 경로를 __file__ 로만 잡으면 파일도 못 만든다(실측으로 물렸다).
+# -> 이름은 emit(내장 log 와 충돌 회피), 정의는 첫 호출보다 앞, 예외는 절대 올리지 않음.
+#    로그는 _HERE(코드 폴더) 와 현재 작업 디렉터리(code\aba - 산출물 폴더) 양쪽에 남긴다.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except Exception:
+    pass
+
+_EMIT_PATHS = None
+
+
+def _emit_paths():
+    """로그 파일 후보 경로 전부. __file__ 이 없는 execfile 환경을 전제로 한다."""
+    cand = [globals().get('_HERE'), os.getcwd()]
+    try:
+        if sys.argv and sys.argv[0]:
+            cand.append(os.path.dirname(os.path.abspath(sys.argv[0])))
+    except Exception:
+        pass
+    out, seen = [], set()
+    for d in cand:
+        if not d:
+            continue
+        p = os.path.join(d, 'hf_run_log.txt')
+        if p not in seen:
+            seen.add(p)
+            out.append(p)
+    return out
+
+
+def emit(*a):
+    """콘솔 + hf_run_log.txt(후보 경로 전부) 기록. **어떤 경우에도 예외를 올리지 않는다**."""
+    global _EMIT_PATHS
+    try:
+        msg = ' '.join(str(x) for x in a)
+    except Exception:
+        msg = '<emit: 인자 변환 실패>'
+    try:
+        print(msg)
+        sys.stdout.flush()
+    except Exception:
+        pass
+    try:
+        if _EMIT_PATHS is None:
+            _EMIT_PATHS = _emit_paths()
+        for p in _EMIT_PATHS:
+            try:
+                with open(p, 'a') as f:
+                    f.write(msg + '\n')
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def emit_start():
+    """런 시작 표식(파일을 truncate). 호출되면 이 파일이 실행된 것이 증명된다."""
+    global _EMIT_PATHS
+    _EMIT_PATHS = _emit_paths()
+    for p in _EMIT_PATHS:
+        try:
+            with open(p, 'w') as f:
+                f.write('[canary] run_abaqus.py start %s  cwd=%s  argv=%s\n'
+                        % (time.strftime('%Y-%m-%d %H:%M:%S'), os.getcwd(), list(sys.argv)))
+        except Exception:
+            pass
+
+
+emit_start()
+
+emit("[run_abaqus] _HERE = %s" % _HERE)
+emit("[run_abaqus] _RUN  = %s" % _RUN)
  
-print("DEBUG: All sys.argv: " + str(sys.argv))
+emit("DEBUG: All sys.argv: " + str(sys.argv))
 
 try:
     # abaqus cae noGUI=run_abaqus.py -- [HF/LF] x_c d_c
@@ -117,7 +190,7 @@ try:
     d_c = float(sys.argv[-1])
     
 except:
-    print("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus.py -- HF x_c d_c")
+    emit("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus.py -- HF x_c d_c")
     sys.exit(1)
 
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
@@ -136,22 +209,22 @@ def run_job_safely(job_name, model_name=None):
     for _ext in _JOB_ARTIFACTS:
         _f = '%s.%s' % (job_name, _ext)
         if os.path.exists(_f):
-            print("Removing stale artifact: %s" % _f)
+            emit("Removing stale artifact: %s" % _f)
             try:
                 os.remove(_f)
             except OSError as _e:
-                print("  (warning) could not remove %s: %s" % (_f, _e))
+                emit("  (warning) could not remove %s: %s" % (_f, _e))
 
     lck_file = job_name + '.lck'
     odb_file = job_name + '.odb'
     # 기존 Lock 파일이 있다면 삭제 시도 < 이전 실행 강제 종료 시 남게 됨
     if os.path.exists(lck_file):
-        print("Detected old lock file: %s. Removing it..." % lck_file)
+        emit("Detected old lock file: %s. Removing it..." % lck_file)
         try:
             os.remove(lck_file)
         except OSError:
             # 만약 삭제가 안 된다면 다른 프로세스가 실제로 사용 중
-            print("!!! FATAL ERROR: Cannot remove lock file. Is another Abaqus process running?")
+            emit("!!! FATAL ERROR: Cannot remove lock file. Is another Abaqus process running?")
             sys.exit(1)
 
     if job_name in mdb.jobs:
@@ -162,9 +235,9 @@ def run_job_safely(job_name, model_name=None):
     #   주의: 라이선스 토큰이 부족하면 잡이 라이선스 오류로 죽는다 -> 그때는 1 로 되돌린다.
     #   라이선스 토큰 오류가 나면 위 NUMCPUS 상수를 1 로 바꾼다.
     _ncp = NUMCPUS
-    print("[run_abaqus] numCpus=%d numDomains=%d (코드 상수 NUMCPUS)" % (_ncp, _ncp))
+    emit("[run_abaqus] numCpus=%d numDomains=%d (코드 상수 NUMCPUS)" % (_ncp, _ncp))
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
-    print("Submitting Job: %s" % job_name)
+    emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
     job.submit(consistencyChecking=OFF)
     
@@ -177,13 +250,13 @@ def run_job_safely(job_name, model_name=None):
     
     # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
     if job.status == ABORTED or not os.path.exists(odb_file):
-        print("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
+        emit("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
         sys.exit(1)
         
     if not job_completed_ok(job_name):
-        print("!!! WARNING: %s — .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 없음 "
+        emit("!!! WARNING: %s — .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 없음 "
               "(중도 중단 의심; odb 존재만으로는 판정 불가 — R-12)" % job_name)
-    print("Job %s completed successfully (Status: %s)." % (job_name, str(job.status)))
+    emit("Job %s completed successfully (Status: %s)." % (job_name, str(job.status)))
     return True
 
 def job_completed_ok(job_name):
@@ -214,7 +287,7 @@ def print_job_diag(job_name):
     for ext in ('msg', 'dat'):
         fn = '%s.%s' % (job_name, ext)
         if not os.path.exists(fn):
-            print("[DIAG:%s] %s 없음" % (job_name, fn))
+            emit("[DIAG:%s] %s 없음" % (job_name, fn))
             continue
         size = os.path.getsize(fn)
         with open(fn, 'r') as f:
@@ -223,10 +296,10 @@ def print_job_diag(job_name):
             text = f.read()
         hits = [ln.strip() for ln in text.splitlines()
                 if ln.strip() and any(k.lower() in ln.lower() for k in keys)]
-        print("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개"
+        emit("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개"
               % (job_name, fn, size / 1024.0, len(hits)))
         for ln in hits[-5:]:
-            print("      | %s" % ln[:150])
+            emit("      | %s" % ln[:150])
 
 sqrt2 = 1.414
 N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
@@ -313,19 +386,19 @@ if IMPERFECTION_MODE == 'odb_table':
     if _avail:
         _want = tuple(_avail[:IMPERFECTION_MAX_MODES])
         if _want != tuple(IMPERFECTION_MODES):
-            print("[IMPERFECTION] 모드표의 모드 %s -> 주입 모드 %s 로 조정 (상수 %s, 상한 %d)"
+            emit("[IMPERFECTION] 모드표의 모드 %s -> 주입 모드 %s 로 조정 (상수 %s, 상한 %d)"
                   % (_avail, list(_want), list(IMPERFECTION_MODES), IMPERFECTION_MAX_MODES))
         IMPERFECTION_MODES = _want
     try:
         _mode_table = load_mode_table(MODE_TABLE, IMPERFECTION_MODES)
     except ImperfectionSourceError as _imp_err_tab:
-        print("!!! ERROR: 임퍼펙션 모드표를 읽지 못했습니다 -> HF 잡을 제출하지 않고 중단합니다.")
-        print(str(_imp_err_tab))
+        emit("!!! ERROR: 임퍼펙션 모드표를 읽지 못했습니다 -> HF 잡을 제출하지 않고 중단합니다.")
+        emit(str(_imp_err_tab))
         sys.exit(1)
     _tinfo = mode_table_info(MODE_TABLE)
-    print("[IMPERFECTION] 모드표 %s 로드 완료: 모드 %s / 모드당 노드 %d개"
+    emit("[IMPERFECTION] 모드표 %s 로드 완료: 모드 %s / 모드당 노드 %d개"
           % (MODE_TABLE, sorted(_mode_table.keys()), len(_mode_table[IMPERFECTION_MODES[0]])))
-    print("[IMPERFECTION] 모드표 출처: source=%s / step=%s / instance=%s"
+    emit("[IMPERFECTION] 모드표 출처: source=%s / step=%s / instance=%s"
           % (_tinfo.get('source', '?'), _tinfo.get('step', '?'), _tinfo.get('instance', '?')))
     # ---- 모드표 재사용 게이트 (2026-09-24) ------------------------------------------
     # 좌굴모드는 클램프 없는 모델에서 한 번만 계산해 재사용한다(케이스 파라미터 x_c/d_c 는
@@ -351,7 +424,7 @@ if IMPERFECTION_MODE == 'odb_table':
             _fp_msg = ("[MODE-TABLE] !! STALE: 지문 불일치(현재 소스 %s / 표 %s) -> 모드 소스가 "
                        "바뀌었다. 좌굴모드를 다시 뽑아야 한다: "
                        "abaqus cae noGUI=run_abaqus_mode.py" % (_fp_now, _fp_tbl))
-        print(_fp_msg)
+        emit(_fp_msg)
         try:
             with open('mode_table_check.txt', 'w') as _fpc:
                 _fpc.write('%s\ntable=%s\nsource_sha1=%s\ntable_sha1=%s\ntime=%s\n'
@@ -539,7 +612,7 @@ p.generateMesh()
 #   (aba_mode_from_odb.py)를 진폭 0.10 t 로 합산해 좌표를 직접 섭동한다(.fil/스텝타입 제약 우회).
 #   위치: generateMesh 직후 + 어셈블리 regenerate 전 -> 의존 인스턴스가 이 좌표를 물려받는다.
 if _pert is None:
-    print("[IMPERFECTION] 기하 섭동 없음 (IMPERFECTION_MODE=%s)" % IMPERFECTION_MODE)
+    emit("[IMPERFECTION] 기하 섭동 없음 (IMPERFECTION_MODE=%s)" % IMPERFECTION_MODE)
 else:
     _amp = THICKNESS * IMPERFECTION_AMPL_T
     _pert = build_perturbation(_mode_table, _amp, IMPERFECTION_MODES)
@@ -553,22 +626,22 @@ else:
         _cx, _cy, _cz = _nd.coordinates
         _nd.setValues(coordinates=(_cx, _cy, _cz + _dz))
         _n += 1
-    print("[IMPERFECTION] 기하 섭동 적용: %d/%d 노드, %s (진폭 %.2f t = %.3e m)"
+    emit("[IMPERFECTION] 기하 섭동 적용: %d/%d 노드, %s (진폭 %.2f t = %.3e m)"
           % (_n, len(_labels), perturbation_report(_pert), IMPERFECTION_AMPL_T, _amp))
     if _n != len(_labels):
-        print("!!! WARNING: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치 의심"
+        emit("!!! WARNING: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치 의심"
               % (len(_labels), _n))
     # 말이 아니라 실측: 섭동이 실제 좌표에 들어갔는지 3개 노드를 찍어 로그에 남긴다.
     for _nd in p.nodes.sequenceFromLabels(
             labels=(_labels[0], _labels[len(_labels) // 2], _labels[-1])):
-        print("               파트 노드 %d z=%.9e (Δz=%.3e m)"
+        emit("               파트 노드 %d z=%.9e (Δz=%.3e m)"
               % (_nd.label, _nd.coordinates[2], _pert.get(_nd.label, 0.0)))
 a.regenerate()
 
 # 의존 인스턴스는 파트 메쉬를 공유한다 -> 어셈블리 쪽에서도 좌표가 같아야 한다(전달 확인).
 if _pert is not None and _labels:
     _i0 = _labels[0]
-    print("[IMPERFECTION] 어셈블리 인스턴스 확인: 노드 %d z=%.9e (파트와 같아야 함)"
+    emit("[IMPERFECTION] 어셈블리 인스턴스 확인: 노드 %d z=%.9e (파트와 같아야 함)"
           % (_i0, inst_memb.nodes.sequenceFromLabels(labels=(_i0,))[0].coordinates[2]))
 
 # 꼭짓점 RP
@@ -586,7 +659,7 @@ NO_CLAMP = False                 # True = 클램프 생략 진단 모델 (run_ab
 # 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
 SIGMA0 = 500.0                   # 수렴 보조용 초기응력 [Pa]
 if NO_CLAMP:
-    print("[run_abaqus] NO_CLAMP=True : 클램프(cable_CL/CR + 강체패치 + BC) 없이 모델링 (대조 실험)")
+    emit("[run_abaqus] NO_CLAMP=True : 클램프(cable_CL/CR + 강체패치 + BC) 없이 모델링 (대조 실험)")
     rp_cl_obj = rp_cr_obj = rp_cl_reg = rp_cr_reg = None
 else:
     rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=0.2)
@@ -666,7 +739,7 @@ if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
 #    'EIGENVALUES CANNOT BE FOUND' (0 CONVERGED) 로 실패했다.
 #    SUBSPACE 로 강제하려면 _EIGENSOLVER 상수를 'SUBSPACE' 로 수정 (구 MFBO_EIGENSOLVER 환경변수는 제거됨)
 _EIGENSOLVER = "LANCZOS"         # "SUBSPACE" 로 바꾸면 좌굴 추출 재시도
-print("[run_abaqus] buckle eigensolver=%s numEigen=%d vectors=%s"
+emit("[run_abaqus] buckle eigensolver=%s numEigen=%d vectors=%s"
       % (_EIGENSOLVER, N_EIG_BUCKLE, (BUCKLE_VECTORS if _EIGENSOLVER != 'LANCZOS' else 'n/a')))
 if _EIGENSOLVER == 'LANCZOS':
     my_model.BuckleStep(
@@ -693,7 +766,7 @@ else:
 #   n 은 'Initial 을 제외한' 1-based 스텝 번호 (len() 은 Initial 포함해 1 크다 — NEW-1).
 _steps_in_order = [s for s in my_model.steps.keys() if s != 'Initial']
 _BUCKLE_STEP_NO = _steps_in_order.index('Step-Buckle') + 1
-print("[run_abaqus] steps=%s  _BUCKLE_STEP_NO=%d" % (_steps_in_order, _BUCKLE_STEP_NO))
+emit("[run_abaqus] steps=%s  _BUCKLE_STEP_NO=%d" % (_steps_in_order, _BUCKLE_STEP_NO))
 
 # *IMPERFECTION, FILE= 은 results file(.fil) 을 읽는다 -> 좌굴 모드를 .fil 에 기록해야 임퍼펙션이 실제로 주입된다 (미요청 시 조용히 무시됨)
 
@@ -818,9 +891,9 @@ if fidelity == 'HF':
                 _bkm.keywordBlock.insert(_i + 1, _noderef)
                 _found = True
                 break
-        print("[run_abaqus] 좌굴 잡 모델=%s, *NODE FILE 삽입=%s" % (BUCKLE_MODEL, _found))
+        emit("[run_abaqus] 좌굴 잡 모델=%s, *NODE FILE 삽입=%s" % (BUCKLE_MODEL, _found))
     except Exception as _e:
-        print("!!! WARNING: 모델 복사 실패(%s) -> 원본에 삽입 (결함 A 재발 가능)" % _e)
+        emit("!!! WARNING: 모델 복사 실패(%s) -> 원본에 삽입 (결함 A 재발 가능)" % _e)
         BUCKLE_MODEL = MODEL_NAME
         my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
         for _i, _b in enumerate(my_model.keywordBlock.sieBlocks):
@@ -902,7 +975,7 @@ elif fidelity == 'HF':
         #   (모드 추출은 MODE_SOURCE='cable' 경로가 담당 -> 클램프 모델은 CONVERGED=0.)
         run_job_safely('Buckle_Analysis', model_name=BUCKLE_MODEL)   # P0-2: 500 Pa 상태에서 좌굴모드 산출
     else:
-        print("[IMPERFECTION] 자기 좌굴 잡 건너뜀 (RUN_SELF_BUCKLE_JOB=False)")
+        emit("[IMPERFECTION] 자기 좌굴 잡 건너뜀 (RUN_SELF_BUCKLE_JOB=False)")
 
     # 좌굴 모드 병합(coalescence) 진단용 고유치 기록
     #   - 이유: Buckle_Analysis.dat 는 '다음 설계점'의 좌굴 잡이 시작될 때 삭제되므로
@@ -919,12 +992,12 @@ elif fidelity == 'HF':
                 _cmd = ('abaqus python "%s" record --dat "%s" --msg "%s" --history "%s" '
                         '--x %s --d %s --fidelity HF' % (_rec, _dat, _msg, _hist, x_c, d_c))
                 _rc = subprocess.call(_cmd, shell=True)
-                print("[N-6] coalescence record rc=%d (x_c=%s, d_c=%s)" % (_rc, x_c, d_c))
+                emit("[N-6] coalescence record rc=%d (x_c=%s, d_c=%s)" % (_rc, x_c, d_c))
             else:
-                print("[N-6] 고유치 기록 건너뜀 (script=%s, dat=%s, msg=%s)"
+                emit("[N-6] 고유치 기록 건너뜀 (script=%s, dat=%s, msg=%s)"
                       % (os.path.exists(_rec), os.path.exists(_dat), os.path.exists(_msg)))
     except Exception as _eig_err:
-        print("[N-6] coalescence record 실패(무시): %s" % _eig_err)
+        emit("[N-6] coalescence record 실패(무시): %s" % _eig_err)
 
     # [R-13 / 스파이크 10-0] base state(GlobalTension 말단) 응력·반력 측정
     #   좌굴 성공/실패와 무관하게 Buckle_Analysis.odb 의 GlobalTension 프레임에서 읽는다.
@@ -938,10 +1011,10 @@ elif fidelity == 'HF':
                          % (_probe, BUCKLE_ODB))
                 subprocess.call(_pcmd, shell=True)
             else:
-                print("[R-13] base state 측정 건너뜀 (probe=%s, odb=%s)"
+                emit("[R-13] base state 측정 건너뜀 (probe=%s, odb=%s)"
                       % (os.path.exists(_probe), os.path.exists(BUCKLE_ODB)))
     except Exception as _probe_err:
-        print("[R-13] base state 측정 실패(무시): %s" % _probe_err)
+        emit("[R-13] base state 측정 실패(무시): %s" % _probe_err)
 
     # 기존 Step 정리: Post-buckling은 GlobalTension 직후에서 시작하며,
     # 중간 단계(ClampTension)를 건너뛰고 바로 최종 하중으로 Ramping함
@@ -1008,12 +1081,12 @@ elif fidelity == 'HF':
     if IMPERFECTION_MODE == 'odb_table':
         # 이미 모델 빌드 단계에서 노드 좌표를 섭동했다(ODB 모드표). 키워드 경로는 쓰지 않는다.
         imp_name, imp_step = None, None
-        print("[IMPERFECTION] 주입=기하 섭동 (모드표 %s, 모드 %s, 진폭 %.2f t = %.3e m)"
+        emit("[IMPERFECTION] 주입=기하 섭동 (모드표 %s, 모드 %s, 진폭 %.2f t = %.3e m)"
               % (MODE_TABLE, list(IMPERFECTION_MODES), IMPERFECTION_AMPL_T, imp_scale))
-        print("               %s" % perturbation_report(_pert))
+        emit("               %s" % perturbation_report(_pert))
     elif MODE_SOURCE == 'self':
         imp_name, imp_step = 'Buckle_Analysis', _BUCKLE_STEP_NO
-        print("[IMPERFECTION] 소스=self 좌굴 잡(model=%s) STEP=%d amplitude=%.3e m"
+        emit("[IMPERFECTION] 소스=self 좌굴 잡(model=%s) STEP=%d amplitude=%.3e m"
               % (BUCKLE_MODEL, imp_step, imp_scale))
     else:
         try:
@@ -1021,18 +1094,18 @@ elif fidelity == 'HF':
                         IMPERFECTION_MODES, dat_hint=MODE_SOURCE_DAT,
                         msg_hint=MODE_SOURCE_MSG, here=_HERE)
         except ImperfectionSourceError as _imp_err:
-            print("!!! ERROR: 임퍼펙션 소스 스테이징 실패 -> HF 잡을 제출하지 않고 중단합니다.")
-            print(str(_imp_err))
+            emit("!!! ERROR: 임퍼펙션 소스 스테이징 실패 -> HF 잡을 제출하지 않고 중단합니다.")
+            emit(str(_imp_err))
             sys.exit(1)
         imp_name, imp_step = _st['name'], MODE_SOURCE_STEP
-        print("[IMPERFECTION] %s STEP=%d amplitude=%.3e m (모드 %s)"
+        emit("[IMPERFECTION] %s STEP=%d amplitude=%.3e m (모드 %s)"
               % (report(_st), imp_step, imp_scale, list(IMPERFECTION_MODES)))
         if _st['modes'] < N_EIG:
-            print("!!! WARNING: 소스 모드 %d개 < N_EIG=%d -> 요청 모드 일부만 주입됩니다."
+            emit("!!! WARNING: 소스 모드 %d개 < N_EIG=%d -> 요청 모드 일부만 주입됩니다."
                   % (_st['modes'], N_EIG))
 
     if IMPERFECTION_MODE == 'odb_table':
-        print("[IMPERFECTION] 키워드 삽입 생략 (기하 섭동으로 이미 주입됨)")
+        emit("[IMPERFECTION] 키워드 삽입 생략 (기하 섭동으로 이미 주입됨)")
     else:
         imp_text = imperfection_text(imp_name, imp_step, IMPERFECTION_MODES, imp_scale)
 
@@ -1053,21 +1126,21 @@ elif fidelity == 'HF':
     cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)   # P0-C: 짝지은 LF odb
 
 try:
-    print("Calling extraction script: %s" % cmd)
+    emit("Calling extraction script: %s" % cmd)
     # shell=True로 eval_abaqus.py 실행
     p = subprocess.Popen(cmd, shell=True)
     rc = p.wait()
     if rc != 0:
-        print("!!! ERROR: eval_abaqus.py exited with code %d" % rc)
+        emit("!!! ERROR: eval_abaqus.py exited with code %d" % rc)
     
     # 추출 스크립트가 출력한 "RESULTS:..." 라인을 찾아 전달
     if os.path.exists('extraction.txt'):
         with open('extraction.txt', 'r') as f:
-            print("RESULTS:" + f.read().strip())
+            emit("RESULTS:" + f.read().strip())
     else:
-        print("!!! ERROR: Extraction failed. 'extraction.txt' not found.") 
-        print("RESULTS:FAIL")   # 상위(mfbo)가 원인을 식별하도록 명시적 실패 신호
+        emit("!!! ERROR: Extraction failed. 'extraction.txt' not found.") 
+        emit("RESULTS:FAIL")   # 상위(mfbo)가 원인을 식별하도록 명시적 실패 신호
 
 except Exception as err:
-    print("Error during data extraction: %s" % str(err))
+    emit("Error during data extraction: %s" % str(err))
     sys.exit(1)
