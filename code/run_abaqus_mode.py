@@ -369,7 +369,8 @@ PATCH_RADIUS = 0.2                           # 꼭짓점 강체패치 반경 [m]
 COUPLING_TYPE = 'DISTRIBUTING'   # 패치 절점 결합 방식: 'DISTRIBUTING' | 'KINEMATIC'.
 #   [2026-09-28] KINEMATIC+WHOLE_SURFACE 는 패치 표면을 강체로 구속해 응력 특이점(52배)과
 #   국소 압축(30.9%)을 만들었다. DISTRIBUTING 이면 weightingMethod=UNIFORM 으로 가중 분배만 한다.
-#   이 값을 'KINEMATIC' 으로 되돌리면 아래 Coupling 호출에서 weightingMethod 인자를 빼야 한다.
+#   influenceRadius 는 CAE API 필수 인자(실측: 없애면 'expected 5, got 4') — DISTRIBUTING 에서는 무시된다.
+#   이 값을 'KINEMATIC' 으로 되돌리면 weightingMethod 인자를 빼야 한다.
 #   모델 지문(FINGERPRINT_KEYS)에 포함되므로 값을 바꾸면 모드 재추출이 필요하다.
                                              #   [2026-09-24 bisect 2단계, 사용자 지시] 4모드를 낸 조합은 0.4 였다.
                                              #   이제 반경만 0.2 로 되돌려 '패치 반경이 스펙트럼을 좌우하는가'를
@@ -449,7 +450,7 @@ def create_rigid_patch(name, coord, radius=PATCH_RADIUS):
     patch_set = a.Set(name=name+'_Nodes', nodes=nodes)
     my_model.Coupling(
         name=name+'_Coupling', controlPoint=rp_region, surface=patch_set,
-        couplingType=COUPLING_TYPE, weightingMethod=UNIFORM,
+        influenceRadius=WHOLE_SURFACE, couplingType=COUPLING_TYPE, weightingMethod=UNIFORM,
         u1=ON, u2=ON, u3=ON, ur1=ON, ur2=ON, ur3=ON
     )
     return rp, rp_region
