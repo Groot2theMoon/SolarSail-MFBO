@@ -254,6 +254,14 @@ INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
+# [2026-09-28 논문 정합] 막 요소 차수 — Galhofo 2022 = 2차 (STRI65 / S8R5)
+#   1차(S3/S4) 실측: .sta 가 증분 크기 리밋사이클(x1.5 성장 -> 상한 1~2e-4 에서 실제 수렴 실패
+#   -> 1/4 컷백)에 빠져 완주에 수만 증분(7시간+)이 필요했다. 논문은 같은 물리를 2차 10,100요소
+#   메쉬로 974 s 에 완주한다. 1차로 되돌리려면 아래 두 값만 S4/S3 으로 바꾼다
+#   (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 되돌림은 잡힌다).
+ELEM_CODE_QUAD = S8R5      # 8절점 2차 박막 셸 (논문 S8R5)
+ELEM_CODE_TRI = STRI65     # 6절점 2차 삼각 박막 셸 (논문 STRI65)
+SEED_DIV = 150.0           # seed = BASE/SEED_DIV -> 약 1.02만 요소 (논문 10,100 요소)
 THICKNESS = 5.0e-6
 TARGET_STRESS = 7000.0 # Pa (참고용: 운용점 목표. 모드 추출에는 쓰이지 않는다)
 
@@ -481,10 +489,10 @@ def connect_cable(name, part, sail_corner, vector_dir, radius=1e-4):
 
 
 # 1. 메쉬 생성 (노드를 찾기 전에 필요)
-p.seedPart(size=BASE/200.0, deviationFactor=0.1)
+p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)
 p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)
-elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)
+elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
+elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
 p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
 p.generateMesh()
 a.regenerate()

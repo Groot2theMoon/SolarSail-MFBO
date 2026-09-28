@@ -1,7 +1,7 @@
 """check_model_consistency.py — 좌굴 모델과 HF 모델의 '모델 정의' 일치를 검사한다.
 
 왜 필요한가
-    run_abaqus_buckle.py 는 run_abaqus_new.py 에서 케이블만 제외한 **별개 스크립트**다.
+    run_abaqus_buckle.py 는 HF(run_abaqus.py)에서 케이블만 제외한 **별개 스크립트**다.
     스크립트를 분리하면 모델 정의(메쉬/형상/패치/재질/프리텐션)가 따로 놀 수 있다.
     그런데 좌굴 모드는 **HF 와 같은 노드**에 정의되어야 *IMPERFECTION 으로 이식된다.
     -> 한쪽만 수정하면 모드가 조용히 어긋나고, 그 사실은 런(라이선스)을 낭비한 뒤에야 드러난다.
@@ -27,7 +27,10 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-NEW = os.path.join(HERE, 'run_abaqus_new.py')
+# [2026-09-28 정정] 검사 대상은 **실제로 제출하는 HF** 다.
+#   예전에는 run_abaqus_new.py 를 봤다 — 그 파일은 legacy(1차 요소 S3/S4)이고 아무도 제출하지 않는다.
+#   그래서 run_abaqus.py 의 모델 정의(요소/메쉬/결합)를 바꿔도 검사기가 PASS 를 냈다(가짜 초록불).
+NEW = os.path.join(HERE, 'run_abaqus.py')
 BUCKLE = os.path.join(HERE, 'run_abaqus_buckle.py')
 MODE = os.path.join(HERE, 'run_abaqus_mode.py')
 
@@ -53,10 +56,13 @@ SHARED = [
     "s.Line(point1=V1[:2], point2=V3[:2])",
     "p.BaseShell(sketch=s)",
     # ---- 메쉬 (모드 노드 일치의 핵심) ----
-    "p.seedPart(size=BASE/200.0, deviationFactor=0.1)",
+    "p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)",
     "p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)",
-    "elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD)",
-    "elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)",
+    "elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)",
+    "elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)",
+    "ELEM_CODE_QUAD = S8R5",
+    "ELEM_CODE_TRI = STRI65",
+    "SEED_DIV = 150.0",
     "p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))",
     # ---- 클램프/정점 강체 패치 ----
     "radius=0.2",
@@ -64,7 +70,9 @@ SHARED = [
     "u3=SET",
     # ---- 프리텐션 정의 (좌굴의 alpha 가 곱해지는 기준값) ----
     "PRETENSION_SCALE = 10.0",
-    "DISP_GLOBAL = 0.000005 * PRETENSION_SCALE",
+    # [2026-09-28] DISP_GLOBAL 은 여기서 검사하지 않는다: 운용점은 **의도적으로 분기**한 값이다
+    #   (HF 165 um = 논문 정합 / 모드 소스 1.8e-5 = 클램프-프리 안정 영역). 대신
+    #   check_operating_point() 가 두 값을 직접 읽어 배율을 로그로 남긴다.
     "angle_deg = 28.6",
     # ---- 스텝 GlobalTension (좌굴의 base state 를 만드는 스텝) ----
     "initialInc=0.0001, minInc=1e-8, maxNumInc=1000",
@@ -84,7 +92,9 @@ SHARED_MODE = [s for s in SHARED if 'clamp_coord' not in s]
 #   선언은 모드 소스 안의 `# CHECKER-DIVERGENCE: <이름,...>` 주석으로만 인정한다(논문 공개 의무).
 DECLARABLE = [
     "PRETENSION_SCALE = 10.0",
-    "DISP_GLOBAL = 0.000005 * PRETENSION_SCALE",
+    # [2026-09-28] DISP_GLOBAL 은 여기서 검사하지 않는다: 운용점은 **의도적으로 분기**한 값이다
+    #   (HF 165 um = 논문 정합 / 모드 소스 1.8e-5 = 클램프-프리 안정 영역). 대신
+    #   check_operating_point() 가 두 값을 직접 읽어 배율을 로그로 남긴다.
     "SIGMA0 = 500.0",
     "stabilizationMagnitude=0.0002,",
 ]
@@ -175,13 +185,16 @@ def main():
     if not (os.path.exists(NEW) and os.path.exists(BUCKLE) and os.path.exists(MODE)):
         print("!!! 파일을 찾을 수 없습니다: %s / %s / %s" % (NEW, BUCKLE, MODE))
         return 1
+    _legacy = os.path.join(HERE, 'run_abaqus_new.py')
+    if os.path.exists(_legacy):
+        print("  [참고] run_abaqus_new.py 는 legacy(1차 요소 S3/S4) — 검사 대상이 아니다.")
     a = code_only(NEW)
     b = code_only(BUCKLE)
     c = code_only(MODE)
 
     print("=" * 74)
     print("모델 정의 일치 검사 (AST 기반: 주석/docstring 제외)")
-    print("  %s" % os.path.basename(NEW))
+    print("  %s   (live HF)" % os.path.basename(NEW))
     print("  %s" % os.path.basename(BUCKLE))
     print("  %s   (모드 소스)" % os.path.basename(MODE))
     print("=" * 74)
@@ -191,7 +204,7 @@ def main():
         ia, ib = nk in a, nk in b
         if not (ia and ib):
             bad.append(k)
-        print("  %-4s new=%-5s buckle=%-5s  %s"
+        print("  %-4s HF=%-6s buckle=%-6s  %s"
               % ('OK' if (ia and ib) else '!!!', ia, ib, k[:60]))
 
     print()

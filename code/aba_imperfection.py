@@ -51,7 +51,8 @@ _ROW_RE = re.compile(r"^\s*(\d{1,6})\s+([-+0-9.][0-9eEdD+\-. ]*)\s*$")
 FINGERPRINT_PREFIX = '# FINGERPRINT'
 FINGERPRINT_KEYS = ('BASE', 'HEIGHT', 'THK', 'SIGMA0', 'PRETENSION_MODE', 'DISP_GLOBAL',
                     'PATCH_RADIUS', 'COUPLING_TYPE', 'MODE_STABILIZATION', 'PERTURBATION', 'PATTERN_SIGN',
-                    'N_EIG_BUCKLE', 'BUCKLE_VECTORS', 'N_MODES', 'JOB_NAME', 'MODE_STEP_NAME')
+                    'N_EIG_BUCKLE', 'BUCKLE_VECTORS', 'N_MODES', 'JOB_NAME', 'MODE_STEP_NAME',
+                    'ELEM_CODE_QUAD', 'ELEM_CODE_TRI', 'SEED_DIV')
 
 
 def model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
