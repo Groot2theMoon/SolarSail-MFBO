@@ -611,7 +611,7 @@ inst_memb = a.Instance(name=INSTANCE_NAME, part=p, dependent=ON)
 # --- Rigid Patch 생성  ---
 def create_rigid_patch(name, coord, radius):
     """
-    지정된 좌표 기준 radius 내의 노드들을 묶어 강체운동을 하도록 Tie 설정
+    지정된 좌표 기준 radius 내의 노드들을 묶어 '분산(distributing)' 결합한다
     실제 solar sail 에서 케이블이나 클램프를 설치하기 위해 sail 면에 테이프 등을 설치하는 과정을 모사
     """
     # RP 생성
@@ -627,10 +627,12 @@ def create_rigid_patch(name, coord, radius):
     
     patch_set = a.Set(name=name+'_Nodes', nodes=nodes)
     
-    # Coupling (RP <-> Membrane Nodes)
+    # Coupling (RP <-> Membrane Nodes) — DISTRIBUTING: 표면 절점을 강체로 묶지 않고 하중/변위만 가중 분배한다.
+    #   [2026-09-28] KINEMATIC(WHOLE_SURFACE)은 패치 표면 전체를 RP에 강체 구속해
+    #   패치 경계에 응력 특이점(실측 maxP/mean = 52배)과 국소 압축 면적(30.9%)을 만들었다.
     my_model.Coupling(
         name=name+'_Coupling', controlPoint=rp_region, surface=patch_set, 
-        influenceRadius=WHOLE_SURFACE, couplingType=KINEMATIC, 
+        couplingType=DISTRIBUTING, weightingMethod=UNIFORM,
         u1=ON, u2=ON, u3=ON, ur1=ON, ur2=ON, ur3=ON
     )
     return rp, rp_region

@@ -50,7 +50,7 @@ _ROW_RE = re.compile(r"^\s*(\d{1,6})\s+([-+0-9.][0-9eEdD+\-. ]*)\s*$")
 # 조용히 주입하게 된다. 그래서 표 헤더에 모드 소스의 지문을 박아 두고 HF 가 대조한다.
 FINGERPRINT_PREFIX = '# FINGERPRINT'
 FINGERPRINT_KEYS = ('BASE', 'HEIGHT', 'THK', 'SIGMA0', 'PRETENSION_MODE', 'DISP_GLOBAL',
-                    'PATCH_RADIUS', 'MODE_STABILIZATION', 'PERTURBATION', 'PATTERN_SIGN',
+                    'PATCH_RADIUS', 'COUPLING_TYPE', 'MODE_STABILIZATION', 'PERTURBATION', 'PATTERN_SIGN',
                     'N_EIG_BUCKLE', 'BUCKLE_VECTORS', 'N_MODES', 'JOB_NAME', 'MODE_STEP_NAME')
 
 

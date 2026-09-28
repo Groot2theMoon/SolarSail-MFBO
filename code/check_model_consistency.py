@@ -61,7 +61,6 @@ SHARED = [
     # ---- 클램프/정점 강체 패치 ----
     "radius=0.2",
     "u1=ON, u2=ON, u3=ON, ur1=ON, ur2=ON, ur3=ON",
-    "influenceRadius=WHOLE_SURFACE, couplingType=KINEMATIC",
     "u3=SET",
     # ---- 프리텐션 정의 (좌굴의 alpha 가 곱해지는 기준값) ----
     "PRETENSION_SCALE = 10.0",
@@ -318,6 +317,31 @@ def check_operating_point():
 
 
 if not check_operating_point():
+    sys.exit(1)
+
+def check_coupling_type():
+    """패치 절점 결합 방식이 두 파일에서 같은지 (2026-09-28 신설, KINEMATIC->DISTRIBUTING).
+
+    SHARED 목록에 넣지 않은 이유: legacy 스크립트(new/buckle)는 여전히 KINEMATIC 이라
+    SHARED 에 두면 legacy 가 FAIL 한다. 여기서는 HF 와 모드 소스만 비교한다.
+    """
+    hf = re.search(r"couplingType=([A-Z_]+),\s*weightingMethod", code_only('run_abaqus.py'))
+    ms = re.search(r"COUPLING_TYPE='([A-Z_]+)'", code_only('run_abaqus_mode.py'))
+    print("--- 패치 결합 방식(Coupling) 일치: 모드 소스 vs HF ---")
+    hv = hf.group(1) if hf else None
+    mv = ms.group(1) if ms else None
+    print("    HF = %s   /   mode = %s" % (hv, mv))
+    if hv is None or mv is None:
+        print("  FAIL  결합 방식을 읽지 못했습니다.")
+        return False
+    if hv != mv:
+        print("  FAIL  결합 방식이 다릅니다 -> 모드 재추출이 필요합니다.")
+        return False
+    print("  OK    결합 방식 일치 (%s)" % hv)
+    return True
+
+
+if not check_coupling_type():
     sys.exit(1)
 
 if __name__ == '__main__':
