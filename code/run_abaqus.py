@@ -1120,7 +1120,12 @@ elif fidelity == 'HF':
         initialInc=1e-4,
         minInc=1e-8,          # R-9: 1e-15 는 발산 시 증분 소진까지 수시간
         maxInc=0.1,
-        maxNumInc=1000        # R-9
+        maxNumInc=10000       # R-9 / [2026-09-28] 1000 -> 10000
+        #   실측: 1023 증분에서 step time 0.162 도달 후
+        #     ***ERROR: TOO MANY INCREMENTS NEEDED TO COMPLETE THE STEP 으로 종료됐다.
+        #   수렴은 완벽했다(증분당 1 iteration, attempt 1, 잔차 8.7e-10, coupling compat 0)
+        #   — 즉 발산이 아니라 증분 수 소진이다. 상한만 올린다(모델 파라미터 아님 -> 모드 재추출 불필요).
+        #   다음 레버(필요 시): allsdtol 0.05 -> 0.15 (컷백 262회 감소) + energy_check.py 검증.
     )
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 
