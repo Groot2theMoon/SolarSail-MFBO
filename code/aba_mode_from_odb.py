@@ -46,11 +46,14 @@ def pick_mode_frames(lambdas, n_modes):
     return pick
 
 
-def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_INSTANCE,
-                     verbose=True, extra_header=None):
-    """ODB 모드 프레임에서 u3 를 뽑아 모드표를 쓴다. 반환: (쓴 모드 수, 메시지 리스트).
+def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, verbose=True):
+    """ODB 에서 좌굴모드를 뽑아 '파일 없이' 표를 돌려준다 (run_abaqus.py 의 ODB 직접 주입용).
 
-    실패를 조용히 넘기지 않고 예외로 올린다(호출측 -- run_abaqus_mode.py / CLI -- 이 판단한다).
+    반환: (table, meta, picks, lam, msgs)
+        table = {mode(1부터): {node_label: u3}}   u3 는 모드별 max|u3|=1 정규화 + 부호 고정
+        meta  = {mode: {'frame': i+1, 'lam': λ, 'raw_max_u3': ..., 'sign_node': ...}}
+        picks = 선택된 0-based 프레임 인덱스, lam = 프레임별 λ
+    규칙(write_mode_table 과 동일): λ > 0 인 프레임만 쓴다.
     """
     msgs = []
 
@@ -71,7 +74,7 @@ def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_
         step = odb.steps[step_name]
         # (2026-09-28 실측) odb.rootAssembly.instances 는 Abaqus 의 Repository 라서 .get() 이 없다.
         #   .get() 을 쓰면 AttributeError: 'Repository' object has no attribute 'get' 로 죽고,
-        #   호출측(모드 스크립트)의 try/except 에 삼켜져 '모드표가 조용히 안 만들어지는' 원인이 됐다.
+        #   호출측의 try/except 에 삼켜져 '모드표가 조용히 안 만들어지는' 원인이 됐다.
         #   Repository 는 in / [] / keys() 를 지원한다.
         inst = (odb.rootAssembly.instances[instance]
                 if instance in odb.rootAssembly.instances else None)
@@ -80,9 +83,6 @@ def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_
                            % (instance, sorted(odb.rootAssembly.instances.keys())))
 
         frames = step.frames
-        # 각 프레임의 하중계수(λ)를 읽는다. 좌굴 스텝에서 frameValue = 그 모드의 하중계수.
-        #   (2026-09-24 실측) 요청 수를 늘리면(numEigen=100) ODB 에 음수 λ 모드도 함께 들어온다.
-        #   HF 에 넣을 임퍼펙션은 양수 λ 모드여야 한다 -> 양수만 고르고, 고른 결과를 로그로 남긴다.
         lam = []
         for fr in frames:
             try:
@@ -94,18 +94,18 @@ def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_
         if lam:
             _say("[MODES] 하중계수 λ(앞 12개): %s" % ', '.join('%.6e' % v for v in lam[:12]))
 
-        pick = pick_mode_frames(lam, n_modes)
-        if not pick:
+        picks = pick_mode_frames(lam, n_modes)
+        if not picks:
             raise ValueError("양수 λ 모드가 없다 -> 좌굴모드가 수렴하지 않았다. λ: %s"
                              % ', '.join('%.6e' % v for v in lam[:12]))
-        if len(pick) < n_modes:
+        if len(picks) < n_modes:
             _say("[MODES] 경고: 쓸 수 있는 양수 λ 모드 %d개 < 요청 %d개 -> 있는 만큼만 쓴다"
-                 % (len(pick), n_modes))
+                 % (len(picks), n_modes))
         _say("[MODES] 선택한 프레임 %s (λ %s)"
-             % ([p + 1 for p in pick], ['%.6e' % lam[p] for p in pick]))
+             % ([p + 1 for p in picks], ['%.6e' % lam[p] for p in picks]))
 
-        blocks = []
-        for k, i in enumerate(pick):
+        table, meta = {}, {}
+        for k, i in enumerate(picks):
             try:
                 fo = frames[i].fieldOutputs['U'].getSubset(region=inst)
             except KeyError:
@@ -121,30 +121,50 @@ def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_
             if umax <= 0.0:
                 raise ValueError("프레임 %d: u3 가 전부 0 (면외 성분 없음)" % (i + 1))
             sign = 1.0 if u3_ref >= 0 else -1.0
-            lines = ["# MODE %d frame=%d lambda=%.6e raw_max_u3=%.6e sign_node=%d"
-                     % (k + 1, i + 1, lam[i], u3_ref, sign_node),
-                     "MODE %d" % (k + 1)]
-            for lab in sorted(u3_at):
-                lines.append("%d %.9e" % (lab, sign * u3_at[lab] / umax))
-            blocks.append("\n".join(lines) + "\n")
+            table[k + 1] = dict((lab, sign * val / umax) for lab, val in u3_at.items())
+            meta[k + 1] = {'frame': i + 1, 'lam': lam[i], 'raw_max_u3': umax,
+                           'sign_node': sign_node}
             _say("[MODES] 모드 %d <- 프레임 %d: 노드 %d개, λ=%.6e, raw max|u3|=%.3e (부호기준 노드 %d)"
                  % (k + 1, i + 1, len(u3_at), lam[i], umax, sign_node))
-
-        header = ["# source=%s" % os.path.abspath(odb_path),
-                  "# step=%s" % step_name,
-                  "# instance=%s" % instance,
-                  "# u3 은 모드별 max|u3|=1 정규화. 부호는 max|u3| 노드를 + 로 고정.",
-                  "# table_modes=%d / source_frames=%s / lambdas=%s"
-                  % (len(pick), [p + 1 for p in pick],
-                     ['%.6e' % lam[p] for p in pick])]
-        header += list(extra_header or [])      # 예: '# FINGERPRINT sha1=...'
-        with open(out_path, 'w') as f:
-            f.write("\n".join(header) + "\n")
-            f.write("".join(blocks))
-        _say("[MODES] 저장: %s (모드 %d개)" % (os.path.abspath(out_path), len(pick)))
-        return len(pick), msgs
+        return table, meta, picks, lam, msgs
     finally:
         odb.close()
+
+
+def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_INSTANCE,
+                     verbose=True, extra_header=None):
+    """ODB 모드에서 모드표 txt 를 쓴다. 반환: (쓴 모드 수, 메시지 리스트).
+
+    파일을 거치지 않고 ODB 에서 바로 읽으려면 run_abaqus.py 의 IMPERFECTION_MODE='odb_direct'
+    를 쓴다(같은 extract_modes 를 호출하므로 결과가 같다).
+    """
+    table, meta, picks, lam, msgs = extract_modes(odb_path, step_name, instance, n_modes, verbose)
+    header = ["# source=%s" % os.path.abspath(odb_path),
+              "# step=%s" % step_name,
+              "# instance=%s" % instance,
+              "# u3 은 모드별 max|u3|=1 정규화. 부호는 max|u3| 노드를 + 로 고정.",
+              "# table_modes=%d / source_frames=%s / lambdas=%s"
+              % (len(picks), [p + 1 for p in picks], ['%.6e' % lam[p] for p in picks])]
+    header += list(extra_header or [])      # 예: '# FINGERPRINT sha1=...'
+    blocks = []
+    for k in sorted(table):
+        lines = ["# MODE %d frame=%d lambda=%.6e raw_max_u3=%.6e sign_node=%d"
+                 % (k, meta[k]['frame'], meta[k]['lam'], meta[k]['raw_max_u3'],
+                    meta[k]['sign_node']),
+                 "MODE %d" % k]
+        for lab in sorted(table[k]):
+            lines.append("%d %.9e" % (lab, table[k][lab]))
+        blocks.append("\n".join(lines) + "\n")
+    with open(out_path, 'w') as f:
+        f.write("\n".join(header) + "\n")
+        f.write("".join(blocks))
+    _say_save = "[MODES] 저장: %s (모드 %d개)" % (os.path.abspath(out_path), len(table))
+    msgs.append(_say_save)
+    if verbose:
+        print(_say_save)
+    return len(table), msgs
+
+
 
 
 def _usage():
@@ -157,7 +177,12 @@ def main(argv):
     if len(argv) < 4:
         return _usage()
     odb_path, step_name, out_path = argv[1], argv[2], argv[3]
-    n_modes = int(argv[4]) if len(argv) > 4 else 4
+    try:
+        n_modes = int(argv[4]) if len(argv) > 4 else 4
+    except ValueError:
+        print("[MODES] 인자 4(모드 수)가 숫자가 아닙니다: %r"
+              "  <- 명령을 한 줄로 붙여넣어 뒤 인자가 섞였는지 확인하세요." % (argv[4],))
+        return 2
     inst_name = argv[5] if len(argv) > 5 else DEFAULT_INSTANCE
     try:
         write_mode_table(odb_path, step_name, out_path, n_modes, inst_name)

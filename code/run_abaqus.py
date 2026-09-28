@@ -26,7 +26,8 @@ Flow (Simulation Logic):
                 주지 못한다(실측: 음수고유값 598~2897 / CONVERGED=0 / EIGENVALUES CANNOT BE FOUND).
                 *BUCKLE 은 .fil 출력이 금지되므로(실측 7025) 모드는 ODB 모드 프레임에만 있다
                 -> aba_mode_from_odb.py 가 그 ODB 를 모드표(modes_ClampFree_Buckle.txt)로 만든다.
-         - 2차: 그 모드표를 노드 좌표 섭동으로 주입한다(IMPERFECTION_MODE='odb_table' = 기본).
+         - 2차: 그 모드를 노드 좌표 섭동으로 주입한다(IMPERFECTION_MODE='odb_direct' = 기본,
+                ODB 에서 HF 가 직접 읽는다. 'odb_table' = 모드표 txt 경유).
                 aba_imperfection.py 가 모드 개수를 검증하고, 부족하면 HF 제출 전에 중단한다.
                 자기 좌굴 잡(Buckle_Analysis)은 클램프 base state 증거용으로만 유지한다.
                 (옵션 IMPERFECTION_MODE='file' = .fil 스테이징 + *IMPERFECTION, FILE=, STEP=n:
@@ -355,12 +356,21 @@ if MODE_SOURCE not in ('external', 'self'):
 #          -> 그 표를 노드 좌표 섭동으로 주입(셸에서 *IMPERFECTION 과 등가).
 #     '진동 고유모드(*FREQUENCY)' 를 모드 소스로 쓰는 경우 -> 'file'
 #        .fil 에 모드가 기록되므로 스테이징 + *IMPERFECTION, FILE=, STEP=n (사용자 원본 08d4cbc 방식).
-IMPERFECTION_MODE = 'odb_table'
+IMPERFECTION_MODE = 'odb_direct'   # 'odb_direct'(기본) | 'odb_table' | 'file'
+#   'odb_direct'(2026-09-28, 사용자 제안): HF 가 ODB 에서 좌굴모드를 '직접' 읽어 노드를 섭동한다.
+#     모드표 txt 파일이 필요 없다 -> '표가 없어서 중단' 이라는 실패 모드가 사라진다.
+#     (사용자 원본 08d4cbc 의 *IMPERFECTION, FILE=, STEP=n 은 .fil 을 읽는데, *BUCKLE 스텝은
+#      .fil 출력이 금지되므로(실측 ClampFree_Buckle.dat:7025) 그 키워드 경로는 쓸 수 없다.
+#      대신 CAE 안에서 ODB 를 읽어 같은 물리(노드 좌표 섭동)를 만든다.)
+#   'odb_table': 모드표 txt 경유(모드를 파일로 검사/재사용할 수 있다. 지문 게이트 있음).
 MODE_TABLE = os.path.join('..', 'modes_ClampFree_Buckle.txt')   # code\aba -> code\
+MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
+MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
+MODE_INSTANCE = 'MEMBRANE-1'                                    # 막 인스턴스 이름
 #   (출처 ODB/스텝은 상수로 중복 기재하지 않고 모드표 헤더에서 읽어 로그에 남긴다)
-if IMPERFECTION_MODE not in ('odb_table', 'file'):
-    raise RuntimeError("IMPERFECTION_MODE 는 'odb_table' 또는 'file' 여야 합니다 (현재 %r)"
-                       % (IMPERFECTION_MODE,))
+if IMPERFECTION_MODE not in ('odb_direct', 'odb_table', 'file'):
+    raise RuntimeError("IMPERFECTION_MODE 는 'odb_direct' / 'odb_table' / 'file' 중 하나여야 합니다"
+                       " (현재 %r)" % (IMPERFECTION_MODE,))
 
 # 모드표는 모델을 만들기 전에 읽는다(없으면 HF 잡을 제출하지 않고 즉시 중단).
 _pert = None
@@ -439,6 +449,36 @@ if IMPERFECTION_MODE == 'odb_table':
             pass
     except Exception:
         pass
+elif IMPERFECTION_MODE == 'odb_direct':
+    # (2026-09-28, 사용자 제안) 모드표 txt 를 거치지 않고 ODB 에서 직접 모드를 읽는다.
+    #   물리는 odb_table 과 완전히 같다(노드 좌표 섭동). 파일이 하나 줄 뿐이다.
+    try:
+        from aba_mode_from_odb import extract_modes
+        _tbl, _meta, _picks, _lam, _msgs = extract_modes(
+            MODE_SOURCE_ODB, MODE_SOURCE_STEP_NAME, MODE_INSTANCE,
+            len(IMPERFECTION_MODES), verbose=True)
+    except Exception as _e_odb:
+        emit("!!! ERROR: ODB 에서 좌굴모드를 읽지 못했습니다 -> HF 잡을 제출하지 않고 중단합니다.")
+        emit("[ERROR-EN] cannot read modes directly from ODB (%s) -> aborting BEFORE HF job submit."
+             % MODE_SOURCE_ODB)
+        emit("%s: %s" % (type(_e_odb).__name__, _e_odb))
+        sys.exit(1)
+    _want = [m for m in IMPERFECTION_MODES if m in _tbl]
+    if not _want:
+        emit("!!! ERROR: ODB 에서 요청 모드 %s 를 얻지 못했습니다 (ODB 모드: %s) -> 중단."
+             % (list(IMPERFECTION_MODES), sorted(_tbl)))
+        emit("[ERROR-EN] requested modes not available in ODB -> aborting BEFORE HF job submit.")
+        sys.exit(1)
+    if tuple(_want) != tuple(IMPERFECTION_MODES):
+        emit("[IMPERFECTION] ODB 모드 %s -> 주입 모드 %s 로 조정"
+             % (sorted(_tbl), _want))
+    IMPERFECTION_MODES = tuple(_want)
+    _mode_table = dict((m, _tbl[m]) for m in IMPERFECTION_MODES)
+    emit("[IMPERFECTION] ODB 직접 읽기 완료: %s / %s / %s -> 모드 %s"
+         % (MODE_SOURCE_ODB, MODE_SOURCE_STEP_NAME, MODE_INSTANCE, list(IMPERFECTION_MODES)))
+    emit("[IMPERFECTION] 모드당 노드 %d개 / λ %s"
+         % (len(_mode_table[IMPERFECTION_MODES[0]]),
+            ['%.6e' % _lam[_picks[m - 1]] for m in IMPERFECTION_MODES]))
 # ---- 2-모델 레시피 끝 ----------------------------------------------------
 # A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
 #   base state 가 부정정이면 요청 개수를 줄이는 것이 subspace 수렴에 유리하다.
@@ -1083,11 +1123,13 @@ elif fidelity == 'HF':
     #   소스 .fil 을 IMPERFECTION_NAME 으로 스테이징 -> 자기 좌굴 잡의 0-모드 .fil 이
     #   조용히 소비되는 사고(원장 C-1)를 이름 분리로 차단하고, 모드 개수를 검증한다.
     imp_scale = THICKNESS * IMPERFECTION_AMPL_T   # Galhofo 채택값 0.10 t
-    if IMPERFECTION_MODE == 'odb_table':
-        # 이미 모델 빌드 단계에서 노드 좌표를 섭동했다(ODB 모드표). 키워드 경로는 쓰지 않는다.
+    if IMPERFECTION_MODE in ('odb_table', 'odb_direct'):
+        # 이미 모델 빌드 단계에서 노드 좌표를 섭동했다(모드표 txt 또는 ODB 직접). 키워드 경로는 쓰지 않는다.
         imp_name, imp_step = None, None
-        emit("[IMPERFECTION] 주입=기하 섭동 (모드표 %s, 모드 %s, 진폭 %.2f t = %.3e m)"
-              % (MODE_TABLE, list(IMPERFECTION_MODES), IMPERFECTION_AMPL_T, imp_scale))
+        _src_desc = MODE_TABLE if IMPERFECTION_MODE == 'odb_table' else (
+            "%s / %s" % (MODE_SOURCE_ODB, MODE_SOURCE_STEP_NAME))
+        emit("[IMPERFECTION] 주입=기하 섭동 (출처 %s, 모드 %s, 진폭 %.2f t = %.3e m)"
+              % (_src_desc, list(IMPERFECTION_MODES), IMPERFECTION_AMPL_T, imp_scale))
         emit("               %s" % perturbation_report(_pert))
     elif MODE_SOURCE == 'self':
         imp_name, imp_step = 'Buckle_Analysis', _BUCKLE_STEP_NO
@@ -1109,7 +1151,7 @@ elif fidelity == 'HF':
             emit("!!! WARNING: 소스 모드 %d개 < N_EIG=%d -> 요청 모드 일부만 주입됩니다."
                   % (_st['modes'], N_EIG))
 
-    if IMPERFECTION_MODE == 'odb_table':
+    if IMPERFECTION_MODE in ('odb_table', 'odb_direct'):
         emit("[IMPERFECTION] 키워드 삽입 생략 (기하 섭동으로 이미 주입됨)")
     else:
         imp_text = imperfection_text(imp_name, imp_step, IMPERFECTION_MODES, imp_scale)
