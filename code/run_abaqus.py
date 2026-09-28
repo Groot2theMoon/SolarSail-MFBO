@@ -670,14 +670,22 @@ else:
     _pert = build_perturbation(_mode_table, _amp, IMPERFECTION_MODES)
     _labels = tuple(sorted(_pert.keys()))
     _seq = p.nodes.sequenceFromLabels(labels=_labels)
-    _n = 0
+    _apply, _new = [], []
     for _nd in _seq:
         _dz = _pert.get(_nd.label)
         if _dz is None:
             continue
         _cx, _cy, _cz = _nd.coordinates
-        _nd.setValues(coordinates=(_cx, _cy, _cz + _dz))
-        _n += 1
+        _apply.append(_nd)
+        _new.append((_cx, _cy, _cz + _dz))
+    # (2026-09-28 실측) MeshNode 객체에는 setValues(coordinates=...) 가 없다.
+    #   -> TypeError: keyword error on coordinates  (사용자 콘솔에서 확인)
+    #   좌표 수정은 Part.editNode(nodes=..., coordinates=...) 로 한다.
+    #   (Abaqus Scripting Reference > Edit mesh commands > Part object: editNode —
+    #    "changes the coordinates of the given nodes on an orphan mesh part or on an Abaqus native mesh")
+    #   노드별 호출 대신 한 번에 넘긴다(빠르고, 실패 시 부분 적용이 남지 않는다).
+    p.editNode(nodes=tuple(_apply), coordinates=tuple(_new))
+    _n = len(_apply)
     emit("[IMPERFECTION] 기하 섭동 적용: %d/%d 노드, %s (진폭 %.2f t = %.3e m)"
           % (_n, len(_labels), perturbation_report(_pert), IMPERFECTION_AMPL_T, _amp))
     if _n != len(_labels):
