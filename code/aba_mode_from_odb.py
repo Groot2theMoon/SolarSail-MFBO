@@ -46,6 +46,11 @@ def pick_mode_frames(lambdas, n_modes):
     return pick
 
 
+# (2026-09-28) 횡(면외) 성분 필터 — 임퍼펙션은 z 섭동이므로 u3 가 없는 모드는 쓸 수 없다.
+U3_MIN_FRAC = 1.0e-3     # 모드 최대성분 대비 u3 최대값이 이 비율 미만이면 '면내 모드'로 보고 버린다
+BUCKLE_SCAN_MAX = 40     # 후보 프레임 스캔 상한(앞쪽 프레임이 면내 모드일 때 뒤로 넘어가기 위함)
+
+
 def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, verbose=True,
                   dat_hint=None):
     """ODB 에서 좌굴모드를 뽑아 '파일 없이' 표를 돌려준다 (run_abaqus.py 의 ODB 직접 주입용).
@@ -111,48 +116,65 @@ def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, ver
             _say("[MODES] λ 출처=%s (앞 12개): %s"
                  % (lam_src, ', '.join('%.6e' % v for v in lam[:12])))
 
-        picks = pick_mode_frames(lam, n_modes)
-        if not picks:
-            raise ValueError("양수 λ 모드가 없다 -> 좌굴모드가 수렴하지 않았다. λ: %s"
-                             % ', '.join('%.6e' % v for v in lam[:12]))
-        if len(picks) < n_modes:
-            _say("[MODES] 경고: 쓸 수 있는 양수 λ 모드 %d개 < 요청 %d개 -> 있는 만큼만 쓴다"
-                 % (len(picks), n_modes))
-        # 방어: λ 를 .dat 에서 읽었으면 .dat 이 ODB 프레임 수보다 많은 모드를 나열할 수 있다.
-        #   (예: 100개 요청 중 4개만 수렴 -> .dat 에는 여러 값, ODB 에는 4개 프레임)
-        _over = [p for p in picks if p >= len(frames)]
+        # --- 후보 프레임: 양수 λ 이고 ODB 프레임 범위 안 ---
+        cand = [m for m, v in enumerate(lam) if v > 0.0 and m < len(frames)][:BUCKLE_SCAN_MAX]
+        _over = [m + 1 for m, v in enumerate(lam) if v > 0.0 and m >= len(frames)]
         if _over:
             _say("[MODES] 경고: λ 출처(%s)의 모드 %s 는 ODB 프레임(%d개) 범위 밖 -> 제외"
-                 % (lam_src, [p + 1 for p in _over], len(frames)))
-            picks = [p for p in picks if p < len(frames)]
-            if not picks:
-                raise ValueError("λ 는 %d개인데 ODB 프레임이 %d개다 -> 모드 추출 불가"
-                                 % (len(lam), len(frames)))
-        _say("[MODES] 선택한 프레임 %s (λ %s)"
-             % ([p + 1 for p in picks], ['%.6e' % lam[p] for p in picks]))
+                 % (lam_src, _over, len(frames)))
+        if not cand:
+            raise ValueError("양수 λ 모드가 없다 -> 좌굴모드가 수렴하지 않았다. λ: %s"
+                             % ', '.join('%.6e' % v for v in lam[:12]))
 
-        table, meta = {}, {}
-        for k, i in enumerate(picks):
+        # --- (2026-09-28 실측) 횡(면외) 성분 필터 ---
+        #   패치 결합을 DISTRIBUTING 으로 바꾼 뒤 첫 모드들의 u3 가 '전부 0'(면내 모드)이어서
+        #   HF 주입이 `ValueError: 프레임 1: u3 가 전부 0` 으로 중단됐다.
+        #   임퍼펙션은 노드 z 섭동이므로 u3 성분이 없는 모드는 물리적으로 쓸 수 없다.
+        #   => u3 성분이 무시할 수준인 프레임은 건너뛰고 횡성분이 있는 모드로 n_modes 개를 채운다.
+        table, meta, picks = {}, {}, []
+        for m in cand:
             try:
-                fo = frames[i].fieldOutputs['U'].getSubset(region=inst)
+                fo = frames[m].fieldOutputs['U'].getSubset(region=inst)
             except KeyError:
                 raise KeyError("프레임 %d: 'U' 필드가 없다. 이 프레임의 필드: %s"
-                               % (i + 1, sorted(frames[i].fieldOutputs.keys())))
+                               % (m + 1, sorted(frames[m].fieldOutputs.keys())))
             u3_at = {}
+            umax_abs = 0.0
             for v in fo.values:
-                u3_at[v.nodeLabel] = v.data[2]
+                d = v.data
+                u3_at[v.nodeLabel] = d[2]
+                for comp in (d[0], d[1], d[2]):
+                    if abs(comp) > umax_abs:
+                        umax_abs = abs(comp)
             if not u3_at:
-                raise ValueError("프레임 %d: U 값이 비어 있다" % (i + 1))
+                raise ValueError("프레임 %d: U 값이 비어 있다" % (m + 1))
             sign_node, u3_ref = max(u3_at.items(), key=lambda kv: abs(kv[1]))
             umax = abs(u3_ref)
-            if umax <= 0.0:
-                raise ValueError("프레임 %d: u3 가 전부 0 (면외 성분 없음)" % (i + 1))
+            ratio = (umax / umax_abs) if umax_abs > 0.0 else 0.0
+            if umax <= 0.0 or ratio < U3_MIN_FRAC:
+                _say("[MODES] 건너뜀: 프레임 %d (λ=%.6e) 면외 성분 미미 "
+                     "max|u3|=%.3e / max|u|=%.3e = %.2e < %.0e"
+                     % (m + 1, lam[m], umax, umax_abs, ratio, U3_MIN_FRAC))
+                continue
             sign = 1.0 if u3_ref >= 0 else -1.0
+            k = len(picks)
             table[k + 1] = dict((lab, sign * val / umax) for lab, val in u3_at.items())
-            meta[k + 1] = {'frame': i + 1, 'lam': lam[i], 'raw_max_u3': umax,
-                           'sign_node': sign_node}
+            meta[k + 1] = {'frame': m + 1, 'lam': lam[m], 'raw_max_u3': umax,
+                           'sign_node': sign_node, 'raw_max_abs': umax_abs}
+            picks.append(m)
             _say("[MODES] 모드 %d <- 프레임 %d: 노드 %d개, λ=%.6e, raw max|u3|=%.3e (부호기준 노드 %d)"
-                 % (k + 1, i + 1, len(u3_at), lam[i], umax, sign_node))
+                 % (k + 1, m + 1, len(u3_at), lam[m], umax, sign_node))
+            if len(picks) >= n_modes:
+                break
+        if not picks:
+            raise ValueError("횡(면외) 성분이 있는 좌굴모드가 하나도 없다 -> 임퍼펙션 주입 불가. "
+                             "후보 프레임 %d개가 전부 면내 모드였다(u3/최대성분 < %.0e). "
+                             "모드 소스의 패치 결합/구속 조건을 확인할 것." % (len(cand), U3_MIN_FRAC))
+        if len(picks) < n_modes:
+            _say("[MODES] 경고: 횡성분 있는 모드 %d개 < 요청 %d개 -> 있는 만큼만 쓴다"
+                 % (len(picks), n_modes))
+        _say("[MODES] 선택한 프레임 %s (λ %s)"
+             % ([p + 1 for p in picks], ['%.6e' % lam[p] for p in picks]))
         return table, meta, picks, lam, msgs
     finally:
         odb.close()
