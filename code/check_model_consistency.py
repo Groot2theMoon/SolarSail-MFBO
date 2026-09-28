@@ -60,9 +60,9 @@ SHARED = [
     "p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)",
     "elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)",
     "elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)",
-    "ELEM_CODE_QUAD = S8R5",
-    "ELEM_CODE_TRI = STRI65",
-    "SEED_DIV = 150.0",
+    "ELEM_CODE_QUAD = S4",
+    "ELEM_CODE_TRI = S3",
+    "SEED_DIV = 200.0",
     "p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))",
     # ---- 클램프/정점 강체 패치 ----
     "radius=0.2",

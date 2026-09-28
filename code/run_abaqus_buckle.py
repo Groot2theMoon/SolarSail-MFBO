@@ -101,14 +101,20 @@ INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
-# [2026-09-28 논문 정합] 막 요소 차수 — Galhofo 2022 = 2차 (STRI65 / S8R5)
-#   1차(S3/S4) 실측: .sta 가 증분 크기 리밋사이클(x1.5 성장 -> 상한 1~2e-4 에서 실제 수렴 실패
-#   -> 1/4 컷백)에 빠져 완주에 수만 증분(7시간+)이 필요했다. 논문은 같은 물리를 2차 10,100요소
-#   메쉬로 974 s 에 완주한다. 1차로 되돌리려면 아래 두 값만 S4/S3 으로 바꾼다
-#   (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 되돌림은 잡힌다).
-ELEM_CODE_QUAD = S8R5      # 8절점 2차 박막 셸 (논문 S8R5)
-ELEM_CODE_TRI = STRI65     # 6절점 2차 삼각 박막 셸 (논문 STRI65)
-SEED_DIV = 150.0           # seed = BASE/SEED_DIV -> 약 1.02만 요소 (논문 10,100 요소)
+# [2026-09-28] 막 요소 차수 — **1차(S4/S3) 유지**. 2차 실험은 기각됐다.
+#   배경: 1차 HF 는 .sta 가 증분 크기 리밋사이클(x1.5 성장 -> 상한 1~2e-4 에서 실제 수렴 실패
+#   -> 1/4 컷백)에 빠져 완주에 2만 증분 규모(7h+)이 필요하다. 논문은 2차(STRI65/S8R5)
+#   10,100요소로 974 s 에 완주한다 -> 그래서 2차를 시험했다.
+#   기각 근거(실측 2026-09-28): 2차 + SEED_DIV=150 으로 모드 소스 잡이
+#     `THE DIFFERENTIAL MATRIX HAS 170293 NEGATIVE DIAGONAL ENTRIES`(82%) + `CONVERGED=0`
+#     + `INSTABILITIES IN THE BASE STATE` 로 죽었다 — 2차에서 base state 가 더 나빠졌다.
+#   스킬 references/buckle-failure-triage.md 도 이미 "solver/element knobs 는 ruled out,
+#   stall load 는 1차/2차 무관(0.439 -> 0.4655)" 로 기록하고 있었다.
+#   => 2차는 논문 baseline 재현(S1 사다리)에서만 쓴다. 그때는 아래 두 값만 S8R5/STRI65 로
+#      (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 변경은 잡힌다).
+ELEM_CODE_QUAD = S4        # 4절점 1차 셸 (논문은 S8R5 2차 — S1 사다리 전용)
+ELEM_CODE_TRI = S3         # 3절점 1차 셸 (논문은 STRI65 2차 — S1 사다리 전용)
+SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 
 V1 = (BASE/2.0, HEIGHT, 0.0) # Top
@@ -464,7 +470,7 @@ def build_model(disp):
     inst_memb = a.Instance(name=INSTANCE_NAME, part=p, dependent=ON)
 
     # ---- 메쉬: run_abaqus_new.py 와 완전히 동일 ----
-    p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1) # 약 1.02만개 (2차 요소)
+    p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1) # 약 1.82만개 (1차 요소)
     p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
     # ★ 요소 타입은 run_abaqus_new.py(HF) 와 반드시 같아야 한다.
     #   이유: 좌굴 모드는 HF 와 **같은 노드**에 정의되어야 *IMPERFECTION 으로 이식된다.
