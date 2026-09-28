@@ -678,6 +678,10 @@ except Exception as _e:
 emit("[MODE] .dat 고유값 %d개 %s" % (len(lams), ['%.6e' % v for v in lams[:6]]))
 
 n_modes = 0
+# 왜 이 줄이 필요한가: 표가 안 만들어졌을 때 '잡이 실패해서(ok=False)'인지 '표 생성이 예외로 죽어서'인지
+#   콘솔/로그로 즉시 구분해야 한다(실측: 표가 없는 채로 HF 가 중단되는 일이 있었다).
+emit("[MODE] 잡 완료 ok=%s / WRITE_MODE_TABLE=%s / ODB=%s.odb 존재=%s / .dat 고유값=%d개"
+     % (ok, WRITE_MODE_TABLE, JOB_NAME, os.path.exists(JOB_NAME + '.odb'), n_dat))
 if ok and WRITE_MODE_TABLE:
     try:
         from aba_mode_from_odb import write_mode_table
