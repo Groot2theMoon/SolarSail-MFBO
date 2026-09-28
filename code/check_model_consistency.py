@@ -319,14 +319,17 @@ def check_operating_point():
 if not check_operating_point():
     sys.exit(1)
 
+SYM = "DISTRIBUTING|KINEMATIC|STRUCTURAL|UNIFORM_NDOF"   # CAE 가 받는 couplingType 심볼(문자열 아님)
+
+
 def check_coupling_type():
     """패치 절점 결합 방식이 두 파일에서 같은지 (2026-09-28 신설, KINEMATIC->DISTRIBUTING).
 
     SHARED 목록에 넣지 않은 이유: legacy 스크립트(new/buckle)는 여전히 KINEMATIC 이라
     SHARED 에 두면 legacy 가 FAIL 한다. 여기서는 HF 와 모드 소스만 비교한다.
     """
-    hf = re.search(r"couplingType=([A-Z_]+),\s*weightingMethod", code_only('run_abaqus.py'))
-    ms = re.search(r"COUPLING_TYPE='([A-Z_]+)'", code_only('run_abaqus_mode.py'))
+    hf = re.search(r"couplingType=(" + SYM + r"),\s*weightingMethod", code_only('run_abaqus.py'))
+    ms = re.search(r"COUPLING_TYPE=(" + SYM + r")", code_only('run_abaqus_mode.py'))
     print("--- 패치 결합 방식(Coupling) 일치: 모드 소스 vs HF ---")
     hv = hf.group(1) if hf else None
     mv = ms.group(1) if ms else None
