@@ -281,5 +281,38 @@ def main():
     return 0
 
 
+
+# ---------------------------------------------------------------------------
+# 운용점(DISP_GLOBAL) 일치 검사 (2026-09-28 신설)
+#   왜 필요한가: HF 의 `DISP_GLOBAL = 0.000005 * PRETENSION_SCALE` 줄이 주석 처리된 뒤에도
+#   위의 문자열 검사는 'HF=True' 로 통과했다 — 즉 운용점 변경을 아무 게이트도 잡지 못했다.
+#   모드 소스와 HF 의 운용점이 어긋나면 모드 형상이 다른 프리스트레스 상태의 것이 되어
+#   노드 섭동(임퍼펙션)이 물리적으로 틀어진다(2026-09-28 실측: 9.2배 어긋난 상태로 HF 를 돌렸다).
+#   여기서는 주석을 제거한 살아있는 코드에서 값을 직접 뽑아 비교한다.
+# ---------------------------------------------------------------------------
+def _live_disp_global(path):
+    live = code_only(path)
+    hit = re.search(r'DISP_GLOBAL\s*=\s*([0-9.eE+-]+)', live)
+    return float(hit.group(1)) if hit else None
+
+
+def check_operating_point():
+    hf = _live_disp_global(HF_PATH if 'HF_PATH' in globals() else 'run_abaqus.py')
+    ms = _live_disp_global('run_abaqus_mode.py')
+    print("--- 운용점(DISP_GLOBAL) 일치: 모드 소스 vs HF ---")
+    print("    HF = %s   /   mode = %s" % (hf, ms))
+    if hf is None or ms is None:
+        print("  FAIL  두 파일 중 DISP_GLOBAL 값을 읽지 못했습니다.")
+        return False
+    if abs(hf - ms) > 1e-12 + 0.01 * abs(hf):
+        print("  FAIL  운용점이 %.2f배 어긋납니다 -> 모드 재추출이 필요합니다." % (max(hf, ms) / max(min(hf, ms), 1e-30)))
+        return False
+    print("  OK    운용점 일치 (%.3e m)" % hf)
+    return True
+
+
+if not check_operating_point():
+    sys.exit(1)
+
 if __name__ == '__main__':
     sys.exit(main())
