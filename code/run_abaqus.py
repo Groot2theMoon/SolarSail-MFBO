@@ -456,7 +456,9 @@ elif IMPERFECTION_MODE == 'odb_direct':
         from aba_mode_from_odb import extract_modes
         _tbl, _meta, _picks, _lam, _msgs = extract_modes(
             MODE_SOURCE_ODB, MODE_SOURCE_STEP_NAME, MODE_INSTANCE,
-            len(IMPERFECTION_MODES), verbose=True)
+            len(IMPERFECTION_MODES), verbose=True,
+            dat_hint=MODE_SOURCE_DAT)   # λ 는 .dat MODE NO 표에서 읽는다(frameValue 는 모드번호)
+        #   MODE_SOURCE_DAT 는 코드ba 기준 '..\ClampFree_Buckle.dat' (모드 소스와 같은 폴더)
     except Exception as _e_odb:
         emit("!!! ERROR: ODB 에서 좌굴모드를 읽지 못했습니다 -> HF 잡을 제출하지 않고 중단합니다.")
         emit("[ERROR-EN] cannot read modes directly from ODB (%s) -> aborting BEFORE HF job submit."
@@ -656,8 +658,13 @@ p.generateMesh()
 #   셸 요소에서 *IMPERFECTION 은 결국 노드 좌표를 모드 형상만큼 옮기는 것이므로, 모드표
 #   (aba_mode_from_odb.py)를 진폭 0.10 t 로 합산해 좌표를 직접 섭동한다(.fil/스텝타입 제약 우회).
 #   위치: generateMesh 직후 + 어셈블리 regenerate 전 -> 의존 인스턴스가 이 좌표를 물려받는다.
-if _pert is None:
-    emit("[IMPERFECTION] 기하 섭동 없음 (IMPERFECTION_MODE=%s)" % IMPERFECTION_MODE)
+# (2026-09-28 수정) 예전 조건은 'if _pert is None:' 이었는데, _pert 는 위에서 None 으로만 초기화되고
+#   여기서 처음 만든다 -> 조건이 항상 True 라 else(실제 주입)가 **한 번도 실행되지 않았다**.
+#   즉 이전 HF 런들은 전부 '임퍼펙션 없는 완전 평탄 막'으로 돌았다(로그의 '기하 섭동 없음').
+#   조건을 '모드가 있는가'로 바꾼다.
+if not _mode_table:
+    emit("[IMPERFECTION] 기하 섭동 없음 (모드 없음: IMPERFECTION_MODE=%s, table=%s)"
+         % (IMPERFECTION_MODE, type(_mode_table).__name__))
 else:
     _amp = THICKNESS * IMPERFECTION_AMPL_T
     _pert = build_perturbation(_mode_table, _amp, IMPERFECTION_MODES)

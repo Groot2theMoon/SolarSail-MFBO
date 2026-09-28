@@ -46,7 +46,8 @@ def pick_mode_frames(lambdas, n_modes):
     return pick
 
 
-def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, verbose=True):
+def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, verbose=True,
+                  dat_hint=None):
     """ODB 에서 좌굴모드를 뽑아 '파일 없이' 표를 돌려준다 (run_abaqus.py 의 ODB 직접 주입용).
 
     반환: (table, meta, picks, lam, msgs)
@@ -91,8 +92,24 @@ def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, ver
                 lam.append(float('nan'))
         _say("[MODES] %s / %s : 프레임 %d개 (요청 %d모드) / 인스턴스 %s"
              % (os.path.basename(odb_path), step_name, len(frames), n_modes, instance))
+        # (2026-09-28 실측) *BUCKLE 스텝 ODB 의 frame.frameValue 는 고유치가 아니라 '모드 번호'(1,2,3,4)다.
+        #   좌굴계수 λ 는 .dat 의 MODE NO 표에 있으므로 dat_hint 가 있으면 그쪽을 우선한다.
+        #   (λ 는 모드 선택/로그 표기용이다 — 노드 섭동 물리에는 영향이 없다. 그래도 틀린 값을 쓰지 않는다.)
+        lam_src = 'odb.frameValue'
+        if dat_hint and os.path.exists(dat_hint):
+            try:
+                from coalescence_check import parse_eigenvalues
+                _dl = [float(x) for x in parse_eigenvalues(open(dat_hint).read())]
+            except Exception as _e_dat:
+                _dl = []
+                _say("[MODES] .dat 고유치 파싱 실패(%s: %s) -> ODB frameValue 사용"
+                     % (type(_e_dat).__name__, _e_dat))
+            if _dl:
+                lam = _dl
+                lam_src = os.path.basename(dat_hint)
         if lam:
-            _say("[MODES] 하중계수 λ(앞 12개): %s" % ', '.join('%.6e' % v for v in lam[:12]))
+            _say("[MODES] λ 출처=%s (앞 12개): %s"
+                 % (lam_src, ', '.join('%.6e' % v for v in lam[:12])))
 
         picks = pick_mode_frames(lam, n_modes)
         if not picks:
@@ -101,6 +118,16 @@ def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, ver
         if len(picks) < n_modes:
             _say("[MODES] 경고: 쓸 수 있는 양수 λ 모드 %d개 < 요청 %d개 -> 있는 만큼만 쓴다"
                  % (len(picks), n_modes))
+        # 방어: λ 를 .dat 에서 읽었으면 .dat 이 ODB 프레임 수보다 많은 모드를 나열할 수 있다.
+        #   (예: 100개 요청 중 4개만 수렴 -> .dat 에는 여러 값, ODB 에는 4개 프레임)
+        _over = [p for p in picks if p >= len(frames)]
+        if _over:
+            _say("[MODES] 경고: λ 출처(%s)의 모드 %s 는 ODB 프레임(%d개) 범위 밖 -> 제외"
+                 % (lam_src, [p + 1 for p in _over], len(frames)))
+            picks = [p for p in picks if p < len(frames)]
+            if not picks:
+                raise ValueError("λ 는 %d개인데 ODB 프레임이 %d개다 -> 모드 추출 불가"
+                                 % (len(lam), len(frames)))
         _say("[MODES] 선택한 프레임 %s (λ %s)"
              % ([p + 1 for p in picks], ['%.6e' % lam[p] for p in picks]))
 
