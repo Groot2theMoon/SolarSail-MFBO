@@ -1,0 +1,42 @@
+[canary] run_abaqus.py start 2026-09-28 17:29:48  cwd=C:\Users\user\Desktop\Seungwon\solarsail\2026\SolarSail-MFBO\code\aba  argv=['C:\\Program Files\\SIMULIA\\EstProducts\\2026\\win_b64\\code\\bin\\ABQcaeK.exe', '-cae', '-noGUI', 'run_abaqus.py', '-academic', 'RESEARCH', '-tmpdir', 'C:\\Users\\user\\AppData\\Local\\Temp', '-lmlog', 'ON', 'HF', '0.5', '1.0']
+[run_abaqus] _HERE = C:\Users\user\Desktop\Seungwon\solarsail\2026\SolarSail-MFBO\code
+[run_abaqus] _RUN  = C:\Users\user\Desktop\Seungwon\solarsail\2026\SolarSail-MFBO\code\aba
+DEBUG: All sys.argv: ['C:\\Program Files\\SIMULIA\\EstProducts\\2026\\win_b64\\code\\bin\\ABQcaeK.exe', '-cae', '-noGUI', 'run_abaqus.py', '-academic', 'RESEARCH', '-tmpdir', 'C:\\Users\\user\\AppData\\Local\\Temp', '-lmlog', 'ON', 'HF', '0.5', '1.0']
+[IMPERFECTION] ODB 직접 읽기 완료: ..\ClampFree_Buckle.odb / Step-Buckle / MEMBRANE-1 -> 모드 [1, 2, 3, 4]
+[IMPERFECTION] 모드당 노드 18442개 / λ ['9.162250e-05', '9.899720e-05', '1.334730e-04', '1.367570e-04']
+[IMPERFECTION] 기하 섭동 적용: 18442/18442 노드, 노드 18442개, max|dz|=1.017e-06 m (노드 15207), 평균|dz|=7.939e-08 m (진폭 0.10 t = 5.000e-07 m)
+               파트 노드 1 z=0.000000000e+00 (Δz=0.000e+00 m)
+               파트 노드 9222 z=-4.250528889e-07 (Δz=-4.251e-07 m)
+               파트 노드 18442 z=2.454897119e-10 (Δz=2.455e-10 m)
+[IMPERFECTION] 어셈블리 인스턴스 확인: 노드 1 z=0.000000000e+00 (파트와 같아야 함)
+[run_abaqus] buckle eigensolver=LANCZOS numEigen=100 vectors=n/a
+[run_abaqus] steps=['Step-GlobalTension', 'Step-Buckle', 'Step-ClampTension']  _BUCKLE_STEP_NO=2
+[run_abaqus] 좌굴 잡 모델=Model-Buckle, *NODE FILE 삽입=True
+[IMPERFECTION] 자기 좌굴 잡 건너뜀 (RUN_SELF_BUCKLE_JOB=False)
+[N-6] 고유치 소스: dat=C:\Users\user\Desktop\Seungwon\solarsail\2026\SolarSail-MFBO\code\Buckle_Analysis.dat msg=C:\Users\user\Desktop\Seungwon\solarsail\2026\SolarSail-MFBO\code\Buckle_Analysis.msg
+[N-6] coalescence record rc=0 (x_c=0.5, d_c=1.0)
+[R-13] base state ODB: C:\Users\user\Desktop\Seungwon\solarsail\2026\SolarSail-MFBO\code\Buckle_Analysis.odb
+[IMPERFECTION] 주입=기하 섭동 (출처 ..\ClampFree_Buckle.odb / Step-Buckle, 모드 [1, 2, 3, 4], 진폭 0.10 t = 5.000e-07 m)
+               노드 18442개, max|dz|=1.017e-06 m (노드 15207), 평균|dz|=7.939e-08 m
+[IMPERFECTION] 키워드 삽입 생략 (기하 섭동으로 이미 주입됨)
+Removing stale artifact: HF_Postbuckle.odb
+Removing stale artifact: HF_Postbuckle.sta
+Removing stale artifact: HF_Postbuckle.msg
+Removing stale artifact: HF_Postbuckle.com
+Removing stale artifact: HF_Postbuckle.prt
+Removing stale artifact: HF_Postbuckle.log
+Removing stale artifact: HF_Postbuckle.dat
+[run_abaqus] numCpus=4 numDomains=4 (코드 상수 NUMCPUS)
+Submitting Job: HF_Postbuckle
+[DIAG:HF_Postbuckle] HF_Postbuckle.msg (9681 KB) 핵심줄 924개
+      | ***WARNING: THE SYSTEM MATRIX HAS 2 NEGATIVE EIGENVALUES.
+      | ***WARNING: THE SYSTEM MATRIX HAS 2 NEGATIVE EIGENVALUES.
+      | ***ERROR: TOO MANY ATTEMPTS MADE FOR THIS INCREMENT
+      | ***ERROR: THE ANALYSIS HAS BEEN TERMINATED DUE TO PREVIOUS ERRORS. ALL OUTPUT
+      | REQUESTS HAVE BEEN WRITTEN FOR THE LAST CONVERGED INCREMENT.
+[DIAG:HF_Postbuckle] HF_Postbuckle.dat (399 KB) 핵심줄 1개
+      | 4003 WARNINGS ARE FOR NEGATIVE EIGENVALUES
+!!! WARNING: HF_Postbuckle — .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 없음 (중도 중단 의심; odb 존재만으로는 판정 불가 — R-12)
+Job HF_Postbuckle completed successfully (Status: None).
+Calling extraction script: abaqus python "C:\Users\user\Desktop\Seungwon\solarsail\2026\SolarSail-MFBO\code\eval_abaqus.py" LF_Analysis.odb HF_Postbuckle.odb HF
+RESULTS:0.7427245132598259,0.5337757020333432,574.1132065622741

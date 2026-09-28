@@ -538,7 +538,8 @@ PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5
 #   운용점을 목표에 맞추려면 약 33배(= DISP_GLOBAL 165um)가 필요하다.
 #   단 PRETENSION_SCALE 는 최종 하중까지 함께 키우므로(포스트버클 변위 1mm -> 3.3mm),
 #   운용점만 따로 맞추려면 DISP_GLOBAL / GLOBAL_FINAL 상수를 직접 수정한다(절대값).
-DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
+#DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
+DISP_GLOBAL = 165e-6
 CLAMP_PULL = DISP_GLOBAL * d_c
 # 좌굴 스텝의 perturbation 변위 (K_delta 를 만드는 항).
 #   Abaqus 문서 §6.2.3: 좌굴 스텝의 nonzero prescribed BC 는 '증분 응력'에 기여하고,
@@ -1108,7 +1109,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-GlobalTension',  
         nlgeom=ON, 
-        stabilizationMagnitude=0.0002,      # Galhofo 참조 2e-4 
+        stabilizationMagnitude=0.001,      # Galhofo 참조 2e-4 
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
         adaptiveDampingRatio=0.05,
