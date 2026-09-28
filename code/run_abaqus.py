@@ -168,6 +168,19 @@ def emit(*a):
         pass
 
 
+def _first_existing(*cands):
+    """후보 경로 중 처음 존재하는 것을 돌려준다(없으면 None).
+
+    (2026-09-28) HF 는 os.chdir('aba') 로 돌기 때문에 'Buckle_Analysis.odb' 같은 상대 경로가
+    code\aba 에서는 안 찾히고, R-13/N-6 진단이 조용히 건너뛰어졌다(로그: odb=False).
+    소스 잡의 산출물은 code\ 에 있으므로 '..' 후보를 함께 본다.
+    """
+    for c in cands:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
 def emit_start():
     """런 시작 표식(파일을 truncate). 호출되면 이 파일이 실행된 것이 증명된다."""
     global _EMIT_PATHS
@@ -458,7 +471,7 @@ elif IMPERFECTION_MODE == 'odb_direct':
             MODE_SOURCE_ODB, MODE_SOURCE_STEP_NAME, MODE_INSTANCE,
             len(IMPERFECTION_MODES), verbose=True,
             dat_hint=MODE_SOURCE_DAT)   # λ 는 .dat MODE NO 표에서 읽는다(frameValue 는 모드번호)
-        #   MODE_SOURCE_DAT 는 코드ba 기준 '..\ClampFree_Buckle.dat' (모드 소스와 같은 폴더)
+        #   MODE_SOURCE_DAT 는 코드\aba 기준 '..\ClampFree_Buckle.dat' (모드 소스와 같은 폴더)
     except Exception as _e_odb:
         emit("!!! ERROR: ODB 에서 좌굴모드를 읽지 못했습니다 -> HF 잡을 제출하지 않고 중단합니다.")
         emit("[ERROR-EN] cannot read modes directly from ODB (%s) -> aborting BEFORE HF job submit."
@@ -1045,17 +1058,22 @@ elif fidelity == 'HF':
     try:
         if EIG_RECORD:
             _rec = os.path.join(_HERE, 'coalescence_check.py')
-            _dat = os.path.join(os.getcwd(), 'Buckle_Analysis.dat')
-            _msg = os.path.join(os.getcwd(), 'Buckle_Analysis.msg')
+            _dat = _first_existing(os.path.join(os.getcwd(), 'Buckle_Analysis.dat'),
+                                   os.path.join(_HERE, 'Buckle_Analysis.dat'),
+                                   os.path.join('..', 'Buckle_Analysis.dat'))
+            _msg = _first_existing(os.path.join(os.getcwd(), 'Buckle_Analysis.msg'),
+                                   os.path.join(_HERE, 'Buckle_Analysis.msg'),
+                                   os.path.join('..', 'Buckle_Analysis.msg'))
             _hist = os.path.join(os.getcwd(), 'eig_history.jsonl')
-            if os.path.exists(_rec) and (os.path.exists(_dat) or os.path.exists(_msg)):
+            if os.path.exists(_rec) and (_dat or _msg):
+                emit("[N-6] 고유치 소스: dat=%s msg=%s" % (_dat, _msg))
                 _cmd = ('abaqus python "%s" record --dat "%s" --msg "%s" --history "%s" '
                         '--x %s --d %s --fidelity HF' % (_rec, _dat, _msg, _hist, x_c, d_c))
                 _rc = subprocess.call(_cmd, shell=True)
                 emit("[N-6] coalescence record rc=%d (x_c=%s, d_c=%s)" % (_rc, x_c, d_c))
             else:
                 emit("[N-6] 고유치 기록 건너뜀 (script=%s, dat=%s, msg=%s)"
-                      % (os.path.exists(_rec), os.path.exists(_dat), os.path.exists(_msg)))
+                      % (os.path.exists(_rec), bool(_dat), bool(_msg)))
     except Exception as _eig_err:
         emit("[N-6] coalescence record 실패(무시): %s" % _eig_err)
 
@@ -1066,13 +1084,17 @@ elif fidelity == 'HF':
     try:
         if BASE_PROBE:
             _probe = os.path.join(_HERE, 'base_state_probe.py')
-            if os.path.exists(_probe) and os.path.exists(BUCKLE_ODB):
+            _bodb = _first_existing(BUCKLE_ODB,
+                                    os.path.join(_HERE, os.path.basename(BUCKLE_ODB)),
+                                    os.path.join('..', os.path.basename(BUCKLE_ODB)))
+            if os.path.exists(_probe) and _bodb:
+                emit("[R-13] base state ODB: %s" % _bodb)
                 _pcmd = ('abaqus python "%s" "%s" Step-GlobalTension'
-                         % (_probe, BUCKLE_ODB))
+                         % (_probe, _bodb))
                 subprocess.call(_pcmd, shell=True)
             else:
-                emit("[R-13] base state 측정 건너뜀 (probe=%s, odb=%s)"
-                      % (os.path.exists(_probe), os.path.exists(BUCKLE_ODB)))
+                emit("[R-13] base state 측정 건너뜀 (probe=%s, odb=%s : 후보 %s / %s)"
+                      % (os.path.exists(_probe), bool(_bodb), BUCKLE_ODB, _HERE))
     except Exception as _probe_err:
         emit("[R-13] base state 측정 실패(무시): %s" % _probe_err)
 
