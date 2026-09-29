@@ -105,7 +105,12 @@ if LS:
     #   'DISP. CORRECTION TOO LARGE' -> 'APPEARS TO BE DIVERGING'. 이 서명은 line search 가
     #   겨냥하는 상황이다(보정 방향을 감쇠). 정적 해석 + 기존 안정화를 그대로 두고 삽입만 한다.
     #   *Controls 는 *Step 뒤, 절차 키워드(*Static) 앞에 온다.
-    out.insert(sidx, '*Controls, parameters=line search')
+    # 배치: *Controls 는 'Type: History data / Level: Step' 이므로 절차 키워드(*Static)와
+    #   그 데이터 줄 '뒤'에 온다. *Step 과 *Static 사이에 넣으면 입력단계에서 거부된다(실측).
+    # 데이터 줄: Nls = line search 최대 반복. 문서상 기본값이 Newton 스텝에서 **0(비활성)**이므로
+    #   반드시 값을 준다(권장 Nls=5).
+    out.insert(sidx + 2, '5,')
+    out.insert(sidx + 2, '*Controls, parameters=line search')
 else:
     out[sidx] = RIKS_STATIC
     out[sidx + 1] = riks_data(LPF)
