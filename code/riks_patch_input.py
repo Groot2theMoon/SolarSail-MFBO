@@ -25,12 +25,17 @@ import io
 import os
 import sys
 
-SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join('aba', 'HF_Postbuckle.inp')
-DST = sys.argv[2] if len(sys.argv) > 2 else os.path.join('aba', 'HF_Riks.inp')
-STEP = sys.argv[3] if len(sys.argv) > 3 else 'Step-Postbuckle'
+_argv = [a for a in sys.argv[1:] if not a.startswith('--')]
+LPF = None
+for a in sys.argv[1:]:
+    if a.startswith('--lpf='):
+        LPF = float(a.split('=', 1)[1])
+SRC = _argv[0] if len(_argv) > 0 else os.path.join('aba', 'HF_Postbuckle.inp')
+DST = _argv[1] if len(_argv) > 1 else os.path.join('aba', 'HF_Riks.inp')
+STEP = _argv[2] if len(_argv) > 2 else 'Step-Postbuckle'
 
 RIKS_STATIC = '*Static, riks'
-RIKS_DATA = '0.05, 1.0, 1e-05, 0.1, 1.0'
+RIKS_DATA = '0.05, 1.0, 1e-05, 0.1, %s'   # 마지막 항목 = lpf_end (기본 1.0)
 NEW_INC = 10000
 
 if not os.path.exists(SRC):
@@ -80,7 +85,9 @@ if 'inc=' in new_step.lower():
 out = list(lines)
 out[si] = new_step
 out[sidx] = RIKS_STATIC
-out[sidx + 1] = RIKS_DATA
+out[sidx + 1] = RIKS_DATA % ('%g' % LPF if LPF is not None else '1.0')
+if LPF is not None:
+    print('[진단] lpf_end = %g -> 램프의 %g%% 지점에서 스텝을 끝낸다' % (LPF, LPF * 100))
 
 _raw = io.open(SRC, 'rb').read()
 _nl = '\r\n' if b'\r\n' in _raw else '\n'
