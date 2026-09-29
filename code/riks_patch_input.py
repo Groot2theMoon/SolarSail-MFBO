@@ -27,7 +27,8 @@ import sys
 
 _argv = [a for a in sys.argv[1:] if not a.startswith('--')]
 LPF = None
-LS = ('--line-search' in sys.argv[1:])     # 정적 유지 + *Controls, parameters=line search 삽입
+LS = ('--line-search' in sys.argv[1:])
+RC = ('--relax-corr' in sys.argv[1:])     # *Controls, parameters=field, field=displacement     # 정적 유지 + *Controls, parameters=line search 삽입
 for a in sys.argv[1:]:
     if a.startswith('--lpf='):
         LPF = float(a.split('=', 1)[1])
@@ -111,7 +112,20 @@ if LS:
     #   반드시 값을 준다(권장 Nls=5).
     out.insert(sidx + 2, '5,')
     out.insert(sidx + 2, '*Controls, parameters=line search')
-else:
+if RC:
+    # [2026-09-29] 실패 서명: 잔차는 통과(5e-7 / 평균 1.87e-3 = 2.7e-4 < Rαn 5e-3)인데
+    #   'DISP. CORRECTION TOO LARGE COMPARED TO DISP. INCREMENT' 로 계속 실패한다.
+    #   원인은 보정/증분 비 기준 Cαn(기본 1e-2) 인데, 증분이 1.09e-6 m(= 0.011 t)까지
+    #   작아지면 보정 2.5e-7 이 23% 가 되어 그 비율은 만족될 수 없다(컷백 함정).
+    #   문서: 'in cases where the incremental solution is essentially zero' 에서 Cαn 등을
+    #   수정해야 할 수 있고, 'To avoid testing the magnitude of the solution correction,
+    #   you can set Cαn to 1.'  (Analysis UG, Commonly used control parameters)
+    #   잔차 기준 Rαn 은 건드리지 않는다 -> 평형 정확성 근거는 유지된다.
+    out.insert(sidx + 2, ', 1.0, ,')
+    out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
+if not (LS or RC):
+    # 둘 다 주지 않았을 때만 리크스로 전환한다.
+    #   (앞서 if RC: ... else: 로 붙어 있어 --line-search 단독이 조용히 리크스로 바뀌었다 - 검증에서 발견)
     out[sidx] = RIKS_STATIC
     out[sidx + 1] = riks_data(LPF)
 if LPF is not None:
@@ -123,7 +137,7 @@ _nl = '\r\n' if b'\r\n' in _raw else '\n'
 #   실측 오류(2026-09-29): ***ERROR: IF A RIKS STEP IS SPECIFIED IT MUST BE THE LAST STEP
 #   IN A DATA DECK. ADDITIONAL STEPS MAY BE DEFINED VIA THE *RESTART OPTION.
 #   원본에 Postbuckle 뒤 스텝이 남아 있으면 그 입력은 입력단계에서 즉시 죽는다 -> 쓰지 않고 중단한다.
-_tail = [] if LS else [(sidx + 3 + k, l) for k, l in enumerate(out[sidx + 2:])
+_tail = [] if (LS or RC) else [(sidx + 3 + k, l) for k, l in enumerate(out[sidx + 2:])
          if l.strip().lower().startswith('*step')]
 if _tail:
     print('ERROR: %s 뒤에 스텝이 더 있습니다 - 리크스 스텝은 마지막이어야 합니다.' % STEP)
