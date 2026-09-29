@@ -24,6 +24,32 @@ from __future__ import print_function
 import sys
 
 
+def _find_node(inst, label):
+    """인스턴스의 nodes 를 라벨로 찾는다.
+
+    실측(2026-09-29): 실제 ODB 에서 `inst.nodes` 는 repository 가 아니라
+    OdbMeshNodeArray(keys() 없는 시퀀스)다 ->
+      AttributeError: 'OdbMeshNodeArray' object has no attribute 'keys'
+    그래서 (a) keys() 가 있으면 repository 로, (b) 없으면 시퀀스로 순회한다.
+    알 수 없는 원소 타입은 조용히 건너뛴다(도구가 트레이스백으로 죽지 않게).
+    """
+    nodes = getattr(inst, 'nodes', None)
+    if nodes is None:
+        return None
+    if hasattr(nodes, 'keys'):
+        try:
+            return nodes[label]
+        except Exception:
+            return None
+    try:
+        for nd in nodes:
+            if int(getattr(nd, 'label', -1)) == label:
+                return nd
+    except TypeError:
+        return None
+    return None
+
+
 def _labels_of(nodeset):
     """어셈블리 셋은 (instanceName, label) 튜플, 인스턴스 셋은 노드 객체를 준다."""
     out = []
@@ -31,7 +57,9 @@ def _labels_of(nodeset):
         if isinstance(n, (tuple, list)):
             out.append(int(n[1]))
         else:
-            out.append(int(n.label))
+            lab = getattr(n, 'label', None)
+            if lab is not None:
+                out.append(int(lab))
     return out
 
 
@@ -69,10 +97,11 @@ def main():
         target = None
         for iname in ra.instances.keys():
             inst = ra.instances[iname]
-            if inst.nodes is not None and label in inst.nodes.keys():
+            nd = _find_node(inst, label)
+            if nd is not None:
                 target = inst
                 print("[1] 인스턴스: %s" % iname)
-                print("    좌표 (x,y,z) = %s" % (list(inst.nodes[label].coordinates),))
+                print("    좌표 (x,y,z) = %s" % (tuple(nd.coordinates),))
                 break
         if target is None:
             print("[1] 노드 %d 를 어셈블리에서 찾지 못했습니다." % label)
@@ -160,4 +189,12 @@ def main():
 
 
 if __name__ == '__main__':
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception:
+        import traceback
+        print("[node-probe] 실패 - 아래 추적을 그대로 보내주세요:")
+        traceback.print_exc()
+        sys.exit(3)
