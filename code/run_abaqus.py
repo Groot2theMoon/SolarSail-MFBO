@@ -1127,7 +1127,11 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-GlobalTension',  
         nlgeom=ON, 
-        stabilizationMagnitude=0.001,      # Galhofo 참조 2e-4 
+        stabilizationMagnitude=0.003,      # Galhofo 참조 2e-4 / [2026-09-29] 0.001 -> 0.003 (살짝만)
+        #   근거: 실측 ALLSD/ALLIE = 0.50%% 인데 allsdtol = 5%% -> 인공감쇠가 약 10배의 여유를 남기고
+        #   거의 작동하지 않았다. 즉 "감쇠가 컷백을 만든다"는 과거 반증은 "감쇠를 늘리면 도움이 될 것"을
+        #   반증하지 않는다(다른 주장). allsdtol 이 상한을 걸어 자체 제한되므로 위험은 유계다.
+        #   판정: 초기 100~200 증분의 증분 상한이 3e-4 이상으로 회복되는가 (10~20분) + energy_check.py
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
         adaptiveDampingRatio=0.05,
@@ -1248,20 +1252,21 @@ elif fidelity == 'HF':
     #   여기서 되읽어 두면 '상한이 실제로 몇으로 나갔나'를 로그만으로 판정할 수 있다.
     try:
         _msi = my_model.steps['Step-Postbuckle'].maxNumInc
-        emit("[STEP-LIMIT] 모델 maxNumInc = %s" % _msi)
+        emit("[STEP-CHECK] 모델 maxNumInc = %s" % _msi)
     except Exception as _e:
-        emit("[STEP-LIMIT] 모델 maxNumInc 읽기 실패(무시): %s" % _e)
+        emit("[STEP-CHECK] 모델 maxNumInc 읽기 실패(무시): %s" % _e)
     try:
         _inp = 'HF_Postbuckle.inp'
         if os.path.exists(_inp):
             with open(_inp, 'r') as _f:
                 for _line in _f:
-                    if _line.lower().lstrip().startswith('*step'):
-                        emit("[STEP-LIMIT] .inp: %s" % _line.strip())
+                    if _line.lower().lstrip().startswith('*step') \
+                            or _line.lower().lstrip().startswith('*static'):
+                        emit("[STEP-CHECK] .inp: %s" % _line.strip())
         else:
-            emit("[STEP-LIMIT] %s 없음 -> 생성된 inc= 확인 불가" % _inp)
+            emit("[STEP-CHECK] %s 없음 -> 생성된 inc= 확인 불가" % _inp)
     except Exception as _e:
-        emit("[STEP-LIMIT] .inp 되읽기 실패(무시): %s" % _e)
+        emit("[STEP-CHECK] .inp 되읽기 실패(무시): %s" % _e)
 
     cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)   # P0-C: 짝지은 LF odb
 
