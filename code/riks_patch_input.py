@@ -1,0 +1,93 @@
+# -*- coding: utf-8 -*-
+r"""
+Step-Postbuckle 을 Riks 스텝으로 바꾼 입력파일을 만든다 (원본은 건드리지 않는다).
+
+  python riks_patch_input.py [원본.inp] [출력.inp] [스텝이름]
+
+기본값: aba\HF_Postbuckle.inp -> aba\HF_Riks.inp, 스텝 Step-Postbuckle
+
+바꾸는 것 (딱 3줄):
+  1) *Step 줄의 inc=1000 -> inc=10000            (최대 증분 수; 리크스에서는 아크길이 증분 수)
+  2) *Static, stabilize=..., allsdtol=..., continue=NO  ->  *Static, riks
+     (STABILIZE/FACTOR 는 RIKS 와 함께 쓸 수 없다 - 키워드 문서)
+  3) 그 데이터 줄 -> 리크스 8항목 중 앞 5개:
+     dl_in, l_period, dl_min, dl_max, lpf_end
+       0.05,   1.0,    1e-05, 0.1,    1.0
+     lpf_end=1.0 이므로 BC 가 '스텝에서 지정한 최종값'(= 설계 운용점)에 닿으면 스텝이 끝난다.
+     노드/dof/값(6~8항목)은 쓰지 않는다.
+
+검증: v7 프로브에서 확인된 사실만 쓴다.
+  - lambda 는 prescribed displacement 의 '값'도 스케일한다 (스텝 중 BC 값 변경이 실제로 진행됨)
+  - 리크스 데이터 라인 순서는 dl_in, l_period, dl_min, dl_max, lambda_end, node, dof, value
+    (lambda_end 를 3번째에 두면 min/max 로 읽혀 입력단계에서 거부된다)
+"""
+import io
+import os
+import sys
+
+SRC = sys.argv[1] if len(sys.argv) > 1 else os.path.join('aba', 'HF_Postbuckle.inp')
+DST = sys.argv[2] if len(sys.argv) > 2 else os.path.join('aba', 'HF_Riks.inp')
+STEP = sys.argv[3] if len(sys.argv) > 3 else 'Step-Postbuckle'
+
+RIKS_STATIC = '*Static, riks'
+RIKS_DATA = '0.05, 1.0, 1e-05, 0.1, 1.0'
+NEW_INC = 10000
+
+if not os.path.exists(SRC):
+    sys.exit('ERROR: 원본을 찾지 못했습니다: %s' % SRC)
+
+lines = io.open(SRC, 'r', encoding='utf-8', errors='replace').read().splitlines()
+
+# 1) 대상 *Step 줄
+si = None
+for i, l in enumerate(lines):
+    ls = l.strip().lower()
+    if ls.startswith('*step') and ('name=' + STEP).lower() in ls:
+        si = i
+        break
+if si is None:
+    sys.exit('ERROR: *Step, name=%s 를 찾지 못했습니다' % STEP)
+
+# 2) 그 스텝 안의 *Static 줄 (+다음 줄이 데이터 줄)
+sidx = None
+for j in range(si, min(si + 60, len(lines))):
+    if lines[j].strip().lower().startswith('*static'):
+        sidx = j
+        break
+if sidx is None or sidx + 1 >= len(lines):
+    sys.exit('ERROR: %s 스텝 안에서 *Static + 데이터 줄을 찾지 못했습니다' % STEP)
+
+print('[찾음] line %d: %s' % (si + 1, lines[si]))
+print('[찾음] line %d: %s' % (sidx + 1, lines[sidx]))
+print('[찾음] line %d: %s' % (sidx + 2, lines[sidx + 1]))
+
+if lines[sidx].strip().lower().replace(' ', '').startswith('*static,riks'):
+    print('[안내] 이미 Riks 스텝입니다 - 그대로 복사합니다.')
+
+# 데이터 줄 형식 확인 (예상: initialInc, timePeriod, minInc, maxInc = 4항목)
+old_data = [x.strip() for x in lines[sidx + 1].split(',')]
+print('[확인] 기존 데이터 항목 수 = %d (%s)' % (len(old_data), lines[sidx + 1].strip()))
+if len(old_data) > 4 and old_data[0] != '':
+    print('[경고] 항목이 4개를 넘습니다 - 이 스텝이 정말 일반 Static 인지 확인하세요.')
+
+# 3) 세 줄 교체
+new_step = lines[si]
+if 'inc=' in new_step.lower():
+    import re
+    new_step = re.sub(r'inc=\s*\d+', 'inc=%d' % NEW_INC, new_step, flags=re.I)
+    print('[교체] *Step: %s' % new_step)
+
+out = list(lines)
+out[si] = new_step
+out[sidx] = RIKS_STATIC
+out[sidx + 1] = RIKS_DATA
+
+_raw = io.open(SRC, 'rb').read()
+_nl = '\r\n' if b'\r\n' in _raw else '\n'
+io.open(DST, 'w', encoding='ascii', errors='replace', newline=_nl).write(_nl.join(out) + _nl)
+print('[줄바꿈] %s' % ('CRLF' if _nl == '\r\n' else 'LF'))
+print('[저장] %s (%d 줄)' % (DST, len(out)))
+print('--- 새 스텝 블록 (앞 4줄) ---')
+for l in out[si:si + 4]:
+    print('   ', l)
+print('[다음] abaqus job=%s interactive' % os.path.splitext(os.path.basename(DST))[0])
