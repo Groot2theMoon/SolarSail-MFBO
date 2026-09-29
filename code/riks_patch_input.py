@@ -27,6 +27,7 @@ import sys
 
 _argv = [a for a in sys.argv[1:] if not a.startswith('--')]
 LPF = None
+LS = ('--line-search' in sys.argv[1:])     # 정적 유지 + *Controls, parameters=line search 삽입
 for a in sys.argv[1:]:
     if a.startswith('--lpf='):
         LPF = float(a.split('=', 1)[1])
@@ -99,8 +100,15 @@ if 'inc=' in new_step.lower():
 
 out = list(lines)
 out[si] = new_step
-out[sidx] = RIKS_STATIC
-out[sidx + 1] = riks_data(LPF)
+if LS:
+    # [2026-09-29] 로그 관측: attempt 1 에서 한 노드의 보정이 부호를 바꾸며 커지고
+    #   'DISP. CORRECTION TOO LARGE' -> 'APPEARS TO BE DIVERGING'. 이 서명은 line search 가
+    #   겨냥하는 상황이다(보정 방향을 감쇠). 정적 해석 + 기존 안정화를 그대로 두고 삽입만 한다.
+    #   *Controls 는 *Step 뒤, 절차 키워드(*Static) 앞에 온다.
+    out.insert(sidx, '*Controls, parameters=line search')
+else:
+    out[sidx] = RIKS_STATIC
+    out[sidx + 1] = riks_data(LPF)
 if LPF is not None:
     print('[진단] lpf_end = %g -> 램프의 %g%% 지점에서 스텝을 끝낸다' % (LPF, LPF * 100))
 
@@ -110,7 +118,7 @@ _nl = '\r\n' if b'\r\n' in _raw else '\n'
 #   실측 오류(2026-09-29): ***ERROR: IF A RIKS STEP IS SPECIFIED IT MUST BE THE LAST STEP
 #   IN A DATA DECK. ADDITIONAL STEPS MAY BE DEFINED VIA THE *RESTART OPTION.
 #   원본에 Postbuckle 뒤 스텝이 남아 있으면 그 입력은 입력단계에서 즉시 죽는다 -> 쓰지 않고 중단한다.
-_tail = [(sidx + 3 + k, l) for k, l in enumerate(out[sidx + 2:])
+_tail = [] if LS else [(sidx + 3 + k, l) for k, l in enumerate(out[sidx + 2:])
          if l.strip().lower().startswith('*step')]
 if _tail:
     print('ERROR: %s 뒤에 스텝이 더 있습니다 - 리크스 스텝은 마지막이어야 합니다.' % STEP)
