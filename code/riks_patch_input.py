@@ -91,6 +91,20 @@ if LPF is not None:
 
 _raw = io.open(SRC, 'rb').read()
 _nl = '\r\n' if b'\r\n' in _raw else '\n'
+# 가드: 리크스 스텝은 데이터 덱의 마지막 스텝이어야 한다.
+#   실측 오류(2026-09-29): ***ERROR: IF A RIKS STEP IS SPECIFIED IT MUST BE THE LAST STEP
+#   IN A DATA DECK. ADDITIONAL STEPS MAY BE DEFINED VIA THE *RESTART OPTION.
+#   원본에 Postbuckle 뒤 스텝이 남아 있으면 그 입력은 입력단계에서 즉시 죽는다 -> 쓰지 않고 중단한다.
+_tail = [(sidx + 3 + k, l) for k, l in enumerate(out[sidx + 2:])
+         if l.strip().lower().startswith('*step')]
+if _tail:
+    print('ERROR: %s 뒤에 스텝이 더 있습니다 - 리크스 스텝은 마지막이어야 합니다.' % STEP)
+    for ln, txt in _tail[:5]:
+        print('   line %d: %s' % (ln, txt.strip()))
+    print('   -> 원본이 최신 HF 입력(aba\\HF_Postbuckle.inp)이 맞는지 확인하세요.')
+    print('   -> 스텝을 지우거나, 리크스 스텝을 덱의 끝으로 옮긴 뒤 다시 실행하세요. 쓰지 않았습니다.')
+    sys.exit(2)
+
 io.open(DST, 'w', encoding='ascii', errors='replace', newline=_nl).write(_nl.join(out) + _nl)
 print('[줄바꿈] %s' % ('CRLF' if _nl == '\r\n' else 'LF'))
 print('[저장] %s (%d 줄)' % (DST, len(out)))
