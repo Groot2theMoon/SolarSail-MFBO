@@ -28,7 +28,8 @@ import sys
 _argv = [a for a in sys.argv[1:] if not a.startswith('--')]
 LPF = None
 LS = ('--line-search' in sys.argv[1:])
-RC = ('--relax-corr' in sys.argv[1:])     # *Controls, parameters=field, field=displacement     # 정적 유지 + *Controls, parameters=line search 삽입
+RC = ('--relax-corr' in sys.argv[1:])
+FORCE_RIKS = ('--riks' in sys.argv[1:])   # LS/RC 와 함께 줘도 리크스로 전환한다     # *Controls, parameters=field, field=displacement     # 정적 유지 + *Controls, parameters=line search 삽입
 for a in sys.argv[1:]:
     if a.startswith('--lpf='):
         LPF = float(a.split('=', 1)[1])
@@ -123,9 +124,10 @@ if RC:
     #   잔차 기준 Rαn 은 건드리지 않는다 -> 평형 정확성 근거는 유지된다.
     out.insert(sidx + 2, ', 1.0, ,')
     out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
-if not (LS or RC):
-    # 둘 다 주지 않았을 때만 리크스로 전환한다.
-    #   (앞서 if RC: ... else: 로 붙어 있어 --line-search 단독이 조용히 리크스로 바뀌었다 - 검증에서 발견)
+# 리크스 전환 판정: 옵션을 주지 않으면 리크스(기존 기본), --riks 를 주면 옵션과 무관하게 리크스.
+#   이렇게 해야 '리크스 + C_n^a 완화' 라는 공정한 조합을 만들 수 있다.
+DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC))
+if DO_RIKS:
     out[sidx] = RIKS_STATIC
     out[sidx + 1] = riks_data(LPF)
 if LPF is not None:
@@ -137,7 +139,7 @@ _nl = '\r\n' if b'\r\n' in _raw else '\n'
 #   실측 오류(2026-09-29): ***ERROR: IF A RIKS STEP IS SPECIFIED IT MUST BE THE LAST STEP
 #   IN A DATA DECK. ADDITIONAL STEPS MAY BE DEFINED VIA THE *RESTART OPTION.
 #   원본에 Postbuckle 뒤 스텝이 남아 있으면 그 입력은 입력단계에서 즉시 죽는다 -> 쓰지 않고 중단한다.
-_tail = [] if (LS or RC) else [(sidx + 3 + k, l) for k, l in enumerate(out[sidx + 2:])
+_tail = [] if not DO_RIKS else [(sidx + 3 + k, l) for k, l in enumerate(out[sidx + 2:])
          if l.strip().lower().startswith('*step')]
 if _tail:
     print('ERROR: %s 뒤에 스텝이 더 있습니다 - 리크스 스텝은 마지막이어야 합니다.' % STEP)
