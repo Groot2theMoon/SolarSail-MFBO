@@ -36,6 +36,21 @@ STEP = _argv[2] if len(_argv) > 2 else 'Step-Postbuckle'
 
 RIKS_STATIC = '*Static, riks'
 RIKS_DATA = '0.05, 1.0, 1e-05, 0.1, %s'   # 마지막 항목 = lpf_end (기본 1.0)
+
+
+def riks_data(lpf):
+    """리크스 데이터 라인: dl_in, l_period, dl_min, dl_max, lpf_end.
+
+    --lpf 를 주면 아크길이를 lambda_end 에 맞춰 줄인다. 이유: 첫 증분의 lambda 증가는
+    dlambda_in = dl_in / l_period 이므로(dl_in=0.05, l_period=1.0 -> 0.05), lpf_end 가
+    그보다 작으면(예: 0.02) 스텝이 첫 증분에서 끝나거나 Abaqus 가 일관성 없음으로 거부한다.
+    진단 목적은 'lpf_end 까지 도달하는가' 하나이므로, 도달할 수 있게 아크길이를 낮춘다.
+    """
+    if lpf is None:
+        return RIKS_DATA % '1.0'
+    dl_in = min(0.05, max(0.001, lpf / 5.0))
+    dl_max = min(0.1, max(0.002, lpf / 2.0))
+    return '%.6g, 1.0, 1e-07, %.6g, %.6g' % (dl_in, dl_max, lpf)
 NEW_INC = 10000
 
 if not os.path.exists(SRC):
@@ -85,7 +100,7 @@ if 'inc=' in new_step.lower():
 out = list(lines)
 out[si] = new_step
 out[sidx] = RIKS_STATIC
-out[sidx + 1] = RIKS_DATA % ('%g' % LPF if LPF is not None else '1.0')
+out[sidx + 1] = riks_data(LPF)
 if LPF is not None:
     print('[진단] lpf_end = %g -> 램프의 %g%% 지점에서 스텝을 끝낸다' % (LPF, LPF * 100))
 
