@@ -1239,7 +1239,30 @@ elif fidelity == 'HF':
             my_model.keywordBlock.insert(len(my_model.keywordBlock.sieBlocks)-1, imp_text)
 
     run_job_safely('HF_Postbuckle')
-    
+
+    # [STEP-LIMIT READBACK, 2026-09-29] 생성된 .inp 의 *Step 줄을 로그에 남긴다.
+    #   배경: maxNumInc 를 1000 -> 10000 으로 고쳤는데도 밤샘 런이 직전 런과 완전히 동일한
+    #   시그니처(1023 증분 / 262 컷백 / step 0.162)로 끝났다. 디스크의 .inp 를 보니
+    #   '*Step, name=Step-Postbuckle, nlgeom=YES, inc=1000' — 즉 그 런은 변경 이전
+    #   리비전의 코드로 생성된 .inp 를 썼다. CAE 의 maxNumInc 는 .inp 에서 '*Step' 의 inc= 다.
+    #   여기서 되읽어 두면 '상한이 실제로 몇으로 나갔나'를 로그만으로 판정할 수 있다.
+    try:
+        _msi = my_model.steps['Step-Postbuckle'].maxNumInc
+        emit("[STEP-LIMIT] 모델 maxNumInc = %s" % _msi)
+    except Exception as _e:
+        emit("[STEP-LIMIT] 모델 maxNumInc 읽기 실패(무시): %s" % _e)
+    try:
+        _inp = 'HF_Postbuckle.inp'
+        if os.path.exists(_inp):
+            with open(_inp, 'r') as _f:
+                for _line in _f:
+                    if _line.lower().lstrip().startswith('*step'):
+                        emit("[STEP-LIMIT] .inp: %s" % _line.strip())
+        else:
+            emit("[STEP-LIMIT] %s 없음 -> 생성된 inc= 확인 불가" % _inp)
+    except Exception as _e:
+        emit("[STEP-LIMIT] .inp 되읽기 실패(무시): %s" % _e)
+
     cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)   # P0-C: 짝지은 LF odb
 
 try:
