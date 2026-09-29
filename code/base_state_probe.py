@@ -73,6 +73,15 @@ def main():
 
     odb_path = sys.argv[1] if len(sys.argv) > 1 else 'Buckle_Analysis.odb'
     step_name = sys.argv[2] if len(sys.argv) > 2 else 'Step-GlobalTension'
+    # [2026-09-29] 선택 인자 3: 목표 step time. 두 런을 '같은 하중 수준'에서 대조할 때 쓴다
+    #   (예: C_n^a 완화 런과 기본 기준 런을 step time 0.05 에서 비교). 생략하면 마지막 프레임.
+    t_target = None
+    if len(sys.argv) > 3:
+        try:
+            t_target = float(sys.argv[3])
+        except ValueError:
+            print("[R-13] 3번째 인자는 숫자(step time)여야 합니다: %r" % sys.argv[3])
+            return 2
 
     try:
         odb = openOdb(odb_path, readOnly=True)
@@ -90,8 +99,19 @@ def main():
             print("[R-13] '%s' 프레임 0개 - 해석이 이 스텝을 끝내지 못했습니다." % step_name)
             return 1
         frame = step.frames[-1]
+        sel_idx = nf
+        if t_target is not None:
+            # frames 는 repository 일 수도 배열일 수도 있으므로 .index() 를 쓰지 않고 직접 센다.
+            best_d, best_i = None, 0
+            for i, f in enumerate(step.frames):
+                d = abs(f.frameValue - t_target)
+                if best_d is None or d < best_d:
+                    best_d, best_i, frame = d, i, f
+            sel_idx = best_i + 1
+            print("[R-13] 목표 step time %.6g -> 가장 가까운 프레임 (frame %d/%d, step time %s)"
+                  % (t_target, sel_idx, nf, frame.frameValue))
         print("[R-13] base state = %s / %s  (frame %d/%d, step time %s)"
-              % (odb_path, step_name, nf, nf, frame.frameValue))
+              % (odb_path, step_name, sel_idx, nf, frame.frameValue))
 
         # 요소 체적 (면적 가중용; 쉘은 두께 균일 -> 면적비와 동일)
         vols = {}

@@ -29,7 +29,18 @@ _argv = [a for a in sys.argv[1:] if not a.startswith('--')]
 LPF = None
 LS = ('--line-search' in sys.argv[1:])
 RC = ('--relax-corr' in sys.argv[1:])
-FORCE_RIKS = ('--riks' in sys.argv[1:])   # LS/RC 와 함께 줘도 리크스로 전환한다     # *Controls, parameters=field, field=displacement     # 정적 유지 + *Controls, parameters=line search 삽입
+FORCE_RIKS = ('--riks' in sys.argv[1:])
+TSTOP = None                     # --tstop=<step time>: *Static 의 timePeriod(2번째 항목) 를 줄여 조기 종료
+for _a in sys.argv[1:]:
+    if _a.startswith('--tstop='):
+        try:
+            TSTOP = float(_a.split('=', 1)[1])
+        except ValueError:
+            print('[중단] --tstop= 뒤에는 숫자(step time)가 와야 합니다: %r' % _a)
+            sys.exit(2)
+if TSTOP is not None and FORCE_RIKS:
+    print("[중단] --tstop 과 --riks 는 함께 쓸 수 없습니다 (Riks 는 timePeriod 대신 아크길이를 받습니다).")
+    sys.exit(2)
 for a in sys.argv[1:]:
     if a.startswith('--lpf='):
         LPF = float(a.split('=', 1)[1])
@@ -93,6 +104,17 @@ print('[확인] 기존 데이터 항목 수 = %d (%s)' % (len(old_data), lines[s
 if len(old_data) > 4 and old_data[0] != '':
     print('[경고] 항목이 4개를 넘습니다 - 이 스텝이 정말 일반 Static 인지 확인하세요.')
 
+# [2026-09-29] --tstop: *Static 데이터 줄 = initialInc, timePeriod, minInc, maxInc
+#   2번째 항목(timePeriod)을 줄여 스텝을 조기에 끝낸다. 기본 진폭(ramp)이 스텝 타임을 따라가므로
+#   두 런을 '같은 하중 수준'에서 대조할 수 있다 (C_n^a 완화 타당성 검증용).
+if TSTOP is not None:
+    if len(old_data) < 2:
+        print('[중단] 데이터 줄에 timePeriod 항목이 없습니다: %r' % lines[sidx + 1])
+        sys.exit(2)
+    old_data[1] = '%g' % TSTOP
+    lines[sidx + 1] = ', '.join(old_data)
+    print('[진단] timePeriod -> %g (이 스텝을 %.6g 에서 끝낸다)' % (TSTOP, TSTOP))
+
 # 3) 세 줄 교체
 new_step = lines[si]
 if 'inc=' in new_step.lower():
@@ -126,7 +148,7 @@ if RC:
     out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
 # 리크스 전환 판정: 옵션을 주지 않으면 리크스(기존 기본), --riks 를 주면 옵션과 무관하게 리크스.
 #   이렇게 해야 '리크스 + C_n^a 완화' 라는 공정한 조합을 만들 수 있다.
-DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC))
+DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC or (TSTOP is not None)))
 if DO_RIKS:
     out[sidx] = RIKS_STATIC
     out[sidx + 1] = riks_data(LPF)
