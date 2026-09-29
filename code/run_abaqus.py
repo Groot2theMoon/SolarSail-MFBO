@@ -1135,11 +1135,20 @@ elif fidelity == 'HF':
         minInc=1e-8,          # R-9: 1e-15 는 발산 시 증분 소진까지 수시간
         maxInc=0.1,
         maxNumInc=10000       # R-9 / [2026-09-28] 1000 -> 10000
-        #   실측: 1023 증분에서 step time 0.162 도달 후
-        #     ***ERROR: TOO MANY INCREMENTS NEEDED TO COMPLETE THE STEP 으로 종료됐다.
+        #   실측 1(상한 1000): 1023 증분에서 step time 0.162 도달 후
+        #     ***ERROR: TOO MANY INCREMENTS NEEDED TO COMPLETE THE STEP 으로 종료.
         #   수렴은 완벽했다(증분당 1 iteration, attempt 1, 잔차 8.7e-10, coupling compat 0)
-        #   — 즉 발산이 아니라 증분 수 소진이다. 상한만 올린다(모델 파라미터 아님 -> 모드 재추출 불필요).
-        #   다음 레버(필요 시): allsdtol 0.05 -> 0.15 (컷백 262회 감소) + energy_check.py 검증.
+        #   — 즉 발산이 아니라 증분 수 소진이다.
+        #   실측 2(2026-09-28 밤, 상한 상향 뒤): **동일 시그니처가 그대로 재현**됐다
+        #     (1023 증분 / 262 컷백 / 3572 iteration / 469 neg-eig / 1436 s / step 0.162).
+        #     -> 두 갈래 중 하나다. (a) 상한이 이 런에 반영되지 않았다
+        #        (먼저 .inp 의 '*Step ... inc=' 값을 확인하라), 또는 (b) 반영됐어도 완주하지 못한다:
+        #        국소 증분이 ~4.5e-5 라 남은 0.838 에 약 1.8만 증분이 필요해,
+        #        상한 10000 으로도 step 0.6 근처에서 다시 멈춘다.
+        #   => 이 상향은 **해결책이 아니라 연장**이다. 실제 원인은 증분 크기가 강제로 눌리는 것:
+        #      국소 불안정(neg-eig 469건, 마지막 프레임 압축 면적 28.8%) 이다.
+        #   폐기된 레버: allsdtol 0.05 -> 0.15. ALLSD/ALLIE 실측 0.50%(허용 5%)라
+        #      상한이 binding 이 아니므로 이 값을 바꿔도 아무 일도 일어나지 않는다.
     )
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 
