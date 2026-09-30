@@ -53,7 +53,19 @@ def _nearest_frame(step, t):
     return best_i + 1, best_f
 
 
-def _metrics(frame, odb, node, instances):
+def _thrust_loss(frame, instance, conn, max_label):
+    """eval_abaqus.calc_thrust_loss 를 그대로 쓴다(같은 목적함수를 보장). 실패하면 None."""
+    try:
+        from eval_abaqus import calc_thrust_loss
+    except Exception:
+        return None
+    try:
+        return float(calc_thrust_loss(frame, instance, conn, max_label))
+    except Exception:
+        return None
+
+
+def _metrics(frame, odb, node, instances, tk=None):
     """프레임 하나에서 비교용 지표를 뽑는다."""
     from base_state_probe import _aggregate
 
@@ -117,8 +129,11 @@ def _metrics(frame, odb, node, instances):
     except Exception:
         pass
 
+    hl = None
+    if tk is not None:
+        hl = _thrust_loss(frame, tk['inst'], tk['conn'], tk['max_label'])
     return dict(n=n, mean=mean_s, sh_mean=sh_mean, sh_min=sh_min, maxP=s1mx, minP=s2mn,
-                u3max=u3_max, u3med=u3_med, rf=rf)
+                u3max=u3_max, u3med=u3_med, rf=rf, hl=hl)
 
 
 def _pct(a, b):
@@ -140,6 +155,8 @@ def main():
         print(__doc__)
         return 2
     odb_a, odb_b, step_name = argv[0], argv[1], argv[2]
+    # 7번째 위치 인자 = 시각 불일치 허용 % (기본 2.0). 이보다 크면 그 지점은 판정에서 제외한다.
+    gap_tol = float(argv[6]) if len(argv) > 6 else 2.0
     times = _norm_times(argv[3]) if len(argv) > 3 else None
     tol = float(argv[4]) if len(argv) > 4 else 2.0
     node = int(argv[5]) if len(argv) > 5 else 2
@@ -158,6 +175,17 @@ def main():
             return 1
         odbs.append(odb)
         steps.append(odb.steps[step_name])
+
+    # 추력손실용 재료 (Odb 당 한 번)
+    tks = []
+    for odb in odbs:
+        try:
+            inst = odb.rootAssembly.instances['MEMBRANE-1']
+            conn = [e.connectivity for e in inst.elements]
+            max_label = (inst.nodes[-1].label + 100) if inst.nodes else 100000
+            tks.append(dict(inst=inst, conn=conn, max_label=max_label))
+        except Exception:
+            tks.append(None)
 
     if times is None:
         # 두 런의 공통 구간을 자동으로 6 등분
@@ -179,10 +207,17 @@ def main():
             if fr is None:
                 print("[compare-states] 프레임이 없습니다: %s" % lbl[k])
                 return 1
-            res.append((idx, fr.frameValue, _metrics(fr, odbs[k], node, instances)))
+            res.append((idx, fr.frameValue, _metrics(fr, odbs[k], node, instances, tks[k])))
+        print()
+        gap = abs(res[1][1] - res[0][1]) / max(res[0][1], 1e-30) * 100.0
+        # 앞선 검증: 지표 차이가 이 시각 차이에 그대로 비례한다(측정 비 1.03).
+        #   시각이 어긋난 지점은 같은 상태 비교가 아니므로 verdict 에서 제외한다.
+        usable = gap <= gap_tol
         print()
         print("### 목표 step time %.6g    (A frame %d @ %.6g / B frame %d @ %.6g)"
               % (t, res[0][0], res[0][1], res[1][0], res[1][1]))
+        print("    시각 불일치 %+.2f%%  ->  %s"
+              % (gap, "판정 대상" if usable else "** 판정 제외 (프레임 격자 차이) **"))
         print("  %-22s %14s %14s %9s" % ("지표", "A", "B", "차이"))
         for key, name, kind in [("mean", "평균 면내응력 [Pa]", "int"),
                                 ("sh_min", "압축면적비 minP<0", "int"),
@@ -193,7 +228,8 @@ def main():
                                 ("u3med", "median|u3| [m]", "loc")]:
             va, vb = res[0][2][key], res[1][2][key]
             d = _pct(va, vb)
-            worst.setdefault(key, []).append(abs(d))
+            if usable:
+                worst.setdefault(key, []).append(abs(d))
             if d != d:
                 mark = "  (기준값 0 - 비교 불가)"
             elif abs(va) < 1e-9:
@@ -201,6 +237,13 @@ def main():
             else:
                 mark = "  <= tol" if abs(d) <= tol else "  ** 초과 **"
             print("  %-22s %14.6g %14.6g %+8.2f%%%s" % (name, va, vb, d, mark))
+        ha, hb = res[0][2].get('hl'), res[1][2].get('hl')
+        if ha is not None and hb is not None:
+            d = _pct(ha, hb)
+            if usable:
+                worst.setdefault("thrust_loss", []).append(abs(d))
+            mark = "" if abs(d) <= tol else "  ** 초과 **"
+            print("  %-22s %14.6g %14.6g %+8.2f%%%s" % ("추력손실(목적함수)", ha, hb, d, mark))
         for inst_name in instances:
             va = res[0][2]['rf'].get(inst_name)
             vb = res[1][2]['rf'].get(inst_name)
@@ -208,7 +251,8 @@ def main():
                 continue
             d = _pct(va, vb)
             key = "rf:" + inst_name
-            worst.setdefault(key, []).append(abs(d))
+            if usable:
+                worst.setdefault(key, []).append(abs(d))
             if d != d:
                 mark = "  (기준값 0 - 비교 불가)"
             elif abs(va) < 1e-9:
