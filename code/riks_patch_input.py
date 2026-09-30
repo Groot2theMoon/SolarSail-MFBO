@@ -25,7 +25,19 @@ import io
 import os
 import sys
 
+BUILD = '2026-10-01a (arc)'
+KNOWN_FLAGS = ('--line-search', '--relax-corr', '--riks')
+KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=')
+for _a in sys.argv[1:]:
+    if _a.startswith('--') and not (_a in KNOWN_FLAGS or _a.startswith(KNOWN_PREFIX)):
+        print('[중단] 알 수 없는 옵션입니다: %r' % _a)
+        print('  아는 플래그: %s' % ', '.join(KNOWN_FLAGS))
+        print('  아는 값옵션: %s' % ', '.join(p + '<값>' for p in KNOWN_PREFIX))
+        print('  (구버전 패처로 --arc 를 주면 이 검사가 없어 조용히 기본값으로 돌아갑니다)')
+        sys.exit(2)
+print('[패처] build %s' % BUILD)
 _argv = [a for a in sys.argv[1:] if not a.startswith('--')]
+v = _argv
 LPF = None
 LS = ('--line-search' in sys.argv[1:])
 RC = ('--relax-corr' in sys.argv[1:])
