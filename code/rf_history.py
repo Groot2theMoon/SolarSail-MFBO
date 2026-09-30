@@ -153,6 +153,27 @@ def main():
                                                        " ..." if len(drops) > 12 else ""))
             print("[RF-history]     해석: 국소 슬랙 또는 주름 이벤트. 감소폭이 반복적으로 0.1%% 미만이면")
             print("[RF-history]           수치잡음, 한 번의 큰 감소(수 %%)면 물리적 슬랙 이벤트입니다.")
+        # --- 인스턴스별 판정 (총합이 단조여도 개별 케이블은 이완할 수 있다) ---
+        print()
+        print("[RF-history] 인스턴스별 (각 케이블 장력의 거동):")
+        for inst_name in instances:
+            seq = [row.get(inst_name) for _, row, _ in hist if row.get(inst_name) is not None]
+            if len(seq) < 2:
+                continue
+            label = inst_name.replace("INST_CABLE_", "")
+            ups = sum(1 for k in range(1, len(seq)) if seq[k] > seq[k - 1])
+            dns = sum(1 for k in range(1, len(seq)) if seq[k] < seq[k - 1])
+            chg = (seq[-1] - seq[0]) / seq[0] * 100 if seq[0] else 0.0
+            if dns == 0:
+                tag = "단조 증가"
+            elif ups == 0:
+                tag = "단조 감소 = 지속적 이완"
+            else:
+                tag = "비단조 (증가 %d / 감소 %d)" % (ups, dns)
+            print("   %-6s %-28s %8.4g -> %8.4g N  (%+7.2f%%)"
+                  % (label, tag, seq[0], seq[-1], chg))
+
+        print()
         print("[RF-history] 주의: 이 결과로 Riks 필요성을 판정할 수 없습니다. 변위 제어 해석은")
         print("[RF-history]       반력이 줄어드는(음의 강성) 구간을 그대로 따라갑니다. Riks 가 필요한")
         print("[RF-history]       것은 delta 가 되돌아가는 스냅백/폴드뿐이고, 변위 제어 런이 완주했다면")
