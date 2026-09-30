@@ -102,10 +102,22 @@ def parse_run(name):
     if land is None:
         land = rec.get('lambda_sta')
     rec['lambda'] = land
-    a, b = rec.get('lambda_msg'), rec.get('lambda_sta')
-    if a is not None and b is not None and max(abs(a), abs(b)) > 0:
-        if abs(a - b) / max(abs(a), abs(b)) > 0.10:
-            rec['mismatch'] = 'lam_msg=%.5g vs lam_sta=%.5g' % (a, b)
+    # 교차검증: .sta 열 위치는 스텝 종류에 따라 다르다(TOTAL TIME/FREQ 열이 비면 인덱스가 당겨진다).
+    #   그래서 열을 고정하지 않고, 마지막 줄의 숫자 중 .msg 값과 가장 가까운 것을 찾아 비교한다.
+    a = rec.get('lambda_msg')
+    if a is not None and rec.get('last_line'):
+        nums = []
+        for x in re.split(r'\s+', rec['last_line']):
+            if re.match(r'^[+-]?\d*\.?\d+([eE][+-]?\d+)?$', x):
+                try:
+                    nums.append(float(x))
+                except ValueError:
+                    pass
+        if nums:
+            best = min(nums, key=lambda v: abs(v - a))
+            rec['lambda_sta'] = best
+            if abs(best - a) / max(abs(a), abs(best), 1e-30) > 0.02:
+                rec['mismatch'] = 'msg=%.5g vs sta 최근접=%.5g' % (a, best)
 
     # 스레드 수: .log 가 없어도 .msg 의 솔버 배너에 나온다(실측 로그로 확인).
     m = re.search(r'(\d+)\s+THREAD PER RANK', msg)
@@ -177,9 +189,9 @@ def report(recs, baseline=None):
         print('  %-*s vs %s : %s  (%.2f배)'
               % (width, r['run'], baseline, verdict, ratio))
     print()
-    print('검증용 원본 (.sta 마지막 데이터줄 / 사용한 열 인덱스)')
+    print('검증용 원본 (.sta 마지막 데이터줄 / 교차검증에 쓴 최근접값)')
     for r in recs:
-        print('  %-*s col=%s  %s' % (width, r['run'], _f(r.get('lambda_col'), '%s'),
+        print('  %-*s sta=%s  %s' % (width, r['run'], _f(r.get('lambda_sta'), '%.5g'),
                                      (r.get('last_line') or '-')))
     print()
     print('  증분당 람다가 기준보다 작으면 수렴 제어가 증분을 못 키우는 것,')
