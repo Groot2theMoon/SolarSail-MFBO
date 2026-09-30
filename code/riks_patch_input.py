@@ -111,9 +111,23 @@ if TSTOP is not None:
     if len(old_data) < 2:
         print('[중단] 데이터 줄에 timePeriod 항목이 없습니다: %r' % lines[sidx + 1])
         sys.exit(2)
+    # [2026-09-30] 함정 실측: *Static 데이터 줄의 initialInc/minInc/maxInc 는 **스텝타임 단위**다.
+    #   timePeriod 만 0.05 로 줄이면 같은 값이 램프 기준으로는 20배 큰 증분이 되어
+    #   (초기증분 0.0001 -> 램프의 2e-3 = 2 um, 완주 런은 1e-4 = 0.1 um) 취약한 상태에서
+    #   C_n^a 보정검정이 깨지고 증분이 나노미터급으로 붕괴한다(HF_ref 실측 5.06e-8).
+    #   -> 세 증분 파라미터를 같은 비율로 스케일해 **물리적 증분 이력을 그대로 보존**한다.
+    _old_tp = float(old_data[1]) if len(old_data) > 1 else 1.0
+    _ratio = (TSTOP / _old_tp) if _old_tp else 1.0
+    for _k in (0, 2, 3):
+        if len(old_data) > _k:
+            try:
+                old_data[_k] = '%g' % (float(old_data[_k]) * _ratio)
+            except ValueError:
+                pass
     old_data[1] = '%g' % TSTOP
     lines[sidx + 1] = ', '.join(old_data)
-    print('[진단] timePeriod -> %g (이 스텝을 %.6g 에서 끝낸다)' % (TSTOP, TSTOP))
+    print('[진단] timePeriod %g -> %g, 증분 파라미터 x%g (물리적 증분 이력 보존)'
+          % (_old_tp, TSTOP, _ratio))
 
 # 3) 세 줄 교체
 new_step = lines[si]
