@@ -76,3 +76,78 @@ MFBO 루프에 넣으려면 `run_abaqus.py` 가 잡을 제출하기 **전에** �
 - 종료 3 방식: 모니터 절점·자유도·도달 값(6,7,8) 또는 `λ_end`(5). 후자는 **부분 종료를 설계로 지정**할 수 있어
   정적 스텝의 `timePeriod` 보다 의미가 분명하다.
 - `self-explanatory` 원칙: Riks 는 `STABILIZE` 와 양립 불가하고 **마지막 스텝**이어야 한다(가드 구현됨).
+
+## 공식 문서 원문 (2017 Abaqus Analysis User's Guide, MIT mirror에서 확인)
+
+### 1) Restrictions - **이 문제 부류에 대한 결정적 진술**
+
+> "For postbuckling problems involving loss of contact, the Riks method will usually not work;
+> inertia or viscous damping forces (such as those provided by dashpots) must be introduced in a
+> dynamic or static analysis to stabilize the solution."
+
+주름(wrinkling)은 막의 국소 좌굴 = 접촉 상실이므로 **이 부류에 정확히 해당**한다. 문서가 권하는
+방법은 점성 감쇠를 넣은 정적 해석 = `*STABILIZE`. 즉 **현행 정적 + stabilize 경로가 문서 권장**이다.
+
+### 2) Bifurcation - 어떤 문제에서 잘 작동하는가
+
+> "The Riks method works well in snap-through problems - those in which the equilibrium path in
+> load-displacement space is smooth and does not branch."
+
+우리는 국소 분기(주름)가 계속 생기는 문제다. 임퍼펙션 주입 자체는 문서가 요구하는 올바른 조치
+("the exact postbuckling problem cannot be analyzed directly due to the discontinuous response at
+the point of buckling ... must be turned into a problem with continuous response").
+
+### 3) 시간/속도 의존 효과 - 감쇠 금지
+
+> "any effects involving time or strain rate (such as viscous damping or rate-dependent plasticity)
+> are no longer treated correctly and should not be used." / "Dashpots should not be used."
+
+Riks에서는 감쇠를 못 쓴다. 그리고 그 감쇠가 1)에서 문서가 권한 도구다 - **구조적 모순**.
+
+### 4) 증분 - 1% 외삽 한계
+
+> "The Riks procedure uses only a 1% extrapolation of the strain increment."
+
+일반 정적 해석보다 외삽이 약하다 = 심한 비선형에서 코렉터가 약하다.
+`STATIC, RIKS, DIRECT`(고정 아크길이)는 "not recommended ... prevents Abaqus/Standard from reducing
+the arc length when a severe nonlinearity is encountered".
+
+### 5) 종료 조건
+
+> "You can specify a maximum value of the load proportionality factor, lambda_end, or a maximum
+> displacement value at a specified degree of freedom." / "The Riks algorithm cannot obtain a
+> solution at a given load or displacement value since these are treated as unknowns."
+
+둘 다 없으면 `inc=` 개수까지 계속 간다. **lambda_end 는 '종료 트리거'일 뿐 정확한 해를 보장하지 않는다**
+-> 다른 ODB와 대조할 때는 프레임 보간 + 시각 불일치 가드가 필요하다.
+
+### 6) `*STATIC` 데이터줄 기본값 - **여기서 우리가 틀렸다**
+
+| 항목 | 기본값(문서) |
+|---|---|
+| 1 dl_in | 0/미지정이면 **스텝의 총 아크길이** (= 첫 증분에서 스텝 전체) |
+| 2 lperiod | 1.0. 첫 증분의 lambda 증가는 `dlambda_in = dl_in / lperiod` |
+| 3 dl_min | 0이면 `min(제안 dl_in, 1e-5 x 총 아크길이)` |
+| 4 **dl_max** | **미지정이면 상한 없음(no upper limit is imposed)** |
+| 5 lambda_end | lambda 상한 |
+
+**교훈**: dl_max 를 지정하면 자동 증분이 아크길이를 *늘릴* 여지를 잘라먹는다. 기존 실패 런들은
+0.1/V0, 0.025/V1 로 조여놨고 **더 좁게 조인 V1 이 더 못 갔다**(lambda 0.0503 -> 0.0129).
+문서 기본으로 되돌리려면 4번째 항목을 **비운다**: `0.005, 1.0, 1e-06, , 1`
+
+### 7) `*CONTROLS` 와 line search - 문서에 Riks 언급이 **0회**
+
+`simakey-r-controls.htm` 과 `simaanl-c-convergecontrol.htm` 어디에도 "Riks" 가 없다.
+그리고 line search 데이터줄: "Nls, maximum number of line search iterations. **Default Nls=0 for
+steps that use the Newton method** and Nls=5 for steps that use the quasi-Newton method."
+
+실측과 일치: Riks 스텝에서 `*Controls, parameters=line search` + `5,` 는 **문법은 통과하나
+`ADDITIONAL RESIDUAL/OPERATOR EVALUATIONS FOR LINE SEARCHES = 0`** (V0/V1 두 런 모두) -
+**실효 없음**. Riks 는 자기 아크길이 코렉터만 쓴다.
+
+### 8) 도구
+
+`riks_patch_input.py --arc=<dl_in>` (신규): dl_in 직접 지정 + **dl_max 항목을 비워 상한 없음** +
+dl_min=1e-6. `--arc-max=<v>` 로만 상한을 건다. `--lpf=` 는 종전 동작 유지(하위 호환).
+검증: `--arc=0.005` -> `0.005, 1.0, 1e-06, , 1` / `--arc=0.005 --arc-max=0.05` -> `..., 0.05, 1` /
+`--lpf=0.05` -> `0.01, 1.0, 1e-07, 0.025, 0.05` (변화 없음).

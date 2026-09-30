@@ -30,6 +30,8 @@ LPF = None
 LS = ('--line-search' in sys.argv[1:])
 RC = ('--relax-corr' in sys.argv[1:])
 FORCE_RIKS = ('--riks' in sys.argv[1:])
+ARC = None                      # --arc=<dl_in>: 아크길이 직접 지정(문서 기본인 '상한 없음' 동반)
+ARC_MAX = None                  # --arc-max=<v>: 굳이 상한을 걸고 싶을 때만
 TSTOP = None                     # --tstop=<step time>: *Static 의 timePeriod(2번째 항목) 를 줄여 조기 종료
 for _a in sys.argv[1:]:
     if _a.startswith('--tstop='):
@@ -44,6 +46,10 @@ if TSTOP is not None and FORCE_RIKS:
 for a in sys.argv[1:]:
     if a.startswith('--lpf='):
         LPF = float(a.split('=', 1)[1])
+    elif a.startswith('--arc='):
+        ARC = float(a.split('=', 1)[1])
+    elif a.startswith('--arc-max='):
+        ARC_MAX = float(a.split('=', 1)[1])
 SRC = _argv[0] if len(_argv) > 0 else os.path.join('aba', 'HF_Postbuckle.inp')
 DST = _argv[1] if len(_argv) > 1 else os.path.join('aba', 'HF_Riks.inp')
 STEP = _argv[2] if len(_argv) > 2 else 'Step-Postbuckle'
@@ -52,19 +58,32 @@ RIKS_STATIC = '*Static, riks'
 RIKS_DATA = '0.05, 1.0, 1e-05, 0.1, %s'   # 마지막 항목 = lpf_end (기본 1.0)
 
 
-def riks_data(lpf):
-    """리크스 데이터 라인: dl_in, l_period, dl_min, dl_max, lpf_end.
+def riks_data(lpf, arc=None, arc_max=None):
+    """리크스 데이터 라인: dl_in, l_period, dl_min, dl_max, lambda_end.
 
-    --lpf 를 주면 아크길이를 lambda_end 에 맞춰 줄인다. 이유: 첫 증분의 lambda 증가는
-    dlambda_in = dl_in / l_period 이므로(dl_in=0.05, l_period=1.0 -> 0.05), lpf_end 가
-    그보다 작으면(예: 0.02) 스텝이 첫 증분에서 끝나거나 Abaqus 가 일관성 없음으로 거부한다.
-    진단 목적은 'lpf_end 까지 도달하는가' 하나이므로, 도달할 수 있게 아크길이를 낮춘다.
+    아바쿠스 *STATIC 키워드 문서(2017, Data line for the Riks method) 기준:
+      1항 dl_in   : 0/미지정이면 '스텝의 총 아크길이' 가 기본 = 첫 증분에서 스텝 전체.
+      2항 lperiod : 기본 1.0. 첫 증분의 lambda 증가는 dlambda_in = dl_in / lperiod.
+      3항 dl_min  : 0이면 min(제안 dl_in, 1e-5 x 총 아크길이) 가 기본.
+      4항 dl_max  : **미지정이면 상한 없음**(no upper limit is imposed).
+      5항 lpf_end : lambda 상한.
+
+    => 그래서 dl_max 를 지정하는 것은 자동 증분이 아크길이를 '늘릴' 여지를 잘라먹는다.
+       이전 실패 런들은 dl_max 를 0.1 / 0.025 로 조여놓았고, 더 좁게 조인 쪽(V1)이 더 못 갔다.
+       문서 기본(상한 없음)으로 되돌리려면 4항을 비운다.
     """
     if lpf is None:
-        return RIKS_DATA % '1.0'
-    dl_in = min(0.05, max(0.001, lpf / 5.0))
-    dl_max = min(0.1, max(0.002, lpf / 2.0))
-    return '%.6g, 1.0, 1e-07, %.6g, %.6g' % (dl_in, dl_max, lpf)
+        lpf = 1.0
+    if arc is not None:
+        dl_in = arc
+        dl_min = 1e-06
+        dl_max_s = '' if arc_max is None else ('%.6g' % arc_max)
+    else:
+        dl_in = min(0.05, max(0.001, lpf / 5.0))
+        dl_min = 1e-07
+        dl_max_s = '%.6g' % (arc_max if arc_max is not None
+                             else min(0.1, max(0.002, lpf / 2.0)))
+    return '%.6g, 1.0, %.6g, %s, %.6g' % (dl_in, dl_min, dl_max_s, lpf)
 NEW_INC = 10000
 
 if not os.path.exists(SRC):
@@ -165,7 +184,7 @@ if RC:
 DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC or (TSTOP is not None)))
 if DO_RIKS:
     out[sidx] = RIKS_STATIC
-    out[sidx + 1] = riks_data(LPF)
+    out[sidx + 1] = riks_data(LPF, ARC, ARC_MAX)
 if LPF is not None:
     print('[진단] lpf_end = %g -> 램프의 %g%% 지점에서 스텝을 끝낸다' % (LPF, LPF * 100))
 
