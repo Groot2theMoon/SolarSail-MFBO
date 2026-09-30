@@ -188,7 +188,7 @@ if _tail:
 io.open(DST, 'w', encoding='ascii', errors='replace', newline=_nl).write(_nl.join(out) + _nl)
 print('[줄바꿈] %s' % ('CRLF' if _nl == '\r\n' else 'LF'))
 print('[저장] %s (%d 줄)' % (DST, len(out)))
-print('--- 새 스텝 블록 (앞 4줄) ---')
-for l in out[si:si + 4]:
+print('--- 새 스텝 블록 (앞 7줄, *Controls 포함) ---')
+for l in out[si:si + 7]:
     print('   ', l)
 print('[다음] abaqus job=%s interactive' % os.path.splitext(os.path.basename(DST))[0])
