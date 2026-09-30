@@ -107,6 +107,10 @@ def parse_run(name):
         if abs(a - b) / max(abs(a), abs(b)) > 0.10:
             rec['mismatch'] = 'lam_msg=%.5g vs lam_sta=%.5g' % (a, b)
 
+    # 스레드 수: .log 가 없어도 .msg 의 솔버 배너에 나온다(실측 로그로 확인).
+    m = re.search(r'(\d+)\s+THREAD PER RANK', msg)
+    if m:
+        rec['threads'] = int(m.group(1))
     log = _read(name + '.log')
     if log:
         m = re.search(r'checked out (\d+) tokens', log)
@@ -122,8 +126,9 @@ def _f(v, spec):
     return '-' if v is None else (spec % v)
 
 
-def report(recs):
-    base = next((r for r in recs if r['run'] == BASELINE), None)
+def report(recs, baseline=None):
+    baseline = baseline or (recs[0]['run'] if recs else BASELINE)
+    base = next((r for r in recs if r['run'] == baseline), None)
     base_rate = None
     if base and base['wall'] and base['lambda']:
         base_rate = base['lambda'] / base['wall']
@@ -160,17 +165,17 @@ def report(recs):
 
     print()
     print('판정')
-    print('  기준 = %s : lam/s = %s' % (BASELINE, _f(base_rate, '%.3e')))
+    print('  기준 = %s : lam/s = %s' % (baseline, _f(base_rate, '%.3e')))
     for r in recs:
-        if r['run'] == BASELINE or not r['wall'] or not r['lambda']:
+        if r['run'] == baseline or not r['wall'] or not r['lambda']:
             continue
         rate = r['lambda'] / r['wall']
         ratio = (rate / base_rate) if base_rate else None
         if ratio is None:
             continue
         verdict = '개선' if ratio > 1.15 else ('역효과' if ratio < 0.85 else '차이 없음')
-        print('  %-*s vs %s : %s  (%.2f배, %s)'
-              % (width, r['run'], BASELINE, verdict, ratio, r['run'].split('_')[0]))
+        print('  %-*s vs %s : %s  (%.2f배)'
+              % (width, r['run'], baseline, verdict, ratio))
     print()
     print('검증용 원본 (.sta 마지막 데이터줄 / 사용한 열 인덱스)')
     for r in recs:
@@ -191,7 +196,7 @@ def main():
     if not recs:
         print('판정할 잡이 없습니다. 먼저 screen_runs.ps1 로 런을 돌리세요.')
         return 1
-    report(recs)
+    report(recs, names[0] if names else None)
     return 0
 
 
