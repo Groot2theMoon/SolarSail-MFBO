@@ -25,8 +25,9 @@ import io
 import os
 import sys
 
-BUILD = '2026-10-01a (arc)'
-KNOWN_FLAGS = ('--line-search', '--relax-corr', '--riks')
+BUILD = '2026-10-01b (arc+speed)'
+KNOWN_FLAGS = ('--line-search', '--relax-corr', '--riks',
+               '--speed-discont', '--speed-iter')
 KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=')
 for _a in sys.argv[1:]:
     if _a.startswith('--') and not (_a in KNOWN_FLAGS or _a.startswith(KNOWN_PREFIX)):
@@ -42,6 +43,8 @@ LPF = None
 LS = ('--line-search' in sys.argv[1:])
 RC = ('--relax-corr' in sys.argv[1:])
 FORCE_RIKS = ('--riks' in sys.argv[1:])
+SPD_DISCONT = ('--speed-discont' in sys.argv[1:])   # 속도: 컷백 감소(문서 ANALYSIS=DISCONTINUOUS)
+SPD_ITER = ('--speed-iter' in sys.argv[1:])         # 속도: 증분 증가 조건 완화(IG/IL)
 ARC = None                      # --arc=<dl_in>: 아크길이 직접 지정(문서 기본인 '상한 없음' 동반)
 ARC_MAX = None                  # --arc-max=<v>: 굳이 상한을 걸고 싶을 때만
 TSTOP = None                     # --tstop=<step time>: *Static 의 timePeriod(2번째 항목) 를 줄여 조기 종료
@@ -191,12 +194,34 @@ if RC:
     #   잔차 기준 Rαn 은 건드리지 않는다 -> 평형 정확성 근거는 유지된다.
     out.insert(sidx + 2, ', 1.0, ,')
     out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
+if SPD_DISCONT:
+    # [2026-10-01] 속도 개선 1: 문서(Commonly used control parameters) -
+    #   "Sometimes it is useful to increase both I0 and IR ... to avoid premature cutbacks".
+    #   ANALYSIS=DISCONTINUOUS 는 I0=8, IR=10 으로 자동 설정한다. 우리 런은 컷백이 20.5%
+    #   (203/990)라 낭비가 크므로, 그 원인인 조기 컷백을 줄이는 것이 목적.
+    #   필드 위치를 지정하지 않으므로 순서 리스크가 없다.
+    out.insert(sidx + 2, '*Controls, analysis=discontinuous')
+if SPD_ITER:
+    # [2026-10-01] 속도 개선 2: 증분 증가 조건.
+    #   필드 순서는 convergecontrol 문서의 에코 블록에서 확인:
+    #     1 I0, 2 IR, 3 IP, 4 IC, 5 IL, 6 IG, 7 IS, 8 IA, 9 IJ ...
+    #     (IG = 'MAX EQUIL. ITERS IN TWO INCREMENTS FOR TIME INC. INCREASE', 기본 4)
+    #   우리 런은 반복/증분 = 4369/990 = 4.4 회로, 증분이 늘어나는 조건(<=IG=4)을 거의 못 채운다.
+    #   그래서 증분이 계속 작게 유지된다(평균 dlambda ~0.001 = 상한 0.1 의 1/100).
+    #   IG 4->8 로 완화하면 큰 증분이 채택되어 증분 수가 줄어든다. IL 10->14 는 컷백 문턱 완화.
+    #   물리/평형 정확성은 그대로이고 '경로 샘플링 간격'만 바뀐다 -> 목적함수 대조로 검증할 것.
+    out.insert(sidx + 2, ', , , 16, 14, 8')
+    out.insert(sidx + 2, '*Controls, parameters=time incrementation')
 # 리크스 전환 판정: 옵션을 주지 않으면 리크스(기존 기본), --riks 를 주면 옵션과 무관하게 리크스.
 #   이렇게 해야 '리크스 + C_n^a 완화' 라는 공정한 조합을 만들 수 있다.
-DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC or (TSTOP is not None)))
+DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC or (TSTOP is not None)
+                                                or SPD_DISCONT or SPD_ITER))
 if DO_RIKS:
     out[sidx] = RIKS_STATIC
     out[sidx + 1] = riks_data(LPF, ARC, ARC_MAX)
+if DO_RIKS and (SPD_DISCONT or SPD_ITER):
+    print('[경고] 리크스 스텝에는 *Controls 를 넣어도 실효가 없다(문서에 Riks 언급 없음,')
+    print('       line search 도 평가 0회로 실측). 속도 옵션은 정적 스텝에서만 쓰세요.')
 if LPF is not None:
     print('[진단] lpf_end = %g -> 램프의 %g%% 지점에서 스텝을 끝낸다' % (LPF, LPF * 100))
 
