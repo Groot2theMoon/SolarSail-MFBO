@@ -18,7 +18,10 @@
 용도
 
 사용법
-  abaqus python rf_history.py <odb> <step> [--nodes 2] [--dof 1] [--instances A,B,C]
+  abaqus python rf_history.py <odb> <step> [node] [dof] [instances]
+    node 기본 2 (케이블 인스턴스 루트), dof 생략하면 |RF| 크기, dof 지정하면 그 성분
+    instances 는 쉼표 구분(기본 INST_CABLE_RIGHT,LEFT,CL,CR,TOP)
+  주의: `--key=value` 는 abaqus python 실행기가 거부한다(실측). 위치 인자만 쓴다.
   예: abaqus python rf_history.py HF_rc.odb Step-Postbuckle
 
 주의
@@ -55,16 +58,12 @@ def main():
         print(__doc__)
         return 2
     odb_path, step_name = argv[0], argv[1]
-    node = DEFAULT_NODE
-    comp = None
-    instances = list(DEFAULT_INSTANCES)
-    for a in argv[2:]:
-        if a.startswith('--nodes='):
-            node = int(a.split('=', 1)[1])
-        elif a.startswith('--dof='):
-            comp = int(a.split('=', 1)[1]) - 1
-        elif a.startswith('--instances='):
-            instances = a.split('=', 1)[1].split(',')
+    # `--key=value` 는 abaqus python 실행기가 거부한다(실측 2026-09-30). 위치 인자만 쓴다.
+    #   [node] [dof] [instances]  (instances 는 쉼표 구분)
+    argv = [a for a in argv if not a.startswith('-')]
+    node = int(argv[2]) if len(argv) > 2 else DEFAULT_NODE
+    comp = (int(argv[3]) - 1) if len(argv) > 3 else None
+    instances = argv[4].split(',') if len(argv) > 4 else list(DEFAULT_INSTANCES)
 
     try:
         odb = openOdb(odb_path, readOnly=True)

@@ -7,9 +7,18 @@
   여러 step time 을 한 번에 훑는다.
   PowerShell 루프/파싱이 필요 없다 - 양쪽 ODB 를 직접 읽어 표를 만든다.
 
-사용법
-  abaqus python compare_states.py <odbA> <odbB> <step> [--times=0.02,0.04,0.06] [--node=2] [--tol=2.0]
-  예) abaqus python compare_states.py HF_ls.odb HF_rc.odb Step-Postbuckle --times=0.02,0.04,0.06,0.08,0.10,0.118
+사용법 (인자는 전부 위치 인자 - 아래 주의 참조)
+  abaqus python compare_states.py <odbA> <odbB> <step> [times] [tol] [node]
+    times : 쉼표 구분 step time 목록. 생략하면 두 런의 공통 구간을 6등분
+    tol   : 판정 허용 상대차 %% (기본 2.0)
+    node  : |RF| 를 읽을 절점 번호 (기본 2)
+  예) abaqus python compare_states.py HF_ls.odb HF_rc.odb Step-Postbuckle 0.02,0.04,0.06,0.08,0.10,0.118
+
+주의 (실측 2026-09-30)
+  `abaqus python` 실행기는 `--key=value` 형식 인자를 **거부**한다:
+    ABAQUS Error: Argument "--times=..." is not a valid argument.
+                   It has both equality sign and prepended dash.
+  따라서 이 스크립트는 **위치 인자만** 쓴다. 대시가 붙은 인자는 방어적으로 무시한다.
 
 판정
   스칼라 지표(평균 면내응력 / 압축 면적비 / maxP / minP / |RF| / |u3|)에 대해
@@ -125,25 +134,16 @@ def main():
         print("[compare-states] odbAccess 를 못 읽었습니다 - 'abaqus python' 으로 실행해야 합니다.")
         return 2
 
-    argv = [a for a in sys.argv[1:] if not a.startswith('--')]
-    opts = [a for a in sys.argv[1:] if a.startswith('--')]
+    # `--key=value` 는 abaqus python 실행기가 거부하므로 위치 인자만 쓴다.
+    argv = [a for a in sys.argv[1:] if not a.startswith('-')]
     if len(argv) < 3:
         print(__doc__)
         return 2
     odb_a, odb_b, step_name = argv[0], argv[1], argv[2]
-    node = 2
-    tol = 2.0
-    times = None
+    times = _norm_times(argv[3]) if len(argv) > 3 else None
+    tol = float(argv[4]) if len(argv) > 4 else 2.0
+    node = int(argv[5]) if len(argv) > 5 else 2
     instances = ["INST_CABLE_RIGHT", "INST_CABLE_LEFT", "INST_CABLE_CL", "INST_CABLE_CR", "INST_CABLE_TOP"]
-    for a in opts:
-        if a.startswith('--node='):
-            node = int(a.split('=', 1)[1])
-        elif a.startswith('--tol='):
-            tol = float(a.split('=', 1)[1])
-        elif a.startswith('--times='):
-            times = _norm_times(a.split('=', 1)[1])
-        elif a.startswith('--instances='):
-            instances = a.split('=', 1)[1].split(',')
 
     odbs, steps = [], []
     for path in (odb_a, odb_b):
