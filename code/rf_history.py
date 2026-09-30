@@ -1,13 +1,21 @@
 """
-[RF-history] 프레임별 케이블 반력 이력 -> 리밋포인트/스냅백 신호 판정 (읽기 전용)
+[RF-history] 프레임별 케이블 반력 이력 (읽기 전용)
+
+**무엇을 재는가**: 각 케이블 루트 절점의 반력 **크기 |RF| = sqrt(Rx^2+Ry^2+Rz^2)** 의 이력.
+  절대 성분을 더하면 안 된다 - 인스턴스마다 부호가 반대라 서로 상쇄되어
+  물리적 의미가 없는 스칼라가 나온다(2026-09-30 실측 오류).
+
+**무엇을 알 수 있는가**: 장력 이력.
+  - 단조 증가 -> 슬랙/주름 이벤트 없이 팽팽해지는 경로
+  - 감소 구간 -> 국소 슬랙 또는 주름 이벤트 (진단용)
+
+**무엇을 알 수 없는가 (중요)**: 이 도구로 Riks 필요성을 판정할 수 없다.
+  변위 제어 해석에서 반력이 줄어드는 구간(음의 강성)은 그대로 따라갈 수 있다.
+  Riks(아크길이 제어)가 정말 필요한 경우는 **델타가 되돌아가는 스냅백/폴드** 뿐이고,
+  변위 제어 정적 런이 완주했다면 그 경로에 스냅백은 없었다는 증거다
+  (있었다면 변위 제어로 완주하지 못한다). 2026-09-30 정정.
 
 용도
-  "이 문제가 리밋포인트를 지나는가?" 를 기존 ODB 만으로 판정한다.
-  지정 변위 제어 정적 해석에서 스텝 타임은 강제로 단조 증가하므로, 하중 자체의
-  단조성은 .sta 로는 알 수 없다. 대신 **반력**을 보면 된다:
-    - 반력이 단조 증가  -> 스냅백 신호 없음 -> Riks 의 경로 추적 이점 없음
-    - 반력이 감소하는 구간 존재 -> 구조가 하중을 내려놓는 구간 = 리밋포인트/스냅백
-      -> 하중·변위 제어 뉴턴은 원리적으로 그 구간을 넘지 못한다 (Riks 필수)
 
 사용법
   abaqus python rf_history.py <odb> <step> [--nodes 2] [--dof 1] [--instances A,B,C]
@@ -19,6 +27,7 @@
   - RF 는 절점 필드이므로 instance 별 getSubset(region=...) 로 읽는다.
   - 노드 번호 기본값 2 는 케이블 인스턴스의 루트 절점(base_state_probe 의 RF 출력과 동일).
 """
+import math
 import sys
 
 DEFAULT_INSTANCES = ["INST_CABLE_RIGHT", "INST_CABLE_LEFT", "INST_CABLE_CL",
@@ -96,7 +105,7 @@ def main():
                 if d is None:
                     missing.append(inst_name)
                     continue
-                val = sum(d) if comp is None else d[comp]
+                val = math.sqrt(sum(x * x for x in d)) if comp is None else d[comp]
                 row[inst_name] = val
                 total += val
             if missing and i == 0:
@@ -107,7 +116,7 @@ def main():
             print("[RF-history] RF 를 읽은 프레임이 없습니다.")
             return 1
 
-        hdr = "  %-4s %-12s %12s" % ("fr", "stepTime", "sum")
+        hdr = "  %-4s %-12s %12s" % ("fr", "stepTime", "|RF|sum")
         for n in instances:
             hdr += " %12s" % n.replace("INST_CABLE_", "")
         print(hdr)
@@ -130,25 +139,24 @@ def main():
             if hist[k][2] < hist[k - 1][2]:
                 drops.append((k, hist[k][0], hist[k - 1][2], hist[k][2]))
         t_end = hist[-1][0]
-        print("[RF-history] 프레임 %d개, step time %.6g 까지" % (len(hist), t_end))
+        print("[RF-history] 프레임 %d개, step time %.6g 까지 (양: 각 케이블 루트 |RF|)" % (len(hist), t_end))
         if not drops:
-            print("[RF-history] >>> 판정: 총 반력이 단조 증가 (감소 0회)")
-            print("[RF-history]     => 스냅백/리밋포인트 신호 없음.")
-            print("[RF-history]     => Riks 의 '경로 추적' 이점이 이 하중 경로에는 없습니다.")
-            print("[RF-history]        (남는 이점은 컷백 오버헤드와 lambda_end 종료뿐)")
+            print("[RF-history] >>> 장력 이력: 단조 증가 (감소 0회)")
+            print("[RF-history]     => 슬랙/주름 이벤트 없이 팽팽해지는 경로.")
         else:
             worst = min(drops, key=lambda d: (d[3] - d[2]) / d[2] if d[2] else 0.0)
             rel = (worst[3] - worst[2]) / worst[2] * 100 if worst[2] else 0.0
-            print("[RF-history] >>> 판정: 총 반력 감소 %d회 (전체 %d 프레임)" % (len(drops), len(hist)))
+            print("[RF-history] >>> 장력 이력: 감소 %d회 (전체 %d 프레임)" % (len(drops), len(hist)))
             print("[RF-history]     최대 감소 %.2f%%  (frame %d, step time %.6g, %.6g -> %.6g)"
                   % (rel, worst[0], worst[1], worst[2], worst[3]))
-            idx = [d[0] for d in drops][:12]
-            print("[RF-history]     감소 프레임: %s%s" % (idx, " ..." if len(drops) > 12 else ""))
-            print("[RF-history]     => 리밋포인트/스냅백 신호. 하중·변위 제어 뉴턴은 이 구간을")
-            print("[RF-history]        원리적으로 넘지 못하므로 Riks(아크길이 제어)가 정당화됩니다.")
-            print("[RF-history]        단, 감소폭이 수치잡음 수준인지 먼저 확인하세요 (아래 참고).")
-            print("[RF-history]        참고: 감소폭이 0.1%% 미만이고 반복적으로 나타나면 수치잡음,")
-            print("[RF-history]              한 번의 큰 감소(수 %%)면 물리적 스냅백입니다.")
+            print("[RF-history]     감소 프레임: %s%s" % ([d[0] for d in drops][:12],
+                                                       " ..." if len(drops) > 12 else ""))
+            print("[RF-history]     해석: 국소 슬랙 또는 주름 이벤트. 감소폭이 반복적으로 0.1%% 미만이면")
+            print("[RF-history]           수치잡음, 한 번의 큰 감소(수 %%)면 물리적 슬랙 이벤트입니다.")
+        print("[RF-history] 주의: 이 결과로 Riks 필요성을 판정할 수 없습니다. 변위 제어 해석은")
+        print("[RF-history]       반력이 줄어드는(음의 강성) 구간을 그대로 따라갑니다. Riks 가 필요한")
+        print("[RF-history]       것은 delta 가 되돌아가는 스냅백/폴드뿐이고, 변위 제어 런이 완주했다면")
+        print("[RF-history]       그 경로에 스냅백은 없었다는 증거입니다.")
         print("=" * 78)
         return 0
     finally:
