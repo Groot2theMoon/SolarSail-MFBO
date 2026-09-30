@@ -25,10 +25,10 @@ import io
 import os
 import sys
 
-BUILD = '2026-10-01b (arc+speed)'
+BUILD = '2026-10-01c (arc+speed+inc)'
 KNOWN_FLAGS = ('--line-search', '--relax-corr', '--riks',
                '--speed-discont', '--speed-iter')
-KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=')
+KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=', '--inc=')
 for _a in sys.argv[1:]:
     if _a.startswith('--') and not (_a in KNOWN_FLAGS or _a.startswith(KNOWN_PREFIX)):
         print('[중단] 알 수 없는 옵션입니다: %r' % _a)
@@ -47,6 +47,7 @@ SPD_DISCONT = ('--speed-discont' in sys.argv[1:])   # 속도: 컷백 감소(문�
 SPD_ITER = ('--speed-iter' in sys.argv[1:])         # 속도: 증분 증가 조건 완화(IG/IL)
 ARC = None                      # --arc=<dl_in>: 아크길이 직접 지정(문서 기본인 '상한 없음' 동반)
 ARC_MAX = None                  # --arc-max=<v>: 굳이 상한을 걸고 싶을 때만
+INC_LIMIT = None                # --inc=<N>: 증분 수 상한. 스크리닝용 - 시간축을 건드리지 않는다
 TSTOP = None                     # --tstop=<step time>: *Static 의 timePeriod(2번째 항목) 를 줄여 조기 종료
 for _a in sys.argv[1:]:
     if _a.startswith('--tstop='):
@@ -65,6 +66,8 @@ for a in sys.argv[1:]:
         ARC = float(a.split('=', 1)[1])
     elif a.startswith('--arc-max='):
         ARC_MAX = float(a.split('=', 1)[1])
+    elif a.startswith('--inc='):
+        INC_LIMIT = int(a.split('=', 1)[1])
 SRC = _argv[0] if len(_argv) > 0 else os.path.join('aba', 'HF_Postbuckle.inp')
 DST = _argv[1] if len(_argv) > 1 else os.path.join('aba', 'HF_Riks.inp')
 STEP = _argv[2] if len(_argv) > 2 else 'Step-Postbuckle'
@@ -99,7 +102,7 @@ def riks_data(lpf, arc=None, arc_max=None):
         dl_max_s = '%.6g' % (arc_max if arc_max is not None
                              else min(0.1, max(0.002, lpf / 2.0)))
     return '%.6g, 1.0, %.6g, %s, %.6g' % (dl_in, dl_min, dl_max_s, lpf)
-NEW_INC = 10000
+NEW_INC = INC_LIMIT if INC_LIMIT else 10000
 
 if not os.path.exists(SRC):
     sys.exit('ERROR: 원본을 찾지 못했습니다: %s' % SRC)
@@ -222,6 +225,11 @@ if DO_RIKS:
 if DO_RIKS and (SPD_DISCONT or SPD_ITER):
     print('[경고] 리크스 스텝에는 *Controls 를 넣어도 실효가 없다(문서에 Riks 언급 없음,')
     print('       line search 도 평가 0회로 실측). 속도 옵션은 정적 스텝에서만 쓰세요.')
+if TSTOP is not None:
+    print('[경고] --tstop 은 스텝의 timePeriod 를 줄입니다. 증분 파라미터를 비율 스케일해 첫 증분은')
+    print('       맞추지만, 이후 자동 증분은 압축된 시간축에서 결정되므로 로그의 증분값을 완주 런과')
+    print('       직접 비교할 수 없습니다(실측: 증분당 람다가 6.2배 작아짐).')
+    print('       스크리닝에는 --inc=<N> 을 쓰세요: 스텝핑을 그대로 두고 증분 수만 자릅니다.')
 if LPF is not None:
     print('[진단] lpf_end = %g -> 램프의 %g%% 지점에서 스텝을 끝낸다' % (LPF, LPF * 100))
 
