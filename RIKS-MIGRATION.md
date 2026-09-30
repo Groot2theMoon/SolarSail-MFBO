@@ -63,8 +63,8 @@ MFBO 루프에 넣으려면 `run_abaqus.py` 가 잡을 제출하기 **전에** �
 
 | 단계 | 비용 | 명령 / 방법 | 판정 |
 |---|---|---|---|
-| **V0 합법성** | 수 초 | 패처로 `--riks --relax-corr --line-search` 생성 → `abaqus job=... interactive` | `.dat` 에 ERROR 0 이면 합법. `*Controls` 블록 2개가 한 스텝에 허용되는지도 여기서 확정 |
-| **V1 속도** | 수 분 | `--lpf=0.05` 로 5 % 도달 | 정적 대비 **증분 수·시간** 비교. 유의미하게 적으면 V2, 아니면 **여기서 중단** |
+| **V0 합법성** | 수 초 | 패처로 `--riks --relax-corr --line-search` 생성 → `abaqus job=<n> input=<path> interactive` | **PASS (2026-09-30)** - 입력 프로세서가 오류 없이 끝나고 `.dat` 에 `***ERROR` 0. 즉 **Riks 스텝에서 `*Controls, parameters=field` + `parameters=line search` 둘 다 합법**이다(문서에 명시가 없던 사실). 분석단계 실패는 `.dat` 가 아니라 **`.msg`** 를 봐야 한다. |
+| **V1 속도** | 수 분 | `--lpf=0.05` 로 5 % 도달 (`0.01, 1.0, 1e-07, 0.025, 0.05`) | 정적 대비 **증분 수·시간** 비교. 유의미하게 적으면 V2, 아니면 **여기서 중단**. 주의: V0 는 lambda_end=1.0 / dl_min=1e-5 로 만들어져 이전 실패 모드(아크길이 바닥)에 그대로 노출된다 - V0 의 분석 실패는 속도 판정이 아니므로, 속도는 반드시 V1 으로 본다(dl_min=1e-7 로 100배 낮다). |
 | **V2 완주** | 30~90 분 | `--lpf=1.0` | 완주 여부 + 도달 λ |
 | **V3 물리** | 수 분 | ① 같은 λ 에서 `base_state_probe.py <odb> Step-Postbuckle <λ>` 로 정적 완주 해와 대조 ② `eval_abaqus.py` HF 지표 ③ `energy_check.py`(감쇠가 없으니 ALLSD≈0 예상) ④ `node_probe.py` / `wrinkle_spectrum.py` | 정적 해와 **적분량 ≤2 %** 면 대안으로 성립 |
 
