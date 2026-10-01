@@ -27,6 +27,14 @@ import os
 
 TARGET_STRESS = 7000.0   # Pa, R-13 목표 운용점(미검증)
 
+# 중앙 영역 반경 [m]. 논문의 7000 Pa 는 '사분면 중앙(the centre of each solar sail quadrant)'의
+# 막 응력이다. 우리 모델은 사분면 하나(삼각형)이므로 그 중앙은 무게중심 = ((10+20+0)/3, (10+0+0)/3)
+# = (10.0, 3.333) 이다. 반경 안의 요소만 모아 면적가중 통계를 낸다.
+#   - MIDSECTION 은 '두께 방향 단면점' 통계이지 공간적 중앙이 아니다(혼동 주의).
+#   - 좌표를 못 읽어도 기존 출력은 그대로 나온다(조용히 건너뛴다).
+R_CENTRE = 1.0
+CENTRE_XY = (10.0, 10.0 / 3.0)
+
 
 def _principal(s11, s22, s12):
     mean = 0.5 * (s11 + s22)
@@ -130,7 +138,24 @@ def main():
         except Exception:
             sf = frame.fieldOutputs['S']
 
+        # 요소 라벨 -> 중심 좌표. 실패해도 치명적이지 않다(중앙 통계만 생략).
+        cent = {}
+        try:
+            for inst in odb.rootAssembly.instances.values():
+                nl = {}
+                for nd in inst.nodes:
+                    nl[nd.label] = nd.coordinates
+                for el in inst.elements:
+                    cs = [nl[c] for c in el.connectivity if c in nl]
+                    if cs:
+                        cent[el.label] = (sum(c[0] for c in cs) / len(cs),
+                                          sum(c[1] for c in cs) / len(cs))
+            print("[R-13] 요소 중심 좌표 %d개 확보 (중앙 반경 %.3g m)" % (len(cent), R_CENTRE))
+        except Exception as e:
+            print("[R-13] 요소 좌표를 못 읽음 -> 중앙 영역 통계 생략 (%s)" % e)
+
         groups = {}      # section number -> rows
+        centrerows = []  # 중앙 반경 안의 rows
         for v in sf.values:
             d = v.data
             if len(d) < 3:
@@ -140,8 +165,14 @@ def main():
             except Exception:
                 num = None
             w = vols.get(v.elementLabel, 0.0)
-            groups.setdefault(num, []).append(
-                (float(d[0]), float(d[1]), float(d[2]), w if w > 0 else 0.0))
+            row = (float(d[0]), float(d[1]), float(d[2]), w if w > 0 else 0.0)
+            groups.setdefault(num, []).append(row)
+            xy = cent.get(v.elementLabel)
+            if xy is not None:
+                dx = xy[0] - CENTRE_XY[0]
+                dy = xy[1] - CENTRE_XY[1]
+                if dx * dx + dy * dy <= R_CENTRE * R_CENTRE:
+                    centrerows.append((row, num))
 
         if not groups:
             print("[R-13] S 값 0개")
@@ -169,6 +200,21 @@ def main():
                       % (TARGET_STRESS, mavg / TARGET_STRESS))
             print("[R-13] >>> 판정: 면내평균<0 비율 ~0 이면 base state 인장지배(수치문제) / "
                   "0.2 이상이면 slack·주름 상태(문서상 '예압>좌굴하중' 케이스)")
+        # 논문과 직접 비교되는 지표: 사분면 중앙 영역(반경 R_CENTRE)의 응력
+        if centrerows:
+            for lab, sel in (('CENTRE(mid)', [r for r, nm in centrerows if nm == mid]),
+                             ('CENTRE(all)', [r for r, nm in centrerows])):
+                if not sel:
+                    continue
+                n, cm, cmin, mavg, s1mx, s2mn = _aggregate(sel)
+                print(_fmt('%s r=%.3g' % (lab, R_CENTRE), n, cm, cmin, mavg, s1mx, s2mn))
+            sel_all = [r for r, nm in centrerows]
+            mavg_c = _aggregate(sel_all)[3]
+            print("[R-13] >>> CENTRE 헤드라인: 중심 (%.3g, %.3g) 반경 %.3g m / n=%d / "
+                  "평균 면내응력=%+.4g Pa" % (CENTRE_XY[0], CENTRE_XY[1], R_CENTRE,
+                                              len(sel_all), mavg_c))
+            print("[R-13] >>> 논문 대조용: 7000 Pa 대비 중앙 평균 면내응력 배율 = %.3f"
+                  % (mavg_c / TARGET_STRESS))
         elif mid is not None:
             print("[R-13] >>> 헤드라인: 면내평균<0 비율=%.4f  minP<0 비율=%.4f" % (cm, cmin))
 
