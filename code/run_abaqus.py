@@ -254,6 +254,16 @@ def run_job_safely(job_name, model_name=None):
     #   라이선스 토큰 오류가 나면 위 NUMCPUS 상수를 1 로 바꾼다.
     _ncp = NUMCPUS
     emit("[run_abaqus] numCpus=%d numDomains=%d (코드 상수 NUMCPUS)" % (_ncp, _ncp))
+    emit("[run_abaqus] ==== 적용된 상수 (덱 생성 시점 값) ====")
+    emit("   GLOBAL_FINAL   = %.6g m   <- 운용점/최종 하중. 여기를 바꿨는데 응력이 그대로면 미반영")
+    emit("   PRETENSION_SCALE = %.6g   (GLOBAL_FINAL 이 '0.0001 * PRETENSION_SCALE' 이면 여기가 원인)")
+    emit("   DISP_GLOBAL    = %.6g m   (GlobalTension 단계)")
+    emit("   NO_CLAMP       = %s        SEED_DIV = %.6g   WRITE_ONLY = %s"
+         % (NO_CLAMP, SEED_DIV, WRITE_ONLY))
+    emit("   stabilizationMagnitude(Postbuckle) = 0.003 / THICKNESS = %.3g m" % THICKNESS)
+    emit("[run_abaqus] ====================================")
+    if abs(GLOBAL_FINAL / (0.0001 * PRETENSION_SCALE) - 1.0) < 1e-9:
+        emit("   (참고: GLOBAL_FINAL 이 아직 '0.0001 * PRETENSION_SCALE' 식이다)")
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
     emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)

@@ -284,11 +284,11 @@ def main():
                 print("[R-13] |u3| 통계 (n=%d): max=%.3e m  p99=%.3e  median=%.3e  "
                       "|u3|>2t 비율=%.4f  |u3|>20t 비율=%.4f"
                       % (n3, u3s[-1], u3s[int(0.99 * (n3 - 1))], u3s[n3 // 2], f2, f20))
-                      _u3ave = sum(u3s) / float(n3)
-                      print("[R-13] >>> 논문 대조용 진폭: u_z,max=%.4g m (=%.1f t)  u_z,ave(|u3| mean)=%.4g m (=%.1f t)"
-                            % (u3s[-1], u3s[-1] / T_MEMB, _u3ave, _u3ave / T_MEMB))
-                      print("[R-13] >>> 참조: Galhofo2022 Table A.1 STRI65+S8R5 u_z,max=2.284e-04 m (45.7 t), 2x12 주름")
-                      print("[R-13] >>> (논문 Tables 3/4 는 진폭을 u_z,ave 로 보고한다) 1차 요소는 주름 수 비교에 부적합")
+                _u3ave = sum(u3s) / float(n3)
+                print("[R-13] >>> 논문 대조용 진폭: u_z,max=%.4g m (=%.1f t)  u_z,ave(|u3| mean)=%.4g m (=%.1f t)"
+                % (u3s[-1], u3s[-1] / T_MEMB, _u3ave, _u3ave / T_MEMB))
+                print("[R-13] >>> 참조: Galhofo2022 Table A.1 STRI65+S8R5 u_z,max=2.284e-04 m (45.7 t), 2x12 주름")
+                print("[R-13] >>> (논문 Tables 3/4 는 진폭을 u_z,ave 로 보고한다) 1차 요소는 주름 수 비교에 부적합")
                 for inst in sorted(inst_u3.keys()):
                     arr = sorted(inst_u3[inst])
                     print("       inst=%-18s n=%-6d max|u3|=%.3e m" % (inst, len(arr), arr[-1]))
