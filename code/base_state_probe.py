@@ -72,7 +72,7 @@ def _fmt(lab, n, cm, cmin, mavg, s1mx, s2mn):
             % (lab, n, cm, cmin, mavg, s1mx, s2mn))
 
 
-BUILD = '2026-10-01a (centre+radius)'
+BUILD = '2026-10-01b (uzave-paper-def)'
 #   개정 이력: (a) 중앙 영역(CENTRE) 통계 추가, (b) 4번째 인자로 중앙 반경 덮어쓰기.
 #   사용자 실행형 도구이므로 빌드를 첫 줄에 찍는다. 출력에 이 줄이 없거나 반경이 반영되지
 #   않으면 옛 리비전이다(실제로 2026-10-01 에 이 함정에 한 번 걸렸다).
@@ -264,12 +264,15 @@ def main():
             T_MEMB = 5.0e-6                        # 막 두께 [m] (코드 상수)
             uf = frame.fieldOutputs['U']
             u3 = []
+            u3sgn = []                     # 부호 유지 (논문 u_z,ave 정의용)
             inst_u3 = {}
             for v in uf.values:
                 d = v.data
                 if len(d) < 3:
                     continue
-                z = abs(float(d[2]))
+                _zraw = float(d[2])
+                u3sgn.append(_zraw)
+                z = abs(_zraw)
                 u3.append(z)
                 try:
                     inst = v.instance.name
@@ -284,11 +287,19 @@ def main():
                 print("[R-13] |u3| 통계 (n=%d): max=%.3e m  p99=%.3e  median=%.3e  "
                       "|u3|>2t 비율=%.4f  |u3|>20t 비율=%.4f"
                       % (n3, u3s[-1], u3s[int(0.99 * (n3 - 1))], u3s[n3 // 2], f2, f20))
-                _u3ave = sum(u3s) / float(n3)
-                print("[R-13] >>> 논문 대조용 진폭: u_z,max=%.4g m (=%.1f t)  u_z,ave(|u3| mean)=%.4g m (=%.1f t)"
-                % (u3s[-1], u3s[-1] / T_MEMB, _u3ave, _u3ave / T_MEMB))
-                print("[R-13] >>> 참조: Galhofo2022 Table A.1 STRI65+S8R5 u_z,max=2.284e-04 m (45.7 t), 2x12 주름")
-                print("[R-13] >>> (논문 Tables 3/4 는 진폭을 u_z,ave 로 보고한다) 1차 요소는 주름 수 비교에 부적합")
+                _uzmax = max(u3sgn)
+                _uzmin = min(u3sgn)
+                # 논문 정의: u_z,ave = (u_z,max + u_z,min)/2, 절대값 기준 -> (|max|+|min|)/2 = peak-to-peak/2
+                _uzave = (abs(_uzmax) + abs(_uzmin)) / 2.0
+                print("[R-13] >>> 논문 대조용 진폭: u_z,max=%.4g m  u_z,min=%.4g m  u_z,ave=(|max|+|min|)/2=%.4g m"
+                      % (_uzmax, _uzmin, _uzave))
+                print("[R-13] >>> t 정규화(%.1e m): u_z,max=%.1f t   u_z,min=%.1f t   u_z,ave=%.1f t"
+                      % (T_MEMB, _uzmax / T_MEMB, _uzmin / T_MEMB, _uzave / T_MEMB))
+                print("[R-13] >>> (참고) mean|u3| = %.4g m (=%.1f t) -- 논문 지표 아님(내부 참고용)"
+                      % (sum(u3s) / float(n3), (sum(u3s) / float(n3)) / T_MEMB))
+                print("[R-13] >>> 참조 Galhofo2022 (t=2.5e-06 m): u_z,max=2.284e-04 m (91.4 t), u_z,min=-2.269e-04 m")
+                print("[R-13] >>>   Table3 modes1,2,3,4: u_z,ave=2.2765e-04 m (91.1 t) / TableA.1 u_z,max 2.003~2.474e-04 m (80~99 t)")
+                print("[R-13] >>> 주름 수/파장은 요소 종류에 극민감(논문 자체 4배 산포) -> 요소 맞추기 전 비교 불가")
                 for inst in sorted(inst_u3.keys()):
                     arr = sorted(inst_u3[inst])
                     print("       inst=%-18s n=%-6d max|u3|=%.3e m" % (inst, len(arr), arr[-1]))
