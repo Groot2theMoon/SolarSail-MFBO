@@ -257,6 +257,17 @@ def run_job_safely(job_name, model_name=None):
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
     emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
+    # WRITE_ONLY: 덱만 만들고 제출하지 않는다.
+    #   이유(2026-10-01): riks_patch_input.py 는 '생성된 .inp' 를 수정해 완화 블록을 넣는데,
+    #   이 스크립트가 곧바로 submit+waitForCompletion 까지 하면 패치 이전의 무패치 런이
+    #   완주(약 40분)해 버린다. WRITE_ONLY=True 면 덱만 남기고 즉시 종료하므로
+    #   '덱 생성 -> 패처 -> 패치 덱 제출' 순서가 낭비 없이 성립한다.
+    #   주의: 뒤쪽 print_job_diag/job.status/job_completed_ok 는 제출된 잡을 전제하므로
+    #         여기서 exit 해야 안전하다(그 줄들을 주석 처리하는 방식은 쓰지 않는다).
+    if WRITE_ONLY:
+        emit("[run_abaqus] WRITE_ONLY=True : 덱만 생성(%s.inp)하고 제출하지 않는다." % job_name)
+        emit("             다음: python riks_patch_input.py ... -> abaqus job=<패치> input=<패치.inp>")
+        sys.exit(0)
     job.submit(consistencyChecking=OFF)
     
     job.waitForCompletion()
@@ -748,6 +759,7 @@ rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 #   받아 sigma2<0 영역(21.5%)을 만들고, 그 때문에 좌굴 고유값 추출이 실패한다는 가설을
 #   클램프만 제거해 직접 검증한다.
 NO_CLAMP = False                 # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
+WRITE_ONLY = False               # True = 덱(.inp)만 생성하고 제출하지 않는다 (패처 워크플로우용
 # 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
 SIGMA0 = 500.0                   # 수렴 보조용 초기응력 [Pa]
 if NO_CLAMP:
