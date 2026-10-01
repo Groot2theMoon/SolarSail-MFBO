@@ -72,7 +72,14 @@ def _fmt(lab, n, cm, cmin, mavg, s1mx, s2mn):
             % (lab, n, cm, cmin, mavg, s1mx, s2mn))
 
 
+BUILD = '2026-10-01a (centre+radius)'
+#   개정 이력: (a) 중앙 영역(CENTRE) 통계 추가, (b) 4번째 인자로 중앙 반경 덮어쓰기.
+#   사용자 실행형 도구이므로 빌드를 첫 줄에 찍는다. 출력에 이 줄이 없거나 반경이 반영되지
+#   않으면 옛 리비전이다(실제로 2026-10-01 에 이 함정에 한 번 걸렸다).
+
+
 def main():
+    print('[R-13] build %s' % BUILD)
     try:
         from odbAccess import openOdb
     except ImportError:
@@ -89,6 +96,7 @@ def main():
     if len(sys.argv) > 4:
         try:
             R_CENTRE = float(sys.argv[4])
+            print("[R-13] 중앙 반경을 인자로 덮어씀: R_CENTRE = %.4g m (기본 1.0)" % R_CENTRE)
         except ValueError:
             print("[R-13] 4번째 인자는 숫자(중앙 반경, m)여야 합니다: %r" % sys.argv[4])
             return 2
