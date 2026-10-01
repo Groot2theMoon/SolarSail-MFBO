@@ -83,6 +83,16 @@ def main():
     step_name = sys.argv[2] if len(sys.argv) > 2 else 'Step-GlobalTension'
     # [2026-09-29] 선택 인자 3: 목표 step time. 두 런을 '같은 하중 수준'에서 대조할 때 쓴다
     #   (예: C_n^a 완화 런과 기본 기준 런을 step time 0.05 에서 비교). 생략하면 마지막 프레임.
+    # [2026-10-01] 선택 인자 4: 중앙 영역 반경 [m]. 논문의 'centre of each quadrant' 정의에
+    #   따라 중앙 응력이 달라지므로(반경 1 m 에서 3958 Pa, 전막 평균 6634 Pa) 민감도를 본다.
+    global R_CENTRE
+    if len(sys.argv) > 4:
+        try:
+            R_CENTRE = float(sys.argv[4])
+        except ValueError:
+            print("[R-13] 4번째 인자는 숫자(중앙 반경, m)여야 합니다: %r" % sys.argv[4])
+            return 2
+
     t_target = None
     if len(sys.argv) > 3:
         try:
