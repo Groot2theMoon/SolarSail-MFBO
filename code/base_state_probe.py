@@ -214,8 +214,8 @@ def main():
             print("[R-13] >>> 헤드라인(중앙단면 면적가중): 면내평균<0 비율=%.4f  "
                   "min principal<0 비율=%.4f  평균 면내응력=%+.4g Pa" % (cm, cmin, mavg))
             if TARGET_STRESS:
-                print("[R-13] >>> 목표 TARGET_STRESS=%.0f Pa 대비 평균 면내응력 배율 = %.3f"
-                      % (TARGET_STRESS, mavg / TARGET_STRESS))
+                print("[R-13] >>> (참고용) 전막 평균 대비 TARGET_STRESS 배율 = %.3f  -- 논문 대조 대상 아님(논문은 전막 평균을 언급하지 않음). 대조는 아래 CENTRE"
+                      % (mavg / TARGET_STRESS))
             print("[R-13] >>> 판정: 면내평균<0 비율 ~0 이면 base state 인장지배(수치문제) / "
                   "0.2 이상이면 slack·주름 상태(문서상 '예압>좌굴하중' 케이스)")
         # 논문과 직접 비교되는 지표: 사분면 중앙 영역(반경 R_CENTRE)의 응력
@@ -284,6 +284,11 @@ def main():
                 print("[R-13] |u3| 통계 (n=%d): max=%.3e m  p99=%.3e  median=%.3e  "
                       "|u3|>2t 비율=%.4f  |u3|>20t 비율=%.4f"
                       % (n3, u3s[-1], u3s[int(0.99 * (n3 - 1))], u3s[n3 // 2], f2, f20))
+                      _u3ave = sum(u3s) / float(n3)
+                      print("[R-13] >>> 논문 대조용 진폭: u_z,max=%.4g m (=%.1f t)  u_z,ave(|u3| mean)=%.4g m (=%.1f t)"
+                            % (u3s[-1], u3s[-1] / T_MEMB, _u3ave, _u3ave / T_MEMB))
+                      print("[R-13] >>> 참조: Galhofo2022 Table A.1 STRI65+S8R5 u_z,max=2.284e-04 m (45.7 t), 2x12 주름")
+                      print("[R-13] >>> (논문 Tables 3/4 는 진폭을 u_z,ave 로 보고한다) 1차 요소는 주름 수 비교에 부적합")
                 for inst in sorted(inst_u3.keys()):
                     arr = sorted(inst_u3[inst])
                     print("       inst=%-18s n=%-6d max|u3|=%.3e m" % (inst, len(arr), arr[-1]))
