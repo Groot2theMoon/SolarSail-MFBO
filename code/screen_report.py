@@ -120,7 +120,7 @@ def parse_run(name):
                 rec['mismatch'] = 'msg=%.5g vs sta 최근접=%.5g' % (a, best)
 
     # 스레드 수: .log 가 없어도 .msg 의 솔버 배너에 나온다(실측 로그로 확인).
-    m = re.search(r'(\d+)\s+THREAD PER RANK', msg)
+    m = re.search(r'(\d+)\s+THREADS? PER RANK', msg)
     if m:
         rec['threads'] = int(m.group(1))
     log = _read(name + '.log')
@@ -128,7 +128,7 @@ def parse_run(name):
         m = re.search(r'checked out (\d+) tokens', log)
         if m:
             rec['tokens'] = int(m.group(1))
-        m = re.search(r'(\d+)\s+THREAD PER RANK', log)
+        m = re.search(r'(\d+)\s+THREADS? PER RANK', log)
         if m:
             rec['threads'] = int(m.group(1))
     return rec
