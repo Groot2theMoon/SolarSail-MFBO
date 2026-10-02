@@ -255,10 +255,16 @@ def run_job_safely(job_name, model_name=None):
     _ncp = NUMCPUS
     emit("[run_abaqus] numCpus=%d numDomains=%d (코드 상수 NUMCPUS)" % (_ncp, _ncp))
     emit("[run_abaqus] ==== 적용된 상수 (덱 생성 시점 값) ====")
-    emit("   GLOBAL_FINAL   = %.6g m   <- 운용점/최종 하중. 여기를 바꿨는데 응력이 그대로면 미반영")
-    emit("   PRETENSION_SCALE = %.6g   (GLOBAL_FINAL 이 '0.0001 * PRETENSION_SCALE' 이면 여기가 원인)")
-    emit("   DISP_GLOBAL    = %.6g m   (GlobalTension 단계)")
-    emit("   NO_CLAMP       = %s        SEED_DIV = %.6g   WRITE_ONLY = %s"
+    emit("[run_abaqus] 케이스: x_c=%.4g  d_c=%.4g  -> 클램프 %s, 클램프케이블 %s"
+         % (x_c, d_c,
+            "ON" if not NO_CLAMP else "OFF",
+            "생성" if not NO_CLAMP else "없음"))
+    emit("   GLOBAL_FINAL   = %.6g m   <- 여기를 바꿨는데 응력이 그대로면 미반영"
+         % GLOBAL_FINAL)
+    emit("   PRETENSION_SCALE = %.6g   (GLOBAL_FINAL 이 '0.0001 * PRETENSION_SCALE' 이면 여기가 원인)"
+         % PRETENSION_SCALE)
+    emit("   DISP_GLOBAL    = %.6g m   (GlobalTension 단계)" % DISP_GLOBAL)
+    emit("   NO_CLAMP=%s  SEED_DIV=%.6g  WRITE_ONLY=%s  (패치 반경 0.2 m, 리터럴)"
          % (NO_CLAMP, SEED_DIV, WRITE_ONLY))
     emit("   stabilizationMagnitude(Postbuckle) = 0.003 / THICKNESS = %.3g m" % THICKNESS)
     emit("[run_abaqus] ====================================")
