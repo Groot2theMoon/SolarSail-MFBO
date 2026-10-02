@@ -42,7 +42,11 @@ _argv = [a for a in sys.argv[1:] if not a.startswith('--')]
 v = _argv
 LPF = None
 LS = ('--line-search' in sys.argv[1:])
-RC = ('--relax-corr' in sys.argv[1:])
+# [2026-10-02 수정] --can 은 필드 데이터줄(Cαn)을 바꾸는 옵션이므로 `if RC:` 블록 안에 있다.
+#   그런데 사용자가 `--can=1e-2` 만 주고 `--relax-corr` 를 빼면 블록이 통째로 건너뛰어져
+#   옵션이 조용히 무시된다(실측: 경고도 안 찍히고 field 블록도 안 들어갔다).
+#   -> --can 이 주어지면 RC 를 자동으로 켠다.
+RC = ('--relax-corr' in sys.argv[1:]) or ('--can=' in ' '.join(sys.argv[1:]))
 FORCE_RIKS = ('--riks' in sys.argv[1:])
 SPD_DISCONT = ('--speed-discont' in sys.argv[1:])   # 속도: 컷백 감소(문서 ANALYSIS=DISCONTINUOUS)
 SPD_ITER = ('--speed-iter' in sys.argv[1:])         # 속도: 증분 증가 조건 완화(IG/IL)
