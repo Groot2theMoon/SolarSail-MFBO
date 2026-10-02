@@ -25,11 +25,11 @@ import io
 import os
 import sys
 
-BUILD = '2026-10-02a (ctrl-levers)'
+BUILD = '2026-10-02b (ctrl-levers+can)'
 KNOWN_FLAGS = ('--line-search', '--relax-corr', '--riks',
                '--speed-discont', '--speed-iter')
 KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=', '--inc=',
-               '--nls=', '--slsmin=', '--ia=', '--ran=')
+               '--nls=', '--slsmin=', '--ia=', '--ran=', '--can=')
 for _a in sys.argv[1:]:
     if _a.startswith('--') and not (_a in KNOWN_FLAGS or _a.startswith(KNOWN_PREFIX)):
         print('[중단] 알 수 없는 옵션입니다: %r' % _a)
@@ -59,6 +59,11 @@ NLS = None                      # --nls=<N>
 SLSMIN = None                   # --slsmin=<V>
 IA = None                       # --ia=<N>
 RAN = None                      # --ran=<V>
+# --can=<V> : Cαn = '최대 해 보정 / 최대 증분해' 수렴 기준(기본 1e-2).
+#   현재 덱은 `, 1.0, ,` 로 Cαn=1.0 (기본의 100배 느슨)이다. 이 값이 느슨하면 큰 증분에서
+#   각 증분이 덜 수렴된 채 통과해 누적되고, IG 상향과 결합하면 다른 평형해로 갈 수 있다
+#   (실측: IG=8 + Cαn=1.0 -> u_z,ave +32%, RF -27%, eval_abaqus FAIL).
+CAN = None                      # --can=<V>
 INC_LIMIT = None                # --inc=<N>: 증분 수 상한. 스크리닝용 - 시간축을 건드리지 않는다
 TSTOP = None                     # --tstop=<step time>: *Static 의 timePeriod(2번째 항목) 를 줄여 조기 종료
 for _a in sys.argv[1:]:
@@ -84,6 +89,8 @@ for a in sys.argv[1:]:
         IA = int(float(a.split('=', 1)[1]))
     elif a.startswith('--ran='):
         RAN = float(a.split('=', 1)[1])
+    elif a.startswith('--can='):
+        CAN = float(a.split('=', 1)[1])
     elif a.startswith('--arc-max='):
         ARC_MAX = float(a.split('=', 1)[1])
     elif a.startswith('--inc='):
@@ -220,9 +227,15 @@ if RC:
     #   수정해야 할 수 있고, 'To avoid testing the magnitude of the solution correction,
     #   you can set Cαn to 1.'  (Analysis UG, Commonly used control parameters)
     #   잔차 기준 Rαn 은 건드리지 않는다 -> 평형 정확성 근거는 유지된다.
-    if RAN is not None:
-        # fields: Rαn, Cαn  -- Rαn 을 주면 잔차 기준이 바뀐다(평형 정확도에 직접 영향)
-        out.insert(sidx + 2, '%.6g, 1.0, ,' % RAN)
+    # fields: Rαn, Cαn, qα0, qαu, ...
+    #   Rαn 을 비우면 기본 5e-3, Cαn 을 비우면 기본 1e-2 가 쓰인다.
+    #   주의: 지금까지 써온 `, 1.0, ,` 는 Cαn=1.0 (기본의 100배 느슨) 이었다.
+    _ran_s = ('%.6g' % RAN) if RAN is not None else ''
+    _can_s = ('%.6g' % CAN) if CAN is not None else ''
+    if RAN is not None or CAN is not None:
+        out.insert(sidx + 2, '%s, %s, ,' % (_ran_s, _can_s))
+        if CAN is not None:
+            print('[주의] Cαn=%.6g 로 지정 (기본 1e-2). 1 미만이면 수렴이 엄격해진다.' % CAN)
     else:
         out.insert(sidx + 2, ', 1.0, ,')
     out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
@@ -255,7 +268,8 @@ if SPD_ITER:
 DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC or (TSTOP is not None)
                                                 or SPD_DISCONT or SPD_ITER
                                                 or (NLS is not None) or (SLSMIN is not None)
-                                                or (IA is not None) or (RAN is not None)))
+                                                or (IA is not None) or (RAN is not None)
+                                                or (CAN is not None)))
 if DO_RIKS:
     out[sidx] = RIKS_STATIC
     out[sidx + 1] = riks_data(LPF, ARC, ARC_MAX)
