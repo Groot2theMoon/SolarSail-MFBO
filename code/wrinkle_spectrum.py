@@ -113,9 +113,32 @@ def main():
 
     print('[6] |u3| 통계 (n=%d): max=%.6e (%.1f t)  p99=%.3e  p50=%.3e'
           % (n, vals[-1], vals[-1] / T, q(0.99), q(0.50)))
+    # [2026-10-02 수정] vals 는 'abs 기준 정렬이지만 부호는 유지'한 값이다.
+    #   이전 코드는 `z > k*T` 로 비교해 **음수 변위를 전부 제외**했다(양수만 집계).
+    #   그래서 같은 런에 대해 |u3|>2t 가 49.08% 로 나왔는데, base_state_probe 의
+    #   절대값 기준 집계로는 90.7% 였다 -> 라벨과 계산이 불일치했던 버그.
     for k in (2, 10, 50, 200):
-        c = sum(1 for z in vals if z > k * T)
+        c = sum(1 for z in vals if abs(z) > k * T)
         print('       |u3| > %4dt : %7d  (%6.2f%%)' % (k, c, 100.0 * c / n))
+
+    # 부호 분해: 빌로잉(전역)이면 한쪽 부호로 치우치고, 주름(국소)이면 양쪽이 비슷하게 뜬다.
+    up = [z for z in vals if z > 0]
+    dn = [z for z in vals if z < 0]
+    print('    부호 분해: 양수 %d개 (max=%.4g, %.1f t) / 음수 %d개 (min=%.4g, %.1f t)'
+          % (len(up), max(up) if up else 0.0, (max(up) if up else 0.0) / T,
+             len(dn), min(dn) if dn else 0.0, (min(dn) if dn else 0.0) / T))
+    for k in (50, 200):
+        cu = sum(1 for z in vals if z > k * T)
+        cd = sum(1 for z in vals if z < -k * T)
+        print('       부호별 |u3|>%4dt : 양수 %6d (%5.2f%%) / 음수 %6d (%5.2f%%)'
+              % (k, cu, 100.0 * cu / n, cd, 100.0 * cd / n))
+    # 최대 양/음 변위 노드의 좌표 (빌로잉 정점 vs 주름 능선 판별용)
+    for tag, zsel in (('최대 +u3', max(u3.items(), key=lambda kv: kv[1])),
+                      ('최소 -u3', min(u3.items(), key=lambda kv: kv[1]))):
+        lab, zz = zsel
+        xy = coords.get(lab)
+        print('    %s : node %s  u3=%.4g m (%.1f t)  xy=%s'
+              % (tag, lab, zz, zz / T, ('(%.2f, %.2f)' % xy) if xy else '?'))
 
     # --- 7) ASCII 맵 (bin 평균) ---
     acc = {}
