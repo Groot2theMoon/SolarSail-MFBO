@@ -56,8 +56,8 @@ SHARED = [
     "s.Line(point1=V1[:2], point2=V3[:2])",
     "p.BaseShell(sketch=s)",
     # ---- 메쉬 (모드 노드 일치의 핵심) ----
-    "p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)",
-    "p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)",
+    "p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.05)",
+    "p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=ADVANCING_FRONT)",
     "elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)",
     "elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)",
     "ELEM_CODE_QUAD = S4",

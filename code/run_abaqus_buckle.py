@@ -470,8 +470,8 @@ def build_model(disp):
     inst_memb = a.Instance(name=INSTANCE_NAME, part=p, dependent=ON)
 
     # ---- 메쉬: run_abaqus_new.py 와 완전히 동일 ----
-    p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1) # 약 1.82만개 (1차 요소)
-    p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
+    p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.05) # 약 1.82만개 (1차 요소)
+    p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=ADVANCING_FRONT)
     # ★ 요소 타입은 run_abaqus_new.py(HF) 와 반드시 같아야 한다.
     #   이유: 좌굴 모드는 HF 와 **같은 노드**에 정의되어야 *IMPERFECTION 으로 이식된다.
     #   HF 쪽 요소 타입을 바꾸면 이 두 줄도 함께 바꿔야 한다.

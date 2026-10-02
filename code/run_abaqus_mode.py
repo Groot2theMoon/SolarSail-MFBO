@@ -495,8 +495,8 @@ def connect_cable(name, part, sail_corner, vector_dir, radius=1e-4):
 
 
 # 1. 메쉬 생성 (노드를 찾기 전에 필요)
-p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)
-p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
+p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.05)
+p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=ADVANCING_FRONT)
 elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
 elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
 p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))

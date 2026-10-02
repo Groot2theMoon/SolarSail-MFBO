@@ -21,8 +21,10 @@
 왜 노드 매핑이 성립하는가 (라이선스 0 정적 검증, 2026-09-22)
   create_rigid_patch 는 face partition 없이 getByBoundingSphere 로 '기존 노드'를 골라
   Coupling(KINEMATIC) 만 건다 -> 클램프가 메쉬를 바꾸지 않는다.
-  막 메쉬 결정 인자(형상 BASE/HEIGHT/THICKNESS, seedPart(BASE/200.0, deviationFactor=0.1),
-  QUAD_DOMINATED/FREE/MEDIAL_AXIS, 막 요소코드 S4)가 케이블 런과 HF 에서 동일하다
+  막 메쉬 결정 인자(형상 BASE/HEIGHT/THICKNESS, seedPart(BASE/SEED_DIV, deviationFactor=0.05),
+  QUAD_DOMINATED/FREE/ADVANCING_FRONT, 막 요소코드 S4)가 케이블 런과 HF 에서 동일하다
+  [2026-10-02] MEDIAL_AXIS -> ADVANCING_FRONT, deviationFactor 0.1 -> 0.05 로 변경(메쉬 품질 시험).
+  노드 라벨이 바뀌므로 임퍼펙션 모드표와 모드 소스 ODB 를 반드시 함께 재생성해야 한다.
   -> 노드 좌표/라벨이 동일 -> *IMPERFECTION 의 노드 라벨 매핑이 성립한다.
 
 abaqus 모듈을 쓰지 않는다(stdlib only) -> 하네스에서 단위시험 가능.
