@@ -586,7 +586,7 @@ CLAMP_PULL = DISP_GLOBAL * d_c
 #   값을 바꾸려면 이 상수를 직접 수정한다(구 MFBO_PERT_MAG 환경변수는 제거됨).
 PERTURBATION = 0.01
 CLAMP_PERT = PERTURBATION * d_c
-GLOBAL_FINAL = 1.77e-3  # 최종 하중: 코너 당김 1e-3 m
+GLOBAL_FINAL = 1e-3  # 최종 하중: 코너 당김 1e-3 m
 CLAMP_FINAL = GLOBAL_FINAL * d_c
 
 
@@ -768,7 +768,7 @@ rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 #   run_abaqus_cable.py(성공)는 클램프가 없다. 우리만 클램프가 base state 하중의 33%를
 #   받아 sigma2<0 영역(21.5%)을 만들고, 그 때문에 좌굴 고유값 추출이 실패한다는 가설을
 #   클램프만 제거해 직접 검증한다.
-NO_CLAMP = True           # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
+NO_CLAMP = False          # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
 WRITE_ONLY = True         # True = 덱(.inp)만 생성하고 제출하지 않는다 (패처 워크플로우용
 # 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
 SIGMA0 = 500.0                   # 수렴 보조용 초기응력 [Pa]
