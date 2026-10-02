@@ -25,10 +25,11 @@ import io
 import os
 import sys
 
-BUILD = '2026-10-01c (arc+speed+inc)'
+BUILD = '2026-10-02a (ctrl-levers)'
 KNOWN_FLAGS = ('--line-search', '--relax-corr', '--riks',
                '--speed-discont', '--speed-iter')
-KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=', '--inc=')
+KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=', '--inc=',
+               '--nls=', '--slsmin=', '--ia=', '--ran=')
 for _a in sys.argv[1:]:
     if _a.startswith('--') and not (_a in KNOWN_FLAGS or _a.startswith(KNOWN_PREFIX)):
         print('[중단] 알 수 없는 옵션입니다: %r' % _a)
@@ -47,6 +48,17 @@ SPD_DISCONT = ('--speed-discont' in sys.argv[1:])   # 속도: 컷백 감소(문�
 SPD_ITER = ('--speed-iter' in sys.argv[1:])         # 속도: 증분 증가 조건 완화(IG/IL)
 ARC = None                      # --arc=<dl_in>: 아크길이 직접 지정(문서 기본인 '상한 없음' 동반)
 ARC_MAX = None                  # --arc-max=<v>: 굳이 상한을 걸고 싶을 때만
+# [2026-10-02] 수렴 레버 -- Abaqus *CONTROLS 문서(2017 KEYRefMap simakey-r-controls) 근거.
+#   LINE SEARCH 데이터줄: Nls, slsmax, slsmin, flss, eta_ls
+#     Nls    = 최대 line search 반복. Newton 스텝 기본 0(비활성), 권장 5.   slsmin 기본 1e-4
+#   FIELD 데이터줄: Rαn, Cαn, ...
+#     Rαn = 최대잔차/평균플럭스 기준(기본 5e-3), Cαn = 최대보정/최대증분 기준(기본 1e-2)
+#   TIME INCREMENTATION 데이터줄 필드순서: I0, IR, IP, IC, IL, IG, IS, IA, IJ, IT
+#     IA = 증분당 최대 시도 횟수(기본 5). 초과하면 'TOO MANY ATTEMPTS MADE FOR THIS INCREMENT'.
+NLS = None                      # --nls=<N>
+SLSMIN = None                   # --slsmin=<V>
+IA = None                       # --ia=<N>
+RAN = None                      # --ran=<V>
 INC_LIMIT = None                # --inc=<N>: 증분 수 상한. 스크리닝용 - 시간축을 건드리지 않는다
 TSTOP = None                     # --tstop=<step time>: *Static 의 timePeriod(2번째 항목) 를 줄여 조기 종료
 for _a in sys.argv[1:]:
@@ -64,6 +76,14 @@ for a in sys.argv[1:]:
         LPF = float(a.split('=', 1)[1])
     elif a.startswith('--arc='):
         ARC = float(a.split('=', 1)[1])
+    elif a.startswith('--nls='):
+        NLS = float(a.split('=', 1)[1])
+    elif a.startswith('--slsmin='):
+        SLSMIN = float(a.split('=', 1)[1])
+    elif a.startswith('--ia='):
+        IA = int(float(a.split('=', 1)[1]))
+    elif a.startswith('--ran='):
+        RAN = float(a.split('=', 1)[1])
     elif a.startswith('--arc-max='):
         ARC_MAX = float(a.split('=', 1)[1])
     elif a.startswith('--inc='):
@@ -184,7 +204,12 @@ if LS:
     #   그 데이터 줄 '뒤'에 온다. *Step 과 *Static 사이에 넣으면 입력단계에서 거부된다(실측).
     # 데이터 줄: Nls = line search 최대 반복. 문서상 기본값이 Newton 스텝에서 **0(비활성)**이므로
     #   반드시 값을 준다(권장 Nls=5).
-    out.insert(sidx + 2, '5,')
+    _nls = int(NLS) if NLS is not None else 5
+    # fields: Nls, slsmax, slsmin  (뒤는 기본값)
+    _lsdata = '%d,' % _nls
+    if SLSMIN is not None:
+        _lsdata = '%d, , %.6g,' % (_nls, SLSMIN)
+    out.insert(sidx + 2, _lsdata)
     out.insert(sidx + 2, '*Controls, parameters=line search')
 if RC:
     # [2026-09-29] 실패 서명: 잔차는 통과(5e-7 / 평균 1.87e-3 = 2.7e-4 < Rαn 5e-3)인데
@@ -195,8 +220,18 @@ if RC:
     #   수정해야 할 수 있고, 'To avoid testing the magnitude of the solution correction,
     #   you can set Cαn to 1.'  (Analysis UG, Commonly used control parameters)
     #   잔차 기준 Rαn 은 건드리지 않는다 -> 평형 정확성 근거는 유지된다.
-    out.insert(sidx + 2, ', 1.0, ,')
+    if RAN is not None:
+        # fields: Rαn, Cαn  -- Rαn 을 주면 잔차 기준이 바뀐다(평형 정확도에 직접 영향)
+        out.insert(sidx + 2, '%.6g, 1.0, ,' % RAN)
+    else:
+        out.insert(sidx + 2, ', 1.0, ,')
     out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
+if IA is not None:
+    # [2026-10-02] 증분당 최대 시도(IA) 상향. 실측 서명:
+    #   'INCREMENT 380 STARTS. ATTEMPT NUMBER 5' -> '***ERROR: TOO MANY ATTEMPTS MADE FOR THIS INCREMENT'
+    #   잔차가 고정된 채 시도 한도에서 죽는 경우에만 유효하다(잔차가 줄면 불필요).
+    out.insert(sidx + 2, ', , , , , , , %d' % IA)
+    out.insert(sidx + 2, '*Controls, parameters=time incrementation')
 if SPD_DISCONT:
     # [2026-10-01] 속도 개선 1: 문서(Commonly used control parameters) -
     #   "Sometimes it is useful to increase both I0 and IR ... to avoid premature cutbacks".
@@ -218,7 +253,9 @@ if SPD_ITER:
 # 리크스 전환 판정: 옵션을 주지 않으면 리크스(기존 기본), --riks 를 주면 옵션과 무관하게 리크스.
 #   이렇게 해야 '리크스 + C_n^a 완화' 라는 공정한 조합을 만들 수 있다.
 DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC or (TSTOP is not None)
-                                                or SPD_DISCONT or SPD_ITER))
+                                                or SPD_DISCONT or SPD_ITER
+                                                or (NLS is not None) or (SLSMIN is not None)
+                                                or (IA is not None) or (RAN is not None)))
 if DO_RIKS:
     out[sidx] = RIKS_STATIC
     out[sidx + 1] = riks_data(LPF, ARC, ARC_MAX)
