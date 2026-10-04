@@ -24,6 +24,10 @@ _RE_DATA = re.compile(r'^\s*([0-9]+)\s*,(.*)$')
 
 def parse_inp(path):
     """-> (nodes{label:(x,y,z)}, elem_counts{type:int}, node_blocks:int, elem_blocks:int)"""
+    # [2026-10-05] 라벨 -> 좌표 **집합**. 왜 집합인가: 어셈블리 .inp 에는 파트 레벨 노드 블록과
+    #   인스턴스 레벨 노드 블록이 함께 있어 **같은 라벨이 여러 번** 나온다(실측: 모드 7블록 /
+    #   HF 13블록). dict 로 덮어쓰면 '어느 블록이 마지막이냐'에 따라 지문이 달라져
+    #   **정합하는 두 메쉬를 '다름'으로 오탐**했다(실측 2026-10-05).
     nodes, elems = {}, {}
     nb = eb = 0
     mode, etype = None, None
@@ -54,7 +58,7 @@ def parse_inp(path):
                 try:
                     xyz = tuple(float(t) for t in rest.split(',')[:3])
                     if len(xyz) == 3:
-                        nodes[lab] = xyz
+                        nodes.setdefault(lab, set()).add(xyz)
                 except ValueError:
                     pass                      # nset 등 좌표 없는 줄
             elif mode == 'elem':
@@ -64,11 +68,18 @@ def parse_inp(path):
 
 
 def mesh_digest(nodes):
-    """노드 라벨+좌표(1e-9 m 반올림)로 만든 지문. 좌표까지 같아야 같은 메쉬다."""
+    """라벨별 좌표 집합을 정렬해 만든 지문. 어느 블록이 먼저/나중이든 결과가 같다."""
     h = hashlib.md5()
     for lab in sorted(nodes):
-        h.update(('%d|%.9f|%.9f|%.9f\n' % ((lab,) + nodes[lab])).encode('utf-8'))
+        for c in sorted(nodes[lab]):
+            h.update(('%d|%.9f|%.9f|%.9f\n' % ((lab,) + c)).encode('utf-8'))
     return h.hexdigest()
+
+
+def _struct(elems):
+    """구조 요소(셸/막)만. 케이블(T3D2) 등은 모델마다 파트 수가 달라도 메쉬 정합과 무관하다."""
+    return {k: v for k, v in elems.items()
+            if k.startswith('S') or k.startswith('M3D') or k.startswith('STRI')}
 
 
 def _show(path, nodes, elems, nb, eb):
@@ -98,35 +109,45 @@ def main():
     print('\n[A]'); _show(pa, nA, eA, nbA, ebA)
     print('\n[B]'); _show(pb, nB, eB, nbB, ebB)
 
-    dA, dB = mesh_digest(nA), mesh_digest(nB)
-    same_nodes = (dA == dB)
-    only_A = sorted(set(nA) - set(nB))
-    only_B = sorted(set(nB) - set(nA))
-    same_elems = (eA == eB)
+    labA, labB = set(nA), set(nB)
+    only_A = sorted(labA - labB)
+    only_B = sorted(labB - labA)
+    common = labA & labB
+    # 겹치는 라벨에 대해 '좌표 집합의 교집합이 비어있지 않은' 라벨의 비율
+    n_coord_ok = sum(1 for l in common if nA[l] & nB[l])
+    coord_frac = (n_coord_ok / len(common)) if common else 0.0
+    sA, sB = _struct(eA), _struct(eB)
 
     print('\n' + '-' * 78)
     print('[판정]')
-    print('  노드 집합+좌표 : %s' % ('**동일**' if same_nodes else '**다름**'))
-    if not same_nodes:
-        print('    A 에만 있는 라벨 %d개 %s' % (len(only_A), only_A[:8]))
-        print('    B 에만 있는 라벨 %d개 %s' % (len(only_B), only_B[:8]))
-    print('  요소 구성      : %s' % ('동일' if same_elems else '다름'))
-    if not same_elems:
-        print('    A: %s' % dict(sorted(eA.items())))
-        print('    B: %s' % dict(sorted(eB.items())))
+    print('  노드 라벨      : A %d개 / B %d개' % (len(labA), len(labB)))
+    print('    A 에만 %d개 %s' % (len(only_A), only_A[:6]))
+    print('    B 에만 %d개 %s' % (len(only_B), only_B[:6]))
+    print('  좌표 일치      : 겹치는 라벨 중 %d/%d = %.2f%%'
+          % (n_coord_ok, len(common), 100.0 * coord_frac))
+    print('  구조 요소      : A %s / B %s' % (dict(sorted(sA.items())), dict(sorted(sB.items()))))
+    print('  전체 요소      : A %s / B %s' % (dict(sorted(eA.items())), dict(sorted(eB.items()))))
+
+    labels_ok = (not only_A) and (not only_B)
+    struct_ok = (sA == sB)
+    coords_ok = (coord_frac >= 1.0)
+    full_ok = labels_ok and struct_ok and coords_ok and (eA == eB)
 
     print('\n[결론]')
-    if same_nodes and same_elems:
-        print('  RESULT:IDENTICAL — 메쉬가 완전히 같다. 모드 주입 안전.')
-    elif same_nodes:
-        print('  RESULT:NODES_ONLY — **노드는 같고 요소 구성만 다르다.**')
-        print('    -> *IMPERFECTION 은 노드 라벨로 주입되므로 **모드 주입은 안전하다.**')
-        print('    -> 모드 소스=셸 / HF=막 하이브리드가 성립한다.')
+    if full_ok:
+        print('  RESULT:IDENTICAL — 라벨/좌표/요소가 모두 같다.')
+    elif labels_ok and struct_ok and coords_ok:
+        print('  RESULT:NODES_MATCH — **노드 라벨과 좌표, 셸/막 요소 수가 같다.**')
+        print('    -> *IMPERFECTION 은 노드 라벨로 주입되므로 **주입 안전하다.**')
+        print('    -> 전체 요소의 차이는 케이블 파트 수 같은 구조적 차이다(메쉬 무관).')
+    elif labels_ok and coords_ok:
+        print('  RESULT:STRUCT_DIFFER — 노드는 같지만 셸/막 요소 수가 다르다: %s vs %s'
+              % (dict(sorted(sA.items())), dict(sorted(sB.items()))))
     else:
         print('  RESULT:DIFFERENT — 노드가 다르다. 모드 주입이 엉뚱한 노드로 간다.')
-        print('    -> 두 모델의 요소코드를 같게 맞춰야 한다.')
+        print('    -> 두 모델의 요소코드/메쉬 설정을 같게 맞춰야 한다.')
     print('=' * 78)
-    return 0 if same_nodes else 1
+    return 0 if (labels_ok and struct_ok and coords_ok) else 1
 
 
 if __name__ == '__main__':
