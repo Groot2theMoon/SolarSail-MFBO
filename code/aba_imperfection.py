@@ -64,7 +64,16 @@ def model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
     """
     vals = []
     try:
-        with open(source_path, 'r') as f:
+        # [2026-10-05] encoding 을 반드시 명시한다. 이 파일에는 한글 주석이 있고, Windows 의
+        #   기본 인코딩(cp949)으로 UTF-8 파일을 열면 UnicodeDecodeError 가 나는데, 아래
+        #   `except Exception: return None, {}` 가 그것을 **조용히 삼켜** 지문이 항상 사라졌다
+        #   (실측: 모드 소스 로그에 '[MODE] 재사용 지문 없음(생략)').
+        #   지문은 '모드표가 다른 모델에서 만들어졌다'를 잡는 유일한 장치이므로 조용히 꺼지면 안 된다.
+        try:
+            fh = open(source_path, 'r', encoding='utf-8', errors='replace')
+        except TypeError:                      # encoding 인자를 모르는 파이썬 폴백
+            fh = open(source_path, 'r')
+        with fh as f:
             for line in f.read().splitlines():
                 code = line.split('#')[0].strip()
                 for k in keys:
