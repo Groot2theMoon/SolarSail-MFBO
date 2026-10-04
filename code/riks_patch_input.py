@@ -46,7 +46,10 @@ LS = ('--line-search' in sys.argv[1:])
 #   그런데 사용자가 `--can=1e-2` 만 주고 `--relax-corr` 를 빼면 블록이 통째로 건너뛰어져
 #   옵션이 조용히 무시된다(실측: 경고도 안 찍히고 field 블록도 안 들어갔다).
 #   -> --can 이 주어지면 RC 를 자동으로 켠다.
-RC = ('--relax-corr' in sys.argv[1:]) or ('--can=' in ' '.join(sys.argv[1:]))
+# [2026-10-05 실측 함정] --ran= 도 RC 를 켜야 한다. Rαn 은 *Controls 의 **field 블록** 데이터
+#   줄에만 들어가는데, RC 가 꺼져 있으면 field 블록 자체가 생성되지 않아 `--ran=2e-2` 를
+#   줘도 **아무 데도 반영되지 않는다**(실측: field 블록이 통째로 사라짐).
+RC = ('--relax-corr' in sys.argv[1:]) or ('--can=' in ' '.join(sys.argv[1:])) or ('--ran=' in ' '.join(sys.argv[1:]))
 FORCE_RIKS = ('--riks' in sys.argv[1:])
 SPD_DISCONT = ('--speed-discont' in sys.argv[1:])   # 속도: 컷백 감소(문서 ANALYSIS=DISCONTINUOUS)
 SPD_ITER = ('--speed-iter' in sys.argv[1:])         # 속도: 증분 증가 조건 완화(IG/IL)
@@ -222,6 +225,10 @@ if LS:
         _lsdata = '%d, , %.6g,' % (_nls, SLSMIN)
     out.insert(sidx + 2, _lsdata)
     out.insert(sidx + 2, '*Controls, parameters=line search')
+if RC and (CAN is None) and ('--ran=' in ' '.join(sys.argv[1:])):
+    print('[경고] --ran 만 주면 Cαn 이 **빈칸 = 기본 1e-2** 가 된다. 이 프로젝트는 Cαn=1.0 을 쓴다')
+    print('       (증분이 사실상 0 인 케이스에서 보정 판정을 끄기 위함).')
+    print('       => `--can=1.0` 을 함께 주거나 `--relax-corr` 를 써라. 둘 다 없으면 리밋 사이클 위험.')
 if RC:
     # [2026-09-29] 실패 서명: 잔차는 통과(5e-7 / 평균 1.87e-3 = 2.7e-4 < Rαn 5e-3)인데
     #   'DISP. CORRECTION TOO LARGE COMPARED TO DISP. INCREMENT' 로 계속 실패한다.
