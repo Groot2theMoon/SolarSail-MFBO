@@ -180,8 +180,8 @@ def run_job_safely(job_name, model_name=None):
         emit("!!! ERROR: .inp 요소 타입 검증 실패: %s" % _err_et)
         return False
     if not _ok_et:
-        emit("!!! ERROR: 요청 요소코드 %s 가 .inp 에 없다 -> setElementType 이 무시됐다."
-             % ((ELEM_CODE_QUAD, ELEM_CODE_TRI),))
+        emit("!!! ERROR: 요소코드 폴백 의심 (요청=%s / .inp=%s / %s)"
+             % ((ELEM_CODE_QUAD, ELEM_CODE_TRI), _cnt_et, _err_et))
         emit("    잡을 제출하지 않는다(라이선스 절약). ELEM_CODE_* 지정 방식을 고쳐라.")
         return False
     job.submit(consistencyChecking=OFF)

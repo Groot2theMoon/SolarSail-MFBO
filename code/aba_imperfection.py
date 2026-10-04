@@ -364,9 +364,20 @@ def verify_inp_element_types(inp_path, want_codes):
                     counts[cur] += 1
     except Exception as e:
         return None, {}, '%s: %s' % (type(e).__name__, e)
-    got = set(counts)
     want = [_norm_elem_code(w) for w in want_codes]
-    return all(w in got for w in want), counts, ''
+    # 판정 규칙 (실측 2026-10-05 3차 교정):
+    #   처음엔 `all(w in got)` 로 썼는데 **메쉬가 순수 사각형이라 S3 블록이 없는 정상 덱**을
+    #   'setElementType 이 무시됐다'고 오탐했다(요청 (S4,S3) 인데 .inp 에 S4 만 존재).
+    #   요소 타입은 **모양별로** 배정되므로, 어떤 모양의 요소가 없으면 그 코드는 안 나오는 게 정상이다.
+    #   => 실패 조건은 두 가지다:
+    #      (1) 요청 코드가 **하나도** 없다                      -> 전면 폴백
+    #      (2) 요청 집합에 없는 셸/막 계열 타입이 .inp 에 있다   -> 부분 폴백(예: 사각형만 S4R)
+    got = set(counts)
+    _extra = [t for t in got
+              if (t.startswith('S') or t.startswith('M3D') or t.startswith('STRI'))
+              and t not in want]
+    ok = any(w in got for w in want) and not _extra
+    return ok, counts, ('' if ok else 'extra=%s want=%s' % (_extra, want))
 
 
 def job_completed_from_logs(job_name):
