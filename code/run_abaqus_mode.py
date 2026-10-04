@@ -524,14 +524,14 @@ p.generateMesh()
 #   막 섹션과 충돌해 'N elements have missing property definitions' 로 죽는다(실측 12,086개).
 #   선언이 아니라 '실제로 무엇이 붙었는가'를 본다. 실패해도 스크립트는 계속 간다.
 for _shp, _nm in ((QUAD, 'QUAD'), (TRI, 'TRI')):
-    _got = None
-    for _reg in (p.faces, (p.faces,)):
-        try:
-            _got = p.getElementType(region=_reg, elemShape=_shp)
-            break
-        except Exception as _e2:
-            _got = _e2
-    emit("[ET-CHECK] %s -> %s" % (_nm, getattr(_got, 'elemCode', _got)))
+    try:
+        _et = p.getElementType(region=regionToolset.Region(faces=p.faces), elemShape=_shp)
+        emit("[ET-CHECK] %s -> elemCode=%s" % (_nm, getattr(_et, 'elemCode', _et)))
+    except Exception as _e2:
+        emit("[ET-CHECK] %s 읽기 생략 (%s) — 실제 검증은 제출 전 .inp 가드가 한다" % (_nm, _e2))
+emit("[ET-CHECK] 메쉬 요소 %d개 / 요청 elemCode=(%s, %s)"
+     % (len(p.elements), getattr(ELEM_CODE_QUAD, 'name', ELEM_CODE_QUAD),
+        getattr(ELEM_CODE_TRI, 'name', ELEM_CODE_TRI)))
 a.regenerate()
 
 # 2. 꼭짓점 강체 패치 3개 (클램프 패치는 만들지 않는다 — 이 모델의 요점)

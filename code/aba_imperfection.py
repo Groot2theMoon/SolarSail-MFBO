@@ -322,28 +322,48 @@ def report(staged):
                "복사됨" if staged["copied"] else "제자리"))
 
 
-def verify_inp_element_types(inp_path, want_codes):
-    """방금 쓴 .inp 에서 `*Element, type=` 블록을 세어 요청 요소코드가 '실제로' 들어갔는지 확인한다.
+def _norm_elem_code(x):
+    """요소코드를 비교 가능한 문자열로 정규화한다.
 
-    왜 필요한가 (실측 2026-10-02): ELEM_CODE_QUAD='M3D4' 로 바꿨는데도 CAE 가 setElementType 을
-    조용히 무시하고 기본 셸(S4R/S3)로 남겼다. 결과는 `***ERROR: 12086 elements have missing
-    property definitions` (막 섹션 vs 셸 요소 불일치) 였고, 콘솔에는 아무 단서도 없었다.
-    즉 '요소코드를 바꿨다'는 선언은 검증이 아니다. 이 함수가 그 침묵을 깬다.
-
-    반환: (ok, counts_dict, err_str)
-      ok        = want_codes 가 전부 .inp 에 존재하는가
-      counts    = {요소코드: 블록 수}
+    왜 필요한가(실측 2026-10-02): ELEM_CODE_QUAD 는 abaqusConstants 의 **SymbolicConstant** 이고
+    SymbolicConstant 는 plain str 과 `==` 비교가 성립하지 않는다. 그래서 .inp 에서 파싱한
+    문자열 'M3D4' 와 `SymbolicConstant(M3D4) in {...}` 가 False 가 되어 **가드가 오탐**했다
+    (요소코드는 정상이었는데 '무시됐다'고 보고). .name 을 먼저 쓰고, 없으면 str() 로 떨어뜨린 뒤
+    따옴표/공백을 벗긴다.
     """
-    from collections import Counter
-    cnt = Counter()
+    n = getattr(x, 'name', x)
+    n = str(n).strip()
+    return n.strip("'\"").strip()
+
+
+def verify_inp_element_types(inp_path, want_codes):
+    """방금 쓴 .inp 에서 `*Element, type=` 블록을 읽어 **요소 수까지** 세고, 요청 요소코드가
+    실제로 들어갔는지 확인한다.
+
+    왜 필요한가(실측 2026-10-02): ELEM_CODE_QUAD='M3D4' 로 바꿨는데도 CAE 가 setElementType 을
+    조용히 무시하고 기본 셸(S4R/S3)로 남겼다 -> `***ERROR: 12086 elements have missing property
+    definitions` (막 섹션 vs 셸 요소 불일치). 콘솔에는 단서가 없었다. '요소코드를 바꿨다'는
+    선언은 검증이 아니다.
+
+    반환: (ok, counts, err_str)
+      ok      = 요청 코드가 전부 .inp 에 존재하는가
+      counts  = {요소코드: **요소 수**}   (블록 수가 아니라 요소 수 — 메쉬가 바뀌었는지 판정용)
+    """
+    counts, cur = {}, None
     try:
         with open(inp_path, 'r', errors='replace') as f:
             for line in f:
-                if line.startswith('*Element, type='):
-                    code = line.split('type=', 1)[1].strip().split(',')[0].strip()
-                    cnt[code] += 1
+                if line.startswith('*'):
+                    if line.startswith('*Element, type='):
+                        cur = _norm_elem_code(line.split('type=', 1)[1].split(',')[0])
+                        counts.setdefault(cur, 0)
+                    else:
+                        cur = None
+                    continue
+                if cur is not None and line.strip():
+                    counts[cur] += 1
     except Exception as e:
         return None, {}, '%s: %s' % (type(e).__name__, e)
-    got = set(cnt)
-    ok = all(w in got for w in want_codes)
-    return ok, dict(cnt), ''
+    got = set(counts)
+    want = [_norm_elem_code(w) for w in want_codes]
+    return all(w in got for w in want), counts, ''
