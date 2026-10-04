@@ -112,8 +112,8 @@ HEIGHT = 10.0 # m
 #   stall load 는 1차/2차 무관(0.439 -> 0.4655)" 로 기록하고 있었다.
 #   => 2차는 논문 baseline 재현(S1 사다리)에서만 쓴다. 그때는 아래 두 값만 S8R5/STRI65 로
 #      (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 변경은 잡힌다).
-ELEM_CODE_QUAD = S4        # 4절점 1차 셸 (논문은 S8R5 2차 — S1 사다리 전용)
-ELEM_CODE_TRI = S3         # 3절점 1차 셸 (논문은 STRI65 2차 — S1 사다리 전용)
+ELEM_CODE_QUAD = 'M3D4'    # [2026-10-02] 4절점 완전적분 막 요소 (hourglass 없음, 노드당 3자유도)
+ELEM_CODE_TRI = 'M3D3'     # [2026-10-02] 3절점 완전적분 막 요소
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 
@@ -450,7 +450,7 @@ def build_model(disp):
     mat = my_model.Material(name='Kapton')
     mat.Density(table=((1420.0, ),))
     mat.Elastic(table=((2.5e9, 0.34),))
-    my_model.HomogeneousShellSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)
+    my_model.MembraneSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)   # [2026-10-02] 셸 -> 막 (M3D4/M3D3 는 셸 섹션과 함께 쓸 수 없다)
 
     # [제외] 케이블 재질(Kevlar) / TrussSection — 케이블이 없으므로 만들지 않는다.
 
