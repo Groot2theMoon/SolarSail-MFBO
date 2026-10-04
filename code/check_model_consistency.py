@@ -49,7 +49,7 @@ SHARED = [
     # ---- 재질/단면 ----
     "mat.Density(table=((1420.0,),))",
     "mat.Elastic(table=((2.5e9, 0.34),))",
-    "MembraneSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)",
+    "HomogeneousShellSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)",
     # ---- 파트/스케치 ----
     "s.Line(point1=V3[:2], point2=V2[:2])",
     "s.Line(point1=V2[:2], point2=V1[:2])",
@@ -60,8 +60,8 @@ SHARED = [
     "p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=ADVANCING_FRONT)",
     "elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)",
     "elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)",
-    "ELEM_CODE_QUAD = M3D4",
-    "ELEM_CODE_TRI = M3D3",
+    "ELEM_CODE_QUAD = S4",
+    "ELEM_CODE_TRI = S3",
     "SEED_DIV = 200.0",
     "p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))",
     # ---- 클램프/정점 강체 패치 ----

@@ -282,10 +282,16 @@ HEIGHT = 10.0 # m
 #   stall load 는 1차/2차 무관(0.439 -> 0.4655)" 로 기록하고 있었다.
 #   => 2차는 논문 baseline 재현(S1 사다리)에서만 쓴다. 그때는 아래 두 값만 S8R5/STRI65 로
 #      (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 변경은 잡힌다).
-ELEM_CODE_QUAD = M3D4      # [2026-10-02] 4절점 완전적분 막 요소 (hourglass 없음, 노드당 3자유도)
-                            #   elemCode 는 SymbolicConstant 여야 한다. 문자열 'M3D4' 로 주면
-                            #   CAE 가 조용히 무시하고 기본 셸 S4R 로 남는다(실측 2026-10-02).
-ELEM_CODE_TRI = M3D3       # [2026-10-02] 3절점 완전적분 막 요소 (위와 같은 이유)
+ELEM_CODE_QUAD = S4         # [2026-10-04] 막(M3D4/M3D3) 실험 철회 -> 1차 셸 복귀.
+                            #   이유1: 막은 굽힘강성이 없어 *BUCKLE 의 SUBSPACE 가 수렴하지 못한다.
+                            #     문서: membrane elements have no bending stiffness -> "high number of
+                            #     nonrigid-body zero-energy modes". 실측: 668 iter 에 23/100 수렴,
+                            #     λ 가 전부 음수(-2.0e-03)라 쓸 모드가 나오지 않는다.
+                            #   이유2: 요소 타입을 바꾸면 CAE 메셔가 **노드 수까지** 바꾼다
+                            #     (막 덱 12,155 노드 / 셸 덱 18,442 노드, SEED_DIV 는 양쪽 200).
+                            #     -> *IMPERFECTION 은 노드 라벨로 주입되므로 모드 소스와 HF 의
+                            #        요소코드가 같아야 한다. inp_mesh_compare.py 로 확인(2026-10-04).
+ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 셸 복귀
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 TARGET_STRESS = 7000.0 # Pa (참고용: 운용점 목표. 모드 추출에는 쓰이지 않는다)
@@ -432,7 +438,7 @@ my_model = mdb.Model(name=MODEL_NAME)
 mat = my_model.Material(name='Kapton')
 mat.Density(table=((1420.0,),))
 mat.Elastic(table=((2.5e9, 0.34),))
-my_model.MembraneSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)   # [2026-10-02] 셸 -> 막 (M3D4/M3D3 는 셸 섹션과 함께 쓸 수 없다)
+my_model.HomogeneousShellSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)   # [2026-10-04] 막 실험 철회로 셸 섹션 복귀
 
 # (2) 케이블 재질 (Kevlar)
 mat_cable = my_model.Material(name='Kevlar')
