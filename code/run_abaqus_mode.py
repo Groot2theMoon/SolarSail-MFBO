@@ -151,6 +151,18 @@ if _HERE not in sys.path:
 from aba_imperfection import (count_modes, parse_eigenvalues, verify_inp_element_types,  # noqa: E402
                               job_completed_from_logs)
 emit("[run_abaqus_mode] _HERE = %s" % _HERE)
+# [2026-10-05] 코드 지문. 왜 필요한가: 사용자가 git pull 을 빠뜨린 채 실행하면 로그만으로는
+#   '고친 코드가 안 먹었다'와 '옛 코드가 돌았다'를 구분할 수 없다(실측: 가드 오탐을 고친 뒤
+#   재실행했는데 로그에 옛 메시지가 찍혀 판정이 막혔다). 스크립트와 공용 모듈의 md5 를 찍으면
+#   로그 첫머리에서 즉시 판정된다.
+try:
+    import hashlib as _hl
+    for _fn in ('run_abaqus_mode.py', 'aba_imperfection.py'):
+        _p = os.path.join(_HERE, _fn)
+        with open(_p, 'rb') as _fh:
+            emit("[CODE] %s md5=%s" % (_fn, _hl.md5(_fh.read()).hexdigest()[:12]))
+except Exception as _ce:
+    emit("[CODE] 지문 계산 실패(무시): %s" % _ce)
 
 
 def run_job_safely(job_name, model_name=None):
