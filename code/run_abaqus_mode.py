@@ -148,7 +148,8 @@ def _resolve_here():
 _HERE = _resolve_here()
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
-from aba_imperfection import count_modes, parse_eigenvalues, verify_inp_element_types   # noqa: E402
+from aba_imperfection import (count_modes, parse_eigenvalues, verify_inp_element_types,  # noqa: E402
+                              job_completed_from_logs)
 emit("[run_abaqus_mode] _HERE = %s" % _HERE)
 
 
@@ -189,8 +190,14 @@ def run_job_safely(job_name, model_name=None):
     # [2026-10-02] ABORTED 만 보면 안 된다. Abaqus 는 input processing 이 실패해도 부분 .odb 를
     #   만들어 둔다 -> 'ODB 존재'가 성공 증거가 아니다(실측: 12,086개 요소가 섹션을 못 받아
     #   죽었는데 status=None / ok=True 로 보고됐다). COMPLETED 가 아니면 실패로 본다.
-    if job.status != COMPLETED or not os.path.exists(job_name + '.odb'):
-        emit("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
+    # [2026-10-04] job.status 는 CAE noGUI 에서 None 이라 `!= COMPLETED` 는 **항상 실패**로
+    #   오판한다(실측). `== ABORTED` 만 보면 부분 .odb 때문에 실패를 놓친다. 둘 다 피해
+    #   산출물 + .msg 완주 문자열로 판정한다.
+    if (job.status == ABORTED or not os.path.exists(job_name + '.odb')
+            or not job_completed_from_logs(job_name)):
+        emit("!!! ERROR: Job %s failed (status=%s, odb=%s, .msg 완주=%s)"
+             % (job_name, str(job.status), os.path.exists(job_name + '.odb'),
+                job_completed_from_logs(job_name)))
         return False
     emit("Job %s finished (Status: %s)." % (job_name, str(job.status)))
     return True

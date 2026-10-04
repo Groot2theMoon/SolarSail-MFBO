@@ -332,7 +332,10 @@ def run_job_safely(job_name, model_name=None):
     # [2026-10-02] ABORTED 만 보면 안 된다. Abaqus 는 input processing 이 실패해도 부분 .odb 를
     #   남기므로 'ODB 존재'가 성공 증거가 아니다(실측: 12,086개 요소가 섹션을 못 받아 죽었는데
     #   status=None 으로 ok=True 보고). COMPLETED 가 아니면 실패로 본다.
-    if job.status != COMPLETED or not os.path.exists(odb_file):
+    # [2026-10-04] status 는 CAE noGUI 에서 None 이라 `!= COMPLETED` 는 항상 실패로 오판한다.
+    #   `== ABORTED` 만으로는 부분 .odb 때문에 실패를 놓친다. => 완주 문자열까지 본다.
+    if (job.status == ABORTED or not os.path.exists(odb_file)
+            or not job_completed_ok(job_name)):
         raise RuntimeError('Job %s 실패 (Status=%s). sys.exit 대신 예외로 올린다: '
                            'CAE noGUI 러너에서 sys.exit 은 종료코드 0으로 보인다.'
                            % (job_name, str(job.status)))

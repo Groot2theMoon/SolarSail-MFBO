@@ -106,7 +106,7 @@ if _HERE not in sys.path:
 from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: E402
                               imperfection_text, report, load_mode_table,
                               build_perturbation, perturbation_report, mode_table_info,
-                              verify_inp_element_types)
+                              verify_inp_element_types, job_completed_from_logs)
 # ---- 로깅 (2026-09-24): HF 콘솔이 비어 보이는 문제 대응 --------------------------
 # Abaqus `cae noGUI` 는 스크립트의 stdout 을 콘솔이 아니라 CAE 메시지 영역으로 보낼 수 있다.
 # 그래서 이 스크립트의 출력이 통째로 안 보이는 경우가 있다(실측). 게다가 execfile 로 실행되면
@@ -310,7 +310,11 @@ def run_job_safely(job_name, model_name=None):
     # [2026-10-02] ABORTED 만 보면 안 된다. Abaqus 는 input processing 이 실패해도 부분 .odb 를
     #   남기므로 'ODB 존재'가 성공 증거가 아니다(실측: 12,086개 요소가 섹션을 못 받아 죽었는데
     #   status=None 으로 ok=True 보고). COMPLETED 가 아니면 실패로 본다.
-    if job.status != COMPLETED or not os.path.exists(odb_file):
+    # [2026-10-04] status 는 CAE noGUI 에서 None 이라 `!= COMPLETED` 는 **항상 실패로 오판**한다
+    #   (실측: .msg 에 완주 문자열이 있는데 ok=False 로 보고됐다). `== ABORTED` 만으로는 Abaqus 가
+    #   실패해도 남기는 부분 .odb 때문에 실패를 놓친다. => 산출물 + 완주 문자열로 판정한다.
+    if (job.status == ABORTED or not os.path.exists(odb_file)
+            or not job_completed_from_logs(job_name)):
         emit("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
         sys.exit(1)
         

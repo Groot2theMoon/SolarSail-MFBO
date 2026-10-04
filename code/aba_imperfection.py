@@ -367,3 +367,24 @@ def verify_inp_element_types(inp_path, want_codes):
     got = set(counts)
     want = [_norm_elem_code(w) for w in want_codes]
     return all(w in got for w in want), counts, ''
+
+
+def job_completed_from_logs(job_name):
+    """잡이 실제로 완주했는지 .msg/.sta 의 완주 문자열로 판정한다.
+
+    왜 필요한가 (실측 2026-10-04)
+      Abaqus/CAE `noGUI` 에서 `job.status` 는 **None** 으로 돌아온다(실측: 'Status: None').
+      그래서 `job.status != COMPLETED` 로 쓰면 **완주한 잡도 실패로 오판**한다
+      (실측: .msg 에 THE ANALYSIS HAS BEEN COMPLETED 가 있는데 ok=False 보고).
+      반대로 `== ABORTED` 만 보면 Abaqus 가 실패해도 **부분 .odb 를 남기므로** 실패를 놓친다.
+      => 판정은 산출물이 아니라 **완주 문자열**로 한다.
+    """
+    for f in (job_name + '.msg', job_name + '.sta'):
+        try:
+            with open(f, 'r', errors='replace') as fh:
+                t = fh.read()
+        except Exception:
+            continue
+        if ('THE ANALYSIS HAS BEEN COMPLETED' in t) or ('HAS COMPLETED SUCCESSFULLY' in t):
+            return True
+    return False
