@@ -112,8 +112,10 @@ HEIGHT = 10.0 # m
 #   stall load 는 1차/2차 무관(0.439 -> 0.4655)" 로 기록하고 있었다.
 #   => 2차는 논문 baseline 재현(S1 사다리)에서만 쓴다. 그때는 아래 두 값만 S8R5/STRI65 로
 #      (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 변경은 잡힌다).
-ELEM_CODE_QUAD = 'M3D4'    # [2026-10-02] 4절점 완전적분 막 요소 (hourglass 없음, 노드당 3자유도)
-ELEM_CODE_TRI = 'M3D3'     # [2026-10-02] 3절점 완전적분 막 요소
+ELEM_CODE_QUAD = M3D4      # [2026-10-02] 4절점 완전적분 막 요소 (hourglass 없음, 노드당 3자유도)
+                            #   elemCode 는 SymbolicConstant 여야 한다. 문자열 'M3D4' 로 주면
+                            #   CAE 가 조용히 무시하고 기본 셸 S4R 로 남는다(실측 2026-10-02).
+ELEM_CODE_TRI = M3D3       # [2026-10-02] 3절점 완전적분 막 요소 (위와 같은 이유)
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 
@@ -321,7 +323,10 @@ def run_job_safely(job_name, model_name=None):
     # 진단 출력은 호출측에서 report_job() 한 번으로 끝낸다.
 
     # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
-    if job.status == ABORTED or not os.path.exists(odb_file):
+    # [2026-10-02] ABORTED 만 보면 안 된다. Abaqus 는 input processing 이 실패해도 부분 .odb 를
+    #   남기므로 'ODB 존재'가 성공 증거가 아니다(실측: 12,086개 요소가 섹션을 못 받아 죽었는데
+    #   status=None 으로 ok=True 보고). COMPLETED 가 아니면 실패로 본다.
+    if job.status != COMPLETED or not os.path.exists(odb_file):
         raise RuntimeError('Job %s 실패 (Status=%s). sys.exit 대신 예외로 올린다: '
                            'CAE noGUI 러너에서 sys.exit 은 종료코드 0으로 보인다.'
                            % (job_name, str(job.status)))

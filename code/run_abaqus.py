@@ -105,7 +105,8 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: E402
                               imperfection_text, report, load_mode_table,
-                              build_perturbation, perturbation_report, mode_table_info)
+                              build_perturbation, perturbation_report, mode_table_info,
+                              verify_inp_element_types)
 # ---- 로깅 (2026-09-24): HF 콘솔이 비어 보이는 문제 대응 --------------------------
 # Abaqus `cae noGUI` 는 스크립트의 stdout 을 콘솔이 아니라 CAE 메시지 영역으로 보낼 수 있다.
 # 그래서 이 스크립트의 출력이 통째로 안 보이는 경우가 있다(실측). 게다가 execfile 로 실행되면
@@ -273,6 +274,18 @@ def run_job_safely(job_name, model_name=None):
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
     emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
+    # [2026-10-02] 제출 전 요소 타입 검증 (모드 소스와 동일한 가드).
+    #   setElementType 이 조용히 무시되면 CAE 기본 셸(S4R/S3)로 남고, 막 섹션과 충돌해
+    #   'N elements have missing property definitions' 로 죽는다(실측 12,086개).
+    #   Standard 토큰을 태우기 전에 여기서 잡는다.
+    _ok_et, _cnt_et, _err_et = verify_inp_element_types(
+        job_name + '.inp', (ELEM_CODE_QUAD, ELEM_CODE_TRI))
+    emit("[GUARD] .inp 요소 타입 블록: %s" % (_cnt_et or _err_et))
+    if _err_et or not _ok_et:
+        emit("!!! ERROR: .inp 요소 타입 검증 실패 (요청=%s): %s"
+             % ((ELEM_CODE_QUAD, ELEM_CODE_TRI), _err_et or _cnt_et))
+        emit("    잡을 제출하지 않는다. ELEM_CODE_* 지정 방식을 고쳐라.")
+        return False
     # WRITE_ONLY: 덱만 만들고 제출하지 않는다.
     #   이유(2026-10-01): riks_patch_input.py 는 '생성된 .inp' 를 수정해 완화 블록을 넣는데,
     #   이 스크립트가 곧바로 submit+waitForCompletion 까지 하면 패치 이전의 무패치 런이
@@ -294,7 +307,10 @@ def run_job_safely(job_name, model_name=None):
     print_job_diag(job_name)
     
     # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
-    if job.status == ABORTED or not os.path.exists(odb_file):
+    # [2026-10-02] ABORTED 만 보면 안 된다. Abaqus 는 input processing 이 실패해도 부분 .odb 를
+    #   남기므로 'ODB 존재'가 성공 증거가 아니다(실측: 12,086개 요소가 섹션을 못 받아 죽었는데
+    #   status=None 으로 ok=True 보고). COMPLETED 가 아니면 실패로 본다.
+    if job.status != COMPLETED or not os.path.exists(odb_file):
         emit("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
         sys.exit(1)
         
@@ -545,8 +561,10 @@ HEIGHT = 10.0 # m
 #   stall load 는 1차/2차 무관(0.439 -> 0.4655)" 로 기록하고 있었다.
 #   => 2차는 논문 baseline 재현(S1 사다리)에서만 쓴다. 그때는 아래 두 값만 S8R5/STRI65 로
 #      (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 변경은 잡힌다).
-ELEM_CODE_QUAD = 'M3D4'    # [2026-10-02] 4절점 완전적분 막 요소 (hourglass 없음, 노드당 3자유도)
-ELEM_CODE_TRI = 'M3D3'     # [2026-10-02] 3절점 완전적분 막 요소
+ELEM_CODE_QUAD = M3D4      # [2026-10-02] 4절점 완전적분 막 요소 (hourglass 없음, 노드당 3자유도)
+                            #   elemCode 는 SymbolicConstant 여야 한다. 문자열 'M3D4' 로 주면
+                            #   CAE 가 조용히 무시하고 기본 셸 S4R 로 남는다(실측 2026-10-02).
+ELEM_CODE_TRI = M3D3       # [2026-10-02] 3절점 완전적분 막 요소 (위와 같은 이유)
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6 # F2: 2.5e-6 -> 5.0e-6 (cable 변형, 2.5um는 수렴 매우 어려움)
 TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)

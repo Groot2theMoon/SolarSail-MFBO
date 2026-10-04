@@ -282,8 +282,10 @@ HEIGHT = 10.0 # m
 #   stall load 는 1차/2차 무관(0.439 -> 0.4655)" 로 기록하고 있었다.
 #   => 2차는 논문 baseline 재현(S1 사다리)에서만 쓴다. 그때는 아래 두 값만 S8R5/STRI65 로
 #      (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 변경은 잡힌다).
-ELEM_CODE_QUAD = 'M3D4'    # [2026-10-02] 4절점 완전적분 막 요소 (hourglass 없음, 노드당 3자유도)
-ELEM_CODE_TRI = 'M3D3'     # [2026-10-02] 3절점 완전적분 막 요소
+ELEM_CODE_QUAD = M3D4      # [2026-10-02] 4절점 완전적분 막 요소 (hourglass 없음, 노드당 3자유도)
+                            #   elemCode 는 SymbolicConstant 여야 한다. 문자열 'M3D4' 로 주면
+                            #   CAE 가 조용히 무시하고 기본 셸 S4R 로 남는다(실측 2026-10-02).
+ELEM_CODE_TRI = M3D3       # [2026-10-02] 3절점 완전적분 막 요소 (위와 같은 이유)
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 TARGET_STRESS = 7000.0 # Pa (참고용: 운용점 목표. 모드 추출에는 쓰이지 않는다)
@@ -518,6 +520,18 @@ elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
 elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
 p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
 p.generateMesh()
+# [2026-10-02] 읽기 검증. setElementType 이 조용히 무시되면 CAE 기본 셸(S4R/S3)로 남고,
+#   막 섹션과 충돌해 'N elements have missing property definitions' 로 죽는다(실측 12,086개).
+#   선언이 아니라 '실제로 무엇이 붙었는가'를 본다. 실패해도 스크립트는 계속 간다.
+for _shp, _nm in ((QUAD, 'QUAD'), (TRI, 'TRI')):
+    _got = None
+    for _reg in (p.faces, (p.faces,)):
+        try:
+            _got = p.getElementType(region=_reg, elemShape=_shp)
+            break
+        except Exception as _e2:
+            _got = _e2
+    emit("[ET-CHECK] %s -> %s" % (_nm, getattr(_got, 'elemCode', _got)))
 a.regenerate()
 
 # 2. 꼭짓점 강체 패치 3개 (클램프 패치는 만들지 않는다 — 이 모델의 요점)
