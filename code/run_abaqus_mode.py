@@ -148,7 +148,7 @@ def _resolve_here():
 _HERE = _resolve_here()
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
-from aba_imperfection import count_modes, parse_eigenvalues                 # noqa: E402
+from aba_imperfection import count_modes, parse_eigenvalues, verify_inp_element_types   # noqa: E402
 emit("[run_abaqus_mode] _HERE = %s" % _HERE)
 
 
@@ -169,10 +169,27 @@ def run_job_safely(job_name, model_name=None):
     job = mdb.Job(name=job_name, model=model_name)
     emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
+    # [2026-10-02] 제출 전 요소 타입 검증. setElementType 이 조용히 무시되면 CAE 기본 셸
+    #   (S4R/S3)로 남고, 막 섹션과 충돌해 'N elements have missing property definitions' 로
+    #   죽는다(실측 12,086개). 그때 콘솔에는 단서가 없었다. 여기서 잡고 라이선스를 아낀다.
+    _ok_et, _cnt_et, _err_et = verify_inp_element_types(
+        job_name + '.inp', (ELEM_CODE_QUAD, ELEM_CODE_TRI))
+    emit("[GUARD] .inp 요소 타입 블록: %s" % (_cnt_et or _err_et))
+    if _err_et:
+        emit("!!! ERROR: .inp 요소 타입 검증 실패: %s" % _err_et)
+        return False
+    if not _ok_et:
+        emit("!!! ERROR: 요청 요소코드 %s 가 .inp 에 없다 -> setElementType 이 무시됐다."
+             % ((ELEM_CODE_QUAD, ELEM_CODE_TRI),))
+        emit("    잡을 제출하지 않는다(라이선스 절약). ELEM_CODE_* 지정 방식을 고쳐라.")
+        return False
     job.submit(consistencyChecking=OFF)
     job.waitForCompletion()
     time.sleep(1.0)
-    if job.status == ABORTED or not os.path.exists(job_name + '.odb'):
+    # [2026-10-02] ABORTED 만 보면 안 된다. Abaqus 는 input processing 이 실패해도 부분 .odb 를
+    #   만들어 둔다 -> 'ODB 존재'가 성공 증거가 아니다(실측: 12,086개 요소가 섹션을 못 받아
+    #   죽었는데 status=None / ok=True 로 보고됐다). COMPLETED 가 아니면 실패로 본다.
+    if job.status != COMPLETED or not os.path.exists(job_name + '.odb'):
         emit("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
         return False
     emit("Job %s finished (Status: %s)." % (job_name, str(job.status)))

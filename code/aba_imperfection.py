@@ -320,3 +320,30 @@ def report(staged):
             % (staged["source"], staged["src_size"] / 1024.0, staged["src_mtime"],
                staged["modes"], staged["target"],
                "복사됨" if staged["copied"] else "제자리"))
+
+
+def verify_inp_element_types(inp_path, want_codes):
+    """방금 쓴 .inp 에서 `*Element, type=` 블록을 세어 요청 요소코드가 '실제로' 들어갔는지 확인한다.
+
+    왜 필요한가 (실측 2026-10-02): ELEM_CODE_QUAD='M3D4' 로 바꿨는데도 CAE 가 setElementType 을
+    조용히 무시하고 기본 셸(S4R/S3)로 남겼다. 결과는 `***ERROR: 12086 elements have missing
+    property definitions` (막 섹션 vs 셸 요소 불일치) 였고, 콘솔에는 아무 단서도 없었다.
+    즉 '요소코드를 바꿨다'는 선언은 검증이 아니다. 이 함수가 그 침묵을 깬다.
+
+    반환: (ok, counts_dict, err_str)
+      ok        = want_codes 가 전부 .inp 에 존재하는가
+      counts    = {요소코드: 블록 수}
+    """
+    from collections import Counter
+    cnt = Counter()
+    try:
+        with open(inp_path, 'r', errors='replace') as f:
+            for line in f:
+                if line.startswith('*Element, type='):
+                    code = line.split('type=', 1)[1].strip().split(',')[0].strip()
+                    cnt[code] += 1
+    except Exception as e:
+        return None, {}, '%s: %s' % (type(e).__name__, e)
+    got = set(cnt)
+    ok = all(w in got for w in want_codes)
+    return ok, dict(cnt), ''
