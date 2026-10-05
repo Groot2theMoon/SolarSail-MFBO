@@ -25,11 +25,12 @@ import io
 import os
 import sys
 
-BUILD = '2026-10-05b (no-relaxcorr)'
+BUILD = '2026-10-05c (ti-merge+i0ir)'
 KNOWN_FLAGS = ('--line-search', '--riks',
                '--speed-discont', '--speed-iter')
 KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=', '--inc=',
-               '--nls=', '--slsmin=', '--ia=', '--ran=', '--can=')
+               '--nls=', '--slsmin=', '--ia=', '--ran=', '--can=',
+               '--i0=', '--ir=')
 # [2026-10-05] --relax-corr 제거. 이 플래그의 유일한 기능은 field 블록 게이트였고(=`if RC:`),
 #   지금은 --can= / --ran= 이 같은 게이트를 자동으로 켠다. 게다가 게이트만 켜고 값을 안 주면
 #   `, 1.0, ,`(=Cαn 1.0, 기본의 100배 느슨)를 넣어 **문서 기본값과 다른 상태를 조용히 만들었다**.
@@ -74,6 +75,8 @@ ARC_MAX = None                  # --arc-max=<v>: 굳이 상한을 걸고 싶을 
 NLS = None                      # --nls=<N>
 SLSMIN = None                   # --slsmin=<V>
 IA = None                       # --ia=<N>
+I0 = None                       # --i0=<N>: 잔차 증가(발산) 검사 시작 반복 (문서 기본 4)
+IR = None                       # --ir=<N>: 대수 수렴률 검사 시작 반복 (문서 기본 8)
 RAN = None                      # --ran=<V>
 # --can=<V> : Cαn = '최대 해 보정 / 최대 증분해' 수렴 기준(기본 1e-2).
 #   현재 덱은 `, 1.0, ,` 로 Cαn=1.0 (기본의 100배 느슨)이다. 이 값이 느슨하면 큰 증분에서
@@ -101,6 +104,10 @@ for a in sys.argv[1:]:
         NLS = float(a.split('=', 1)[1])
     elif a.startswith('--slsmin='):
         SLSMIN = float(a.split('=', 1)[1])
+    elif a.startswith('--i0='):
+        I0 = int(a.split('=', 1)[1])
+    elif a.startswith('--ir='):
+        IR = int(a.split('=', 1)[1])
     elif a.startswith('--ia='):
         IA = int(float(a.split('=', 1)[1]))
     elif a.startswith('--ran='):
@@ -261,11 +268,35 @@ if RC:
     #   RC 가 값옵션(--ran/--can)으로만 켜지므로 이 분기는 도달 불가다. 이 분기가
     #   '플래그만 주면 Cαn=1.0' 이라는 조용한 기본값 변경의 원인이었다.
     out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
+# [2026-10-05] TIME INCREMENTATION 은 **한 블록으로 병합**한다.
+#   이 블록의 데이터 줄은 필드 '위치'로만 의미를 갖는다(1 I0, 2 IR, 4 IC, 5 IL, 6 IG, 8 IA ...).
+#   옵션마다 따로 삽입하면 블록이 2개가 되는데, 뒤 블록의 빈 칸이 앞 블록 값을 덮어쓰는지가
+#   문서에 없다(실측 전 불명). 한 줄로 합치면 그 위험이 사라진다.
+#   그리고 문서가 ANALYSIS=DISCONTINUOUS 는 "overrides any values ... for I0 and IR" 라고
+#   명시하므로, I0/IR 은 그 파라미터 없이 **직접 필드로** 지정한다. 게다가 문서가
+#   "A less efficient solution may result if this parameter is set in problems that do not
+#    exhibit severely discontinuous behavior." 라고 경고한다 - 우리 모델엔 severe
+#   discontinuity(접촉/마찰/콘크리트 균열)가 없으므로 --speed-discont 는 쓰지 않는다.
+_ti = [''] * 11                       # I0, IR, IP, IC, IL, IG, IS, IA, IJ, IT, IcS
+_ti_used = False
+if I0 is not None:
+    # 문서: 잔차가 '두 반복 연속 증가'하는지 검사하기 시작하는 반복. 최소 3, 기본 4.
+    _ti[0] = '%d' % I0; _ti_used = True
+if IR is not None:
+    # 문서: 대수 수렴률 검사 시작 반복. 기본 8.
+    #   "Sometimes it is useful to increase both I0 and IR ... to avoid premature cutbacks"
+    _ti[1] = '%d' % IR; _ti_used = True
+if SPD_ITER:
+    # [2026-10-01] 증분 증가 조건: IC=16, IL=14, IG=8 (문서 순서 4,5,6)
+    #   실측: 증분 3.771e-04 -> 1.410e-03 (3.74배), wall 5828 -> 1706 s. 단 그 런은 다른 해였다.
+    _ti[3], _ti[4], _ti[5] = '16', '14', '8'; _ti_used = True
 if IA is not None:
-    # [2026-10-02] 증분당 최대 시도(IA) 상향. 실측 서명:
-    #   'INCREMENT 380 STARTS. ATTEMPT NUMBER 5' -> '***ERROR: TOO MANY ATTEMPTS MADE FOR THIS INCREMENT'
-    #   잔차가 고정된 채 시도 한도에서 죽는 경우에만 유효하다(잔차가 줄면 불필요).
-    out.insert(sidx + 2, ', , , , , , , %d' % IA)
+    # [2026-10-02] 증분당 최대 시도. 실측 서명 'TOO MANY ATTEMPTS MADE FOR THIS INCREMENT'.
+    _ti[7] = '%d' % IA; _ti_used = True
+if _ti_used:
+    while _ti and _ti[-1] == '':
+        _ti.pop()                     # 뒤쪽 빈 칸 제거 -> 생성 문자열이 기존 검증값과 동일해진다
+    out.insert(sidx + 2, ', '.join(_ti))
     out.insert(sidx + 2, '*Controls, parameters=time incrementation')
 if SPD_DISCONT:
     # [2026-10-01] 속도 개선 1: 문서(Commonly used control parameters) -
@@ -274,24 +305,14 @@ if SPD_DISCONT:
     #   (203/990)라 낭비가 크므로, 그 원인인 조기 컷백을 줄이는 것이 목적.
     #   필드 위치를 지정하지 않으므로 순서 리스크가 없다.
     out.insert(sidx + 2, '*Controls, analysis=discontinuous')
-if SPD_ITER:
-    # [2026-10-01] 속도 개선 2: 증분 증가 조건.
-    #   필드 순서는 convergecontrol 문서의 에코 블록에서 확인:
-    #     1 I0, 2 IR, 3 IP, 4 IC, 5 IL, 6 IG, 7 IS, 8 IA, 9 IJ ...
-    #     (IG = 'MAX EQUIL. ITERS IN TWO INCREMENTS FOR TIME INC. INCREASE', 기본 4)
-    #   우리 런은 반복/증분 = 4369/990 = 4.4 회로, 증분이 늘어나는 조건(<=IG=4)을 거의 못 채운다.
-    #   그래서 증분이 계속 작게 유지된다(평균 dlambda ~0.001 = 상한 0.1 의 1/100).
-    #   IG 4->8 로 완화하면 큰 증분이 채택되어 증분 수가 줄어든다. IL 10->14 는 컷백 문턱 완화.
-    #   물리/평형 정확성은 그대로이고 '경로 샘플링 간격'만 바뀐다 -> 목적함수 대조로 검증할 것.
-    out.insert(sidx + 2, ', , , 16, 14, 8')
-    out.insert(sidx + 2, '*Controls, parameters=time incrementation')
 # 리크스 전환 판정: 옵션을 주지 않으면 리크스(기존 기본), --riks 를 주면 옵션과 무관하게 리크스.
 #   이렇게 해야 '리크스 + C_n^a 완화' 라는 공정한 조합을 만들 수 있다.
 DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC or (TSTOP is not None)
                                                 or SPD_DISCONT or SPD_ITER
                                                 or (NLS is not None) or (SLSMIN is not None)
                                                 or (IA is not None) or (RAN is not None)
-                                                or (CAN is not None)))
+                                                or (CAN is not None)
+                                                or (I0 is not None) or (IR is not None)))
 if DO_RIKS:
     out[sidx] = RIKS_STATIC
     out[sidx + 1] = riks_data(LPF, ARC, ARC_MAX)
