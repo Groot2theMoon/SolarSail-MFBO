@@ -291,7 +291,16 @@ def main():
                 print("RESULTS:FAIL"); sys.exit(1)   # E-7: 0 은 실패를 숨긴다
             results = list(lf_metrics[:3]) + [hf_metric]
         else:
-            print("RESULTS:FAIL"); sys.exit(1)   # E-7: 0 은 실패를 숨긴다
+            # [2026-10-05] 인자 형식 오류를 **조용히 FAIL 로 뭉개지 않는다.**
+            #   실측: `eval_abaqus.py A.odb B.odb` 로 두 ODB 를 비교하려다 'HF_X025I.ODB'
+            #   가 mode 가 되어 여기로 떨어졌고, 사용자는 원인을 알 수 없었다.
+            #   이 스크립트는 두 ODB 비교기가 아니라 **단일 ODB 지표 추출기**다.
+            print("ERROR: 마지막 인자가 HF 또는 LF 여야 합니다. 받은 값: %r" % args[-1])
+            print("사용법:")
+            print("  abaqus python eval_abaqus.py <LF.odb> LF")
+            print("  abaqus python eval_abaqus.py <LF.odb> <HF.odb> HF")
+            print("  (두 ODB 를 비교하려면 compare_odb_fields.py 를 쓰세요.)")
+            print("RESULTS:FAIL"); sys.exit(1)
     except Exception as e:
         print("eval error:", e)
         print("RESULTS:FAIL"); sys.exit(1)   # E-7: 0 은 실패를 숨긴다
