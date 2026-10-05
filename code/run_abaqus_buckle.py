@@ -155,9 +155,9 @@ if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
                        % (CLAMP_MODE,))
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
-PERTURBATION = 0.01     # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta)
-N_EIG_BUCKLE = 10      # 추출 요청 고유값 수
-BUCKLE_VECTORS = 25    # subspace 기저 벡터 수 (요청 수의 2.5배)
+PERTURBATION = 1e-4  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta)
+N_EIG_BUCKLE = 100      # 추출 요청 고유값 수
+BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (요청 수의 2.5배)
 BUCKLE_MAXITER = 5000
 BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
 BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
@@ -445,7 +445,7 @@ def create_rigid_patch(a, inst_memb, name, coord, radius):
     # Coupling (RP <-> Membrane Nodes)
     my_model.Coupling(
         name=name+'_Coupling', controlPoint=rp_region, surface=patch_set,
-        influenceRadius=WHOLE_SURFACE, couplingType=KINEMATIC,
+        influenceRadius=WHOLE_SURFACE, couplingType=DISTRIBUTING, weightingMethod=UNIFORM,
         u1=ON, u2=ON, u3=ON, ur1=ON, ur2=ON, ur3=ON
     )
     return rp, rp_region
@@ -692,7 +692,7 @@ def build_model(disp):
 # (.dat/.msg/.odb/.diag)을 지우고 제출해 직전 결과 증거가 사라진다
 # (2026-09-22 실제 발생: S4 런이 S4R 런 산출물을 덮어 lambda 표를 잃었다).
 # 그래서 job 이름에 요소 태그 + 클램프 모드를 넣는다 (산출물이 서로 덮이지 않는다).
-ELEM_TAG = 's4r'
+ELEM_TAG = 's4'
 JOB_NAME = 'Buckle_xc%03d_d%03dum_%s_%s' % (int(round(x_c * 100.0)),
                                             int(round(DISP * 1.0e6)),
                                             ELEM_TAG, CLAMP_MODE)
