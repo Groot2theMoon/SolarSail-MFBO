@@ -25,11 +25,22 @@ import io
 import os
 import sys
 
-BUILD = '2026-10-02b (ctrl-levers+can)'
-KNOWN_FLAGS = ('--line-search', '--relax-corr', '--riks',
+BUILD = '2026-10-05b (no-relaxcorr)'
+KNOWN_FLAGS = ('--line-search', '--riks',
                '--speed-discont', '--speed-iter')
 KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=', '--inc=',
                '--nls=', '--slsmin=', '--ia=', '--ran=', '--can=')
+# [2026-10-05] --relax-corr 제거. 이 플래그의 유일한 기능은 field 블록 게이트였고(=`if RC:`),
+#   지금은 --can= / --ran= 이 같은 게이트를 자동으로 켠다. 게다가 게이트만 켜고 값을 안 주면
+#   `, 1.0, ,`(=Cαn 1.0, 기본의 100배 느슨)를 넣어 **문서 기본값과 다른 상태를 조용히 만들었다**.
+#   그래서 플래그를 없애고, 값옵션을 준 경우에만 그 값을 그대로 쓴다.
+if '--relax-corr' in sys.argv[1:]:
+    print('[중단] --relax-corr 는 제거되었습니다.')
+    print('       유일한 기능이던 field 블록 게이트는 이제 --can= / --ran= 이 자동으로 켭니다.')
+    print('       게이트만 켜고 값을 비우면 Cαn 이 1.0(기본 1e-2 의 100배 느슨)이 되어')
+    print('       문서 기본값과 다른 상태가 조용히 만들어지므로 그 경로를 없앴습니다.')
+    print('       => 보정 기준은 --can=<값> (기본 1e-2), 잔차 기준은 --ran=<값> (기본 5e-3).')
+    sys.exit(2)
 for _a in sys.argv[1:]:
     if _a.startswith('--') and not (_a in KNOWN_FLAGS or _a.startswith(KNOWN_PREFIX)):
         print('[중단] 알 수 없는 옵션입니다: %r' % _a)
@@ -41,18 +52,16 @@ print('[패처] build %s' % BUILD)
 _argv = [a for a in sys.argv[1:] if not a.startswith('--')]
 v = _argv
 LPF = None
-LS = ('--line-search' in sys.argv[1:])
-# [2026-10-02 수정] --can 은 필드 데이터줄(Cαn)을 바꾸는 옵션이므로 `if RC:` 블록 안에 있다.
-#   그런데 사용자가 `--can=1e-2` 만 주고 `--relax-corr` 를 빼면 블록이 통째로 건너뛰어져
-#   옵션이 조용히 무시된다(실측: 경고도 안 찍히고 field 블록도 안 들어갔다).
-#   -> --can 이 주어지면 RC 를 자동으로 켠다.
-# [2026-10-05 실측 함정] --ran= 도 RC 를 켜야 한다. Rαn 은 *Controls 의 **field 블록** 데이터
-#   줄에만 들어가는데, RC 가 꺼져 있으면 field 블록 자체가 생성되지 않아 `--ran=2e-2` 를
-#   줘도 **아무 데도 반영되지 않는다**(실측: field 블록이 통째로 사라짐).
-RC = ('--relax-corr' in sys.argv[1:]) or ('--can=' in ' '.join(sys.argv[1:])) or ('--ran=' in ' '.join(sys.argv[1:]))
+LS = ('--line-search' in sys.argv[1:])   # [2026-10-05 복구] 슬라이스 실수로 지워졌던 줄
+# [2026-10-05] RC(= field 블록 생성 게이트)는 이제 **값옵션만** 켠다.
+#   Rαn/Cαn 은 *Controls 의 field 블록 데이터 줄에만 들어가므로, 게이트가 꺼져 있으면
+#   `--ran=`/`--can=` 이 조용히 사라진다(실측: field 블록이 통째로 없음). 그래서 둘 중
+#   하나라도 주어지면 게이트를 자동으로 켠다. 반대로 **아무것도 안 주면 field 블록을 넣지
+#   않아 Abaqus 기본값(Rαn=5e-3, Cαn=1e-2)이 그대로 쓰인다** - 이것이 문서 기본 상태다.
+RC = ('--can=' in ' '.join(sys.argv[1:])) or ('--ran=' in ' '.join(sys.argv[1:]))
 FORCE_RIKS = ('--riks' in sys.argv[1:])
 SPD_DISCONT = ('--speed-discont' in sys.argv[1:])   # 속도: 컷백 감소(문서 ANALYSIS=DISCONTINUOUS)
-SPD_ITER = ('--speed-iter' in sys.argv[1:])         # 속도: 증분 증가 조건 완화(IG/IL)
+SPD_ITER = ('--speed-iter' in sys.argv[1:])   # [2026-10-05 복구] 슬라이스 실수로 덮어써졌던 줄
 ARC = None                      # --arc=<dl_in>: 아크길이 직접 지정(문서 기본인 '상한 없음' 동반)
 ARC_MAX = None                  # --arc-max=<v>: 굳이 상한을 걸고 싶을 때만
 # [2026-10-02] 수렴 레버 -- Abaqus *CONTROLS 문서(2017 KEYRefMap simakey-r-controls) 근거.
@@ -225,10 +234,11 @@ if LS:
         _lsdata = '%d, , %.6g,' % (_nls, SLSMIN)
     out.insert(sidx + 2, _lsdata)
     out.insert(sidx + 2, '*Controls, parameters=line search')
-if RC and (CAN is None) and ('--ran=' in ' '.join(sys.argv[1:])):
-    print('[경고] --ran 만 주면 Cαn 이 **빈칸 = 기본 1e-2** 가 된다. 이 프로젝트는 Cαn=1.0 을 쓴다')
-    print('       (증분이 사실상 0 인 케이스에서 보정 판정을 끄기 위함).')
-    print('       => `--can=1.0` 을 함께 주거나 `--relax-corr` 를 써라. 둘 다 없으면 리밋 사이클 위험.')
+if RC and (CAN is None):
+    print('[경고] --ran 만 주면 Cαn 칸이 비어 **Abaqus 기본 1e-2** 가 쓰인다(field 데이터 줄의 2번째 칸).')
+    print('       실측: 이 런의 보정/증분 비는 0.19% 로 기본 1e-2(1%%) 를 만족했다.')
+    print('       => 기본값을 의도한 것이면 그대로 두고, 명시하려면 --can=1e-2 를 함께 준다.')
+    print('       (과거처럼 1.0 으로 끄려면 --can=1.0 - 문서가 허용하나 정확도 손실이 있다)')
 if RC:
     # [2026-09-29] 실패 서명: 잔차는 통과(5e-7 / 평균 1.87e-3 = 2.7e-4 < Rαn 5e-3)인데
     #   'DISP. CORRECTION TOO LARGE COMPARED TO DISP. INCREMENT' 로 계속 실패한다.
@@ -247,8 +257,9 @@ if RC:
         out.insert(sidx + 2, '%s, %s, ,' % (_ran_s, _can_s))
         if CAN is not None:
             print('[주의] Cαn=%.6g 로 지정 (기본 1e-2). 1 미만이면 수렴이 엄격해진다.' % CAN)
-    else:
-        out.insert(sidx + 2, ', 1.0, ,')
+    # (삭제) 과거 `else: out.insert(sidx+2, ', 1.0, ,')` 분기.
+    #   RC 가 값옵션(--ran/--can)으로만 켜지므로 이 분기는 도달 불가다. 이 분기가
+    #   '플래그만 주면 Cαn=1.0' 이라는 조용한 기본값 변경의 원인이었다.
     out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
 if IA is not None:
     # [2026-10-02] 증분당 최대 시도(IA) 상향. 실측 서명:

@@ -37,7 +37,9 @@ $CODE = $PSScriptRoot
 if (-not $CODE) { $CODE = (Get-Location).Path }
 Set-Location $CODE
 
-$LIB = @('--line-search', '--relax-corr')      # 완주 런과 같은 완화 조합
+$LIB = @('--line-search')                      # 2026-10-05: --relax-corr 제거됨.
+#   이제 field 블록은 --ran=/--can= 값옵션이 켠다. 값을 안 주면 Abaqus 기본(Rαn=5e-3, Cαn=1e-2).
+#   예: $LIB = @('--line-search', '--ran=2e-2', '--can=1e-2')
 $INC = '--inc=100'                              # 시간축을 건드리지 않는 스크리닝 컷
 
 $DECKS = @{
