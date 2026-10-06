@@ -125,6 +125,12 @@ ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 
+CLAMP_EXCL_R = 0.2   # m — 클램프 패치 반경(create_rigid_patch 의 radius=0.2)과 같은 값.
+                     #     [2026-10-05] 이 반경 내 '경계 노드'는 면외 z 구속에서 제외한다.
+                     #     논문 조건 (c) "3변 u3=0" 은 클램프가 없는 모델의 조건이고, 우리는
+                     #     클램프가 사선변 위에 붙어 그 케이블을 면내로 당기므로 그 선까지 면외
+                     #     고정하면 클램프의 물리적 역할이 왜곡된다. HF(run_abaqus.py)와 같은 값.
+
 V1 = (BASE/2.0, HEIGHT, 0.0) # Top
 V2 = (BASE, 0.0, 0.0)        # Right
 V3 = (0.0, 0.0, 0.0)         # Left
@@ -651,13 +657,32 @@ def build_model(disp):
                 u1=+CLAMP_PULL/_sq2, u2=+CLAMP_PULL/_sq2)
 
     # ---- Buckle 스텝: 논문 (c) "z-displacement is fixed in the three edges" ----
+    #   [2026-10-05] 3변은 유지하되 클램프 부착 구간은 면외 구속에서 제외한다 (CLAMP_EXCL_R 참조).
     all_edges = inst_memb.edges
     a.Set(name='All_Edges', edges=all_edges)
+
+    _excl_edges = set()
+    if CLAMP_MODE != 'none':
+        for _v in (V_CL, V_CR):
+            for _n in inst_memb.nodes.getByBoundingSphere(center=_v, radius=CLAMP_EXCL_R):
+                _excl_edges.add(_n.label)
+    _tol = 1.0e-4
+    _keep_edges = []
+    for _n in inst_memb.nodes:
+        if _n.label in _excl_edges:
+            continue
+        _x, _y = _n.coordinates[0], _n.coordinates[1]
+        if (abs(_y) < _tol) or (abs(_y - _x) < _tol * 1.5) or (abs(_y - (BASE - _x)) < _tol * 1.5):
+            _keep_edges.append(_n)
+    a.Set(name='All_Edges_NoClamp', nodes=tuple(_keep_edges))
+    print("%s All_Edges_NoClamp: 경계 노드 %d개 (클램프 반경 %.3g m 내 %d개 제외)"
+          % (TAG, len(_keep_edges), CLAMP_EXCL_R, len(_excl_edges)))
+
     my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
     my_model.DisplacementBC(
         name='BC_Edges_Only_Z',
         createStepName='Step-Buckle',
-        region=a.sets['All_Edges'],
+        region=a.sets['All_Edges_NoClamp'],
         u3=0
     )
 

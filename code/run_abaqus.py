@@ -579,6 +579,16 @@ SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 
 THICKNESS = 5.0e-6 # F2: 2.5e-6 -> 5.0e-6 (cable 변형, 2.5um는 수렴 매우 어려움)
 TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
 
+CLAMP_EXCL_R = 0.2   # m — 클램프 패치 반경(create_rigid_patch 의 radius=0.2)과 같은 값.
+                     #     [2026-10-05] 이 반경 내 '경계 노드'는 면외 z 구속에서 제외한다.
+                     #     근거: 논문 조건 (c) "z-displacement is fixed in the three edges" 는
+                     #     클램프가 없는 모델의 조건이다. 우리는 클램프가 두 사선변(빗변) 위에
+                     #     붙어 그 케이블을 면내로 당기므로, 그 선까지 면외 고정하면 클램프의
+                     #     물리적 역할(막을 붙잡아 국소 압축 생성)이 왜곡된다. 실측: 그 상태의
+                     #     클램프 포함 좌굴 추출은 lambda 스프레드 0.28% 의 빗변 국소 모드 100개
+                     #     (전부 음수)만 냈다. => 3변은 유지하되 클램프 구간만 면외 구속에서 뺀다.
+                     #     mode 소스(run_abaqus_mode.py)는 클램프가 없으므로 이 제외가 불필요하다.
+
 # 케이블 파라미터 (Galhofo reference)
 CABLE_RADIUS = 5.0e-4 # m
 CABLE_AREA = np.pi * (CABLE_RADIUS**2)
@@ -1006,10 +1016,30 @@ my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
 all_edges = inst_memb.edges
 a.Set(name='All_Edges', edges=all_edges)
 
+# ---- 면외 z 구속용 노드셋: 클램프 부착 구간을 제외한다 (CLAMP_EXCL_R 참조) ----
+#   삼각형 세 변의 방정식은 y=0 / y=x / y=BASE-x 다 (꼭짓점 (0,0),(BASE,0),(BASE/2,HEIGHT)).
+#   edge->노드 API 대신 좌표로 판정해 CAE 버전 의존을 피한다.
+_excl_edges = set()
+if not NO_CLAMP:
+    for _v in (V_CL, V_CR):
+        for _n in inst_memb.nodes.getByBoundingSphere(center=_v, radius=CLAMP_EXCL_R):
+            _excl_edges.add(_n.label)
+_tol = 1.0e-4
+_keep_edges = []
+for _n in inst_memb.nodes:
+    if _n.label in _excl_edges:
+        continue
+    _x, _y = _n.coordinates[0], _n.coordinates[1]
+    if (abs(_y) < _tol) or (abs(_y - _x) < _tol * 1.5) or (abs(_y - (BASE - _x)) < _tol * 1.5):
+        _keep_edges.append(_n)
+a.Set(name='All_Edges_NoClamp', nodes=tuple(_keep_edges))
+emit("[BC] All_Edges_NoClamp: 경계 노드 %d개 (클램프 반경 %.3g m 내 %d개 제외, 전체 막 노드 %d개)"
+     % (len(_keep_edges), CLAMP_EXCL_R, len(_excl_edges), len(inst_memb.nodes)))
+
 my_model.DisplacementBC(
-    name='BC_Edges_Only_Z', 
+    name='BC_Edges_Only_Z',
     createStepName='Step-Buckle',
-    region=a.sets['All_Edges'], 
+    region=a.sets['All_Edges_NoClamp'],
     u3=0
 )
 
@@ -1215,11 +1245,12 @@ elif fidelity == 'HF':
     my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Postbuckle')
 
     # Step-Buckle 삭제 시 BC_Edges_Only_Z(prescribed condition)가 함께 삭제되므로
-    # Postbuckle 스텝에 모서리 z 구속을 재생성한다 (Galhofo 참조: 3개 모서리 u3=0)
+    # Postbuckle 스텝에 모서리 z 구속을 재생성한다 (Galhofo 참조: 3개 모서리 u3=0).
+    # 셋은 위에서 만든 All_Edges_NoClamp(클램프 구간 제외)를 그대로 쓴다.
     my_model.DisplacementBC(
         name='BC_Edges_Only_Z',
         createStepName='Step-Postbuckle',
-        region=a.sets['All_Edges'],
+        region=a.sets['All_Edges_NoClamp'],
         u3=0
     )
 
