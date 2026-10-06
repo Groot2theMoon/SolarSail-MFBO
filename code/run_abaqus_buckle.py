@@ -139,7 +139,10 @@ if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
                        % (CLAMP_MODE,))
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
-PERTURBATION = 1e-4  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta)
+PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
+#   mode/HF/cable 과 같은 값이다. 이 값이 작으면 K_delta 가 K0 대비 작아져 고유값 분리가
+#   나빠지고 subspace 반복이 폭증한다(실측: 1e-4 일 때 844 iteration / wallclock 1040 s).
+#   lambda 는 이 값으로 스케일되어 사라지므로 값 자체는 결과에 영향이 없다(§8b).
 N_EIG_BUCKLE = 100      # 추출 요청 고유값 수
 BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (요청 수의 2.5배)
 BUCKLE_MAXITER = 5000
