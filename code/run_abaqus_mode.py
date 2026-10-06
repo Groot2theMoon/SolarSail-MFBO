@@ -142,7 +142,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from aba_imperfection import (count_modes, parse_eigenvalues, verify_inp_element_types,  # noqa: E402
                               job_completed_from_logs)
-# ---- 균일 격자 메쉬 (2026-10-06). HF/buckle 과 같은 모듈을 쓴다 ------------------
+# aba_grid_mesh: BC 노드셋 헬퍼만 쓴다(boundary_node_labels/make_set). 격자는 미사용(§10).
 import aba_grid_mesh                                                            # noqa: E402
 emit("[run_abaqus_mode] _HERE = %s" % _HERE)
 # 코드 지문 — 스크립트·공용 모듈 md5 를 로그 첫머리에 찍어 'pull 누락'과 '옛 코드'를 구분한다(§1).

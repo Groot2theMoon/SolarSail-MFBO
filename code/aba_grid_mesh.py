@@ -257,8 +257,42 @@ def fill_part(part, base=20.0, height=10.0, seed_div=200.0,
     return len(s4), len(s3), len(nodes)
 
 
+def write_inp(path, base=20.0, height=10.0, seed_div=200.0):
+    """격자를 최소 `.inp` 로 쓴다 (*Node + *Element 만, 셋/섹션 없음).
+
+    용도: mdb 파트에 격자를 넣는 경로를 찾기 위한 재료다. `Part.addNodes` 는 존재하지
+    않으므로(odb.Part 전용) CAE 는 `.inp` import 로 orphan mesh part 를 만드는 쪽이
+    후보다. 이 파일을 CAE GUI 의 File > Import > Part 에 넣어 보면 된다.
+    **정확한 스크립트 API 이름은 아직 확정하지 못했다** — CAE 에서
+    File > Macro > Record 로 그 import 를 녹화하면 그 자리에서 확인된다.
+
+    반환: (노드 수, S4 수, S3 수)
+    """
+    nodes, s4, s3 = generate_grid(base, height, seed_div)
+    with io.open(path, 'w', encoding='utf-8') as f:
+        f.write("*Heading\n")
+        f.write("** uniform grid: interior quads + edge right triangles"
+                " (Galhofo 10100 topology)\n")
+        f.write("*Node\n")
+        for i, (x, y) in enumerate(nodes):
+            f.write("%d, %.10g, %.10g, 0.0\n" % (i + 1, x, y))
+        f.write("*Element, type=S4\n")
+        for k, t in enumerate(s4):
+            f.write("%d, %s\n" % (k + 1, ", ".join(str(n + 1) for n in t)))
+        f.write("*Element, type=S3\n")
+        for k, t in enumerate(s3):
+            f.write("%d, %s\n" % (k + 1 + len(s4), ", ".join(str(n + 1) for n in t)))
+    return len(nodes), len(s4), len(s3)
+
+
 if __name__ == '__main__':
+    import sys as _sys
+    if '--write' in _sys.argv:
+        _out = 'grid_10100.inp'
+        _n, _q, _t = write_inp(_out)
+        print("[grid] wrote %s  nodes=%d S4=%d S3=%d" % (_out, _n, _q, _t))
     rep, st = grid_report()
     print(rep)
     print("\n[grid] 논문 대조: Galhofo Table A.1 '10100 elements' 의 S3+S4 행은"
           "\n       u_z,max 2.003e-4 m / 2x3 wrinkles. 격자가 10100 이면 같은 토폴로지다.")
+    print("\n[grid] CAE import 시험용 .inp 를 쓰려면: python aba_grid_mesh.py --write")

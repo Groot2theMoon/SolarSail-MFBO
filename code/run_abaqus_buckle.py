@@ -90,8 +90,8 @@ os.chdir(_RUN)
 print("%s _HERE = %s" % (TAG, _HERE))
 print("%s _RUN  = %s" % (TAG, _RUN))
 
-# 균일 격자 메쉬 (aba_grid_mesh). HF/mode 와 같은 모듈을 쓴다 — 세 스크립트의 메쉬가 같아야
-#   모드 노드 라벨 매핑이 성립한다. CAE noGUI 에서 sys.path[0] 을 믿을 수 없어 _HERE 를 넣는다.
+# aba_grid_mesh: BC 노드셋 헬퍼만 쓴다(clamp_exclude_labels/boundary_node_labels/make_set).
+#   격자(fill_part)는 현재 미사용 — Part.addNodes 가 없어 되돌렸다(§10).
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import aba_grid_mesh                                                            # noqa: E402

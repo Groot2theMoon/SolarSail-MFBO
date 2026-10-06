@@ -105,7 +105,8 @@ from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: 
                               imperfection_text, report, load_mode_table,
                               build_perturbation, perturbation_report, mode_table_info,
                               verify_inp_element_types, job_completed_from_logs)
-# 균일 격자 메쉬 (aba_grid_mesh): fill_part / boundary_node_labels / clamp_exclude_labels / make_set. §10
+# aba_grid_mesh: boundary_node_labels / clamp_exclude_labels / make_set (면외 z 구속 노드셋). §9
+#   격자(fill_part)는 현재 미사용 — Part.addNodes 가 없어 되돌렸다(§10).
 import aba_grid_mesh                                                            # noqa: E402
 # 로깅 — cae noGUI 는 스크립트 stdout 을 콘솔로 보내지 않고, execfile 이라 __file__ 도 없다(§1).
 try:
