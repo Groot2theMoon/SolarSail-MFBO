@@ -1,0 +1,587 @@
+# SolarSail-MFBO 파이프라인 — 설계 근거와 실패 이력
+
+이 문서는 코드에서 제거한 주석의 **내용**을 보존한 곳이다.
+코드에는 재발 방지에 필요한 한 줄 규칙만 남기고, 왜 그렇게 됐는지·무엇을 시도했다 실패했는지는
+여기에 둔다. 코드에서 `# 자세한 이력: code/notes/history.md §N` 을 보면 해당 절을 찾는다.
+
+**읽는 법**: §기호로 찾는다. 각 항목은 **증상 → 원인 → 조치** 순서다.
+날짜는 그 판단이 확정된 시점이다.
+
+---
+
+## §1 Abaqus 실행 환경 — `cae noGUI` 함정
+
+**증상**: 스크립트가 출력을 안 한다. 로그 파일이 하나도 안 생긴다.
+
+**원인 2가지**
+1. `abaqus cae noGUI=<script>` 에서 **스크립트 자신의 stdout 은 콘솔에 오지 않는다.**
+   CAE 메시지 영역으로 가거나 통째로 사라진다. **자식 프로세스**의 출력만 콘솔에 보인다
+   (실측: 부모 스크립트 로그는 안 보이는데 자식 `base_state_probe` 의 `[R-13]` 만 보였다).
+   ⇒ **파일이 주 채널이다.** `emit()` 이 콘솔 + 후보 경로 전부에 쓴다.
+2. noGUI 는 스크립트를 `execfile` 로 실행하므로 **`__file__` 이 없다.**
+   `__file__` 로만 경로를 잡으면 `NameError` 가 나고, try/except 로 감싸면 **조용히 파일이
+   하나도 안 생긴다**(실측으로 물렸다). ⇒ 후보 경로를 여러 개 잡고 각각에 append 한다.
+
+**조치**: `emit()` 이름은 내장 `log` 와의 충돌을 피해 정했고, 정의는 첫 호출보다 앞에 두고,
+**어떤 경우에도 예외를 올리지 않는다.** `_HERE`(코드 폴더)와 현재 작업 디렉터리(`code/aba`)
+양쪽에 남긴다. 로그를 찾을 때는 이 두 곳을 본다.
+
+**`sys.argv` 전달 형식** (2026-09-22 Windows, Abaqus 2026 실측):
+```
+['C:\...\win_b64\code\bin\ABQcaeK.exe', '-cae', '-noGUI', 'run_abaqus_buckle.py',
+ '-academic', 'RESEARCH', '-tmpdir', 'C:\Users\...\Temp', '-lmlog', 'ON', '0.5', '1e-3']
+```
+- 러너가 자기 플래그와 **그 값**(`RESEARCH`, Temp 경로, `ON`)을 앞에 붙인다
+- 셸의 `--` 구분자는 **스크립트까지 전달되지 않는다**
+- 사용자 인자는 **맨 뒤에 숫자로** 온다
+
+⇒ 뒤에서부터 훑어 러너 토큰을 건너뛰고 숫자가 끊길 때까지 모은다.
+`abaqus python` 은 `--key=value` 형식을 거부한다(rf_history 실측). 위치 인자만 쓴다.
+
+**코드 지문(canary)**: 사용자가 `git pull` 을 빠뜨린 채 실행하면 로그만으로는
+"고친 코드가 안 먹었다"와 "옛 코드가 돌았다"를 구분할 수 없다(실측: 가드 오탐을 고친 뒤
+재실행했는데 로그에 옛 메시지가 찍혀 판정이 막혔다). ⇒ 스크립트와 공용 모듈의 md5 를
+로그 첫머리에 찍는다.
+
+---
+
+## §2 잡 성공 판정 — `Exit code: 0` 도 `.odb` 존재도 증거가 아니다
+
+**증상**: 실패한 잡이 성공으로 보고된다.
+
+**원인 (2단계로 틀렸다)**
+- 1차: `ABORTED` 만 보면 안 된다. Abaqus 는 **input processing 이 실패해도 부분 `.odb`** 를
+  남긴다. 실측: 12,086개 요소가 섹션을 못 받아 죽었는데 `status=None` / `ok=True` 로 보고됐다.
+  ⇒ `COMPLETED` 가 아니면 실패로 본다.
+- 2차: 그런데 **CAE noGUI 에서 `job.status` 는 `None`** 이라 `!= COMPLETED` 는 **항상 실패**로
+  오판한다(실측: `.msg` 에 완주 문자열이 있는데 `ok=False`). 그리고 `== ABORTED` 만 보면
+  부분 `.odb` 때문에 실패를 놓친다.
+
+**조치**: **산출물 + 완주 문자열**로 판정한다(`aba_imperfection.job_completed_from_logs()`).
+`.odb` 파일 존재는 성공 증거로 쓰지 않는다(249 MB 부분 ODB 실측).
+
+---
+
+## §3 요소 타입 가드
+
+**증상**: `N elements have missing property definitions` 로 입력 단계에서 죽는다.
+
+**원인**: `setElementType` 이 **조용히 무시**되면 CAE 기본 셸(`S4R`/`S3`)로 남고 막 섹션과
+충돌한다(실측 12,086개). 그때 콘솔에는 단서가 없었다.
+
+**조치**: 제출 전 `.inp` 의 요소 타입 블록을 검사하고, 실패하면 **Standard 토큰을 태우기 전에**
+중단한다. 선언이 아니라 **실제로 무엇이 붙었는가**를 본다.
+
+**판정 규칙 교정 (3차)**: 처음엔 `all(w in got)` 로 썼는데 **메쉬가 순수 사각형이라 S3 블록이
+없는 정상 덱**을 오탐했다. 요소 타입은 **모양별로** 배정되므로 어떤 모양의 요소가 없으면
+그 코드가 안 나오는 게 정상이다. ⇒ 실패 조건은 둘뿐이다.
+1. 요청 코드가 **하나도** 없다 → 전면 폴백
+2. 요청 집합에 없는 셸/막 계열 타입이 `.inp` 에 있다 → 부분 폴백(예: 사각형만 `S4R`)
+
+---
+
+## §4 요소 차수 — 1차(S4/S3) 유지, 2차는 기각
+
+**배경**: 1차 HF 는 `.sta` 가 증분 크기 리밋사이클(×1.5 성장 → 상한 1~2e-4 에서 실제 수렴 실패
+→ 1/4 컷백)에 빠져 완주에 **2만 증분 규모(7h+)** 가 필요했다. 논문은 2차(`STRI65`/`S8R5`)
+10,100요소로 974 s 에 완주한다. ⇒ 2차를 시험했다.
+
+**기각 근거 (2026-09-28 실측)**: 2차 + `SEED_DIV=150` 으로 모드 소스 잡이
+`THE DIFFERENTIAL MATRIX HAS 170293 NEGATIVE DIAGONAL ENTRIES`(82%) + `CONVERGED=0`
++ `INSTABILITIES IN THE BASE STATE` 로 죽었다 — **2차에서 base state 가 더 나빠졌다.**
+solver/element knobs 는 ruled out 이고 stall load 도 1차/2차 무관(0.439 → 0.4655).
+
+**조치**: 2차는 논문 baseline 재현 사다리에서만 쓴다. 그때는 `S8R5`/`STRI65` 두 값만 바꾼다
+(검사기 `SHARED` 와 모드 지문이 **값까지** 검사하므로 조용한 변경은 잡힌다).
+
+### §4a 막 요소로는 `*BUCKLE` 모드를 못 뽑는다
+
+**이유 1**: 막은 굽힘강성이 없어 `*BUCKLE` 의 SUBSPACE 가 수렴하지 못한다.
+문서 표현: membrane elements have no bending stiffness → "high number of nonrigid-body
+zero-energy modes". 실측: 668 iter 에 23/100 수렴, λ 가 전부 음수(-2.0e-03)라 쓸 모드가 없다.
+
+**이유 2**: 요소 타입을 바꾸면 CAE 메셔가 **노드 수까지** 바꾼다
+(막 덱 12,155 노드 / 셸 덱 18,442 노드, `SEED_DIV` 는 양쪽 200).
+⇒ `*IMPERFECTION` 은 **노드 라벨**로 주입되므로 모드 소스와 HF 의 요소코드가 같아야 한다.
+확인은 `inp_mesh_compare.py`.
+
+---
+
+## §5 2-모델 레시피 — 클램프-프리 모델에서 모드를 뽑는다
+
+**구조**
+```
+① 모드 추출 : 클램프 없는 모델 → 선형 좌굴해석(*BUCKLE) → 모드 N개 (ODB 에서 읽음)
+② HF       : ①의 모드를 클램프 있는 모델의 임퍼펙션으로 주입 → 포스트버클링
+```
+
+**근거**: 클램프 패치는 기존 노드에 Coupling 만 걸어 **메쉬를 바꾸지 않으므로** 두 모델의
+막 노드 좌표/라벨이 동일하다 → `*IMPERFECTION` 의 노드 라벨 매핑이 성립한다.
+(클램프가 있는 base state 는 음수 고유값 598~2897 / `CONVERGED=0` → 모드 추출 불가)
+
+**논문 재현 상 이점**: Galhofo(2022) 도 케이블 없는 only-membrane 에서 모드를 뽑아
+케이블 포함 모델에 주입했다. 같은 구조다.
+
+**주의**: 논문 좌굴 모델에는 클램프가 없다. 우리 모드 소스도 클램프-프리이므로
+HF 와 **프리텐션 정의가 다르다**(모드 소스는 3꼭짓점 프리텐션). 논문에는
+"클램프 유무" 외에 이 프리텐션 정의 차이도 함께 명시할 것.
+
+### §5a 모드 개수가 논문과 다르다
+
+논문 λ₁..₄ = 3.18260 / 3.18295 / 3.18341 / 3.18374e-4 (**스프레드 0.036%** = 준축퇴).
+우리는 2026-09-24 실측에서 좌굴 런이 **양수 λ 모드 2개**만 수렴시켰다(subspace 가 선형종속으로
+250 → 2 로 붕괴). 논문 4개 대비 편차다. 주입은 3개(modes 1,2,3)로 하고 그 사실을
+`[IMPERFECTION]` 로그에 남긴다. 논문 λ 스프레드가 0.036% 라 모드 3·4 의 기여가 작고,
+우리 λ₁·λ₂ 차이도 6% 다.
+
+### §5b 모드표 재사용 게이트
+
+좌굴모드는 클램프 없는 모델에서 **한 번만** 계산해 재사용한다(케이스 파라미터 `x_c`/`d_c` 는
+클램프 부착위치와 당김비율만 바꾸므로 클램프-프리 모델의 모드에 영향이 없다).
+그런데 모드 소스의 상수를 바꾼 뒤 다시 뽑지 않으면 HF 는 **'다른 형상에서 나온 모드'를 조용히
+주입**하게 된다. ⇒ 표 헤더에 모드 소스의 지문을 박아 두고 HF 가 대조한다.
+**판정만 하고 HF 는 계속 진행한다**(차단하지 않음). 콘솔 로그가 사라지는 환경도 있으므로
+판정 결과를 `mode_table_check.txt` 파일로도 남긴다.
+
+---
+
+## §6 임퍼펙션 주입 — `*BUCKLE` 은 `.fil` 출력이 금지된다
+
+**실측**: `ClampFree_Buckle.dat:7025` → `FILE OUTPUT IS NOT AVAILABLE FOR BUCKLING ANALYSIS`.
+⇒ 좌굴모드 프레임은 **ODB 에만** 있다. ⇒ 사용자 원본(`08d4cbc`)의
+`*IMPERFECTION, FILE=, STEP=n` 경로는 쓸 수 없다.
+
+**채택한 방식 3가지**
+| 방식 | 경로 | 비고 |
+|---|---|---|
+| **`odb_direct`** (2026-09-28, 사용자 제안) | HF 가 ODB 에서 좌굴모드를 직접 읽어 노드를 섭동 | **기본.** 모드표 txt 가 필요 없어 "표가 없어서 중단" 실패 모드가 사라진다 |
+| `odb_table` | 모드표 txt 경유 | 모드를 파일로 검사/재사용할 수 있다. 지문 게이트 있음 |
+| `file` | `.fil` + `*IMPERFECTION, FILE=` | `*FREQUENCY`(진동 고유모드) 소스일 때만 유효 |
+
+**물리는 셋 다 같다**: 셸에서 `*IMPERFECTION` 은 결국 **노드 좌표를 모드 형상만큼 옮기는 것**이다.
+모드표의 `u3` 은 모드별 `max|u3|=1` 정규화 + 부호 고정이므로, 진폭만 곱해 더하면
+`*IMPERFECTION` 의 `mode, scale` 합 규약과 같은 기하 섭동이 된다.
+
+**주입 위치**: 메쉬 생성 직후 + 어셈블리 `regenerate()` 전 → 의존 인스턴스가 이 좌표를 물려받는다.
+
+### §6a `if _pert is None:` 버그 — 모든 HF 런이 평탄 막으로 돌았다
+
+`_pert` 는 위에서 `None` 으로만 초기화되고 여기서 처음 만든다 → 조건이 항상 `True` 라
+`else`(실제 주입)가 **한 번도 실행되지 않았다.**
+⇒ 이전 HF 런들은 전부 **임퍼펙션 없는 완전 평탄 막**으로 돌았다(로그의 '기하 섭동 없음').
+⇒ 조건을 '모드가 있는가'로 바꿨다(2026-09-28).
+
+### §6b `MeshNode` 에는 `setValues(coordinates=...)` 가 없다
+
+`TypeError: keyword error on coordinates` (사용자 콘솔 확인).
+좌표 수정은 `Part.editNode(nodes=..., coordinates=...)` 로 한다.
+(Scripting Reference: editNode — "changes the coordinates of the given nodes on an
+orphan mesh part or on an Abaqus native mesh")
+노드별 호출 대신 **한 번에** 넘긴다(빠르고, 실패 시 부분 적용이 남지 않는다).
+
+### §6c `Repository` 에는 `.get()` 이 없다
+
+`odb.rootAssembly.instances` 는 Abaqus `Repository` 라서 `.get()` 을 쓰면
+`AttributeError: 'Repository' object has no attribute 'get'` 로 죽고, 호출측 try/except 에
+삼켜져 **'모드표가 조용히 안 만들어지는'** 원인이 됐다. `Repository` 는 `in` / `[]` / `keys()`
+를 지원한다. (2026-09-28 실측)
+
+### §6d `.frameValue` 는 고유치가 아니라 모드 번호다
+
+`*BUCKLE` 스텝 ODB 의 `frame.frameValue` 는 좌굴계수 λ 가 아니라 **모드 번호**(1,2,3,4)다.
+λ 는 `.dat` 의 MODE NO 표에 있으므로 `dat_hint` 가 있으면 그쪽을 우선한다.
+λ 는 모드 선택/로그 표기용이라 **노드 섭동 물리에는 영향이 없다.** 그래도 틀린 값을 쓰지 않는다.
+
+### §6e 횡(면외) 성분 필터
+
+`DISTRIBUTING` 으로 바꾼 뒤 첫 모드들의 `u3` 가 **전부 0**(면내 모드)이어서 HF 주입이
+`ValueError: 프레임 1: u3 가 전부 0` 으로 중단됐다(2026-09-28 실측).
+임퍼펙션은 노드 z 섭동이므로 `u3` 성분이 없는 모드는 물리적으로 쓸 수 없다.
+⇒ `u3` 성분이 무시할 수준인 프레임은 **건너뛰고** 횡성분이 있는 모드로 `n_modes` 개를 채운다.
+
+---
+
+## §7 결합 방식 — KINEMATIC → DISTRIBUTING
+
+**증상**: 클램프를 붙이면 좌굴 base state 가 불안정해진다.
+
+**원인**: `KINEMATIC` + `WHOLE_SURFACE` 는 **패치 표면 전체를 RP 에 강체 구속**한다.
+실측: 패치 경계에 **응력 특이점(`maxP/mean` = 52배)** 과 국소 압축 면적 **30.9%** 를 만들었다.
+
+**조치**: `DISTRIBUTING` + `weightingMethod=UNIFORM` — 표면 절점을 강체로 묶지 않고
+하중/변위만 **가중 분배**한다.
+
+**API 함정**
+- `influenceRadius` 는 CAE API **필수 인자**다(실측: 없애면 `expected 5, got 4` 로 죽는다).
+  `DISTRIBUTING` 에서는 무시되고 `weightingMethod` 가 분배 방식을 정한다.
+- **문자열을 넣으면 안 된다.** `'DISTRIBUTING'`(따옴표) 은 그대로 죽는다:
+  `TypeError: couplingType; found string, expecting KINEMATIC, DISTRIBUTING, STRUCTURAL or UNIFORM_NDOF`
+  ⇒ `abaqusConstants` 의 심볼을 그대로 쓴다.
+- `KINEMATIC` 으로 되돌리려면 `weightingMethod` 인자를 **빼야** 한다.
+- 모델 지문(`FINGERPRINT_KEYS`)에 포함되므로 값을 바꾸면 **모드 재추출**이 필요하다.
+
+**같은 이유로 심볼릭 상수가 필수인 곳**: `eigensolver` 문자열을 넘기면
+`eigensolver; found string, expecting SUBSPACE, LANCZOS or AMS` 로 즉시 죽는다(전 케이스 BUILD_FAIL).
+
+**이름 주의**: `create_rigid_patch` 는 legacy misnomer 다. `DISTRIBUTING` 은 강체가 아니다.
+
+---
+
+## §8 운용점(프리텐션) — HF 와 모드 소스가 의도적으로 다르다
+
+**HF 운용점**: `PRETENSION_SCALE=10` → 평균 면내응력 **2122 Pa** = 목표 7000 Pa 의 0.303배
+(R-13 실측 2026-09-21). 목표에 맞추려면 약 **33배**(= `DISP_GLOBAL` 165 µm)가 필요하다.
+단 `PRETENSION_SCALE` 는 최종 하중까지 함께 키우므로(포스트버클 변위 1mm → 3.3mm),
+운용점만 따로 맞추려면 `DISP_GLOBAL` / `GLOBAL_FINAL` 을 직접 수정한다(절대값).
+
+**모드 소스 운용점은 저프리텐션(1.8e-5 m)에 둔다.** 이유:
+- 165 µm 운용점의 base state 는 **불안정**하다. 실측: ITERATION 2 고유값 250개가 거의 전부
+  음수(-1.7e-2 대역), `NUMBER OF EIGENVALUES CONVERGED = 0`,
+  `***ERROR: THE EIGENVALUES CANNOT BE FOUND ... INSTABILITIES IN THE BASE STATE`.
+- 양수 좌굴모드가 나온 회차는 **전부 저프리텐션**이다.
+  1e-7 m → 양수 3~4개 / 5e-5 m → 양수 4개 / **1e-3 m(면내 68.7 kPa) → 양수 0개**.
+- 양성 대조군: 성공한 케이블 런(`CONVERGED=4`)은 `DISP_MAG = 1.8e-5 m` 다.
+- 하한 주의: 1e-7 m 대는 좌굴모드가 **영에너지로 퇴화**한다. 그보다 위에 둔다.
+
+⇒ **λ 의 부호를 정하는 것은 패턴 부호가 아니라 base state(프리텐션 크기)다.**
+패턴 부호(`PATTERN_SIGN`)를 -1 로 뒤집었다가 되돌린 근거는 양성 대조군으로 반증됐다
+(성공한 케이블 런도 '바깥 당김'이고 λ 4개가 양수).
+
+**이 분기는 의도적이다.** 검사기는 `DISP_GLOBAL` 을 문자열로 검사하지 않고,
+`check_operating_point()` 가 두 값을 직접 읽어 **배율을 로그로 남긴다**(9.2배 어긋난 상태로
+HF 를 돌린 실측이 있었다). 모드 소스의 `# CHECKER-DIVERGENCE:` 선언이 이 분기를 허용한다.
+**주의**: 그 선언이 살아 있는 동안에는 `PATCH_RADIUS` 를 바꿔도 검사기가 통과시킨다.
+`PATCH_RADIUS` 를 바꿀 때는 **사람이 HF 값(0.2)과 직접 대조**할 것.
+
+### §8a subspace 창/기저 소진 (미해결 축)
+
+실측 (요청개수/기저벡터):
+- 100/400 → `CONVERGED=0` (ITER4 에서 396개까지 추적 후 붕괴)
+- 60/120 → `CONVERGED=0` (창 부족: 필요 총개수 63 > 요청 60)
+- **100/250 → 양수 2개 수렴** (이 배치의 최선)
+
+⇒ subspace 로는 2개가 상한이므로 **음수 대역 자체를 줄이는 축**으로 간다.
+근거(단조 실측): 시스템 음수 고유값 88개(1e-3 m) → 56개(1.8e-5 m) → 16개(1e-7 m).
+사전등록 지표: 새 런의 `SYSTEM MATRIX HAS N NEGATIVE EIGENVALUES` 의 N 이 56 보다 줄었는가.
+
+### §8b 좌굴 스텝의 perturbation 변위
+
+Abaqus 문서 §6.2.3: 좌굴 스텝의 nonzero prescribed BC 는 **증분 응력**에 기여하고, 그 증분이
+미분 초기응력 강성 `K_delta` 를 만든다. 크기 자체는 λ 로 스케일되어 사라지지만
+(`CONVERGED` 수에 영향 없음), `K_delta` 가 `K0` 대비 너무 작으면 고유값 분리가 나빠져 subspace
+반복이 `EIGENVALUES CANNOT BE FOUND` 로 실패한다.
+성공한 `run_abaqus_cable.py` 는 같은 솔버 설정(`numEigen=100`/`SUBSPACE`/`vectors=250`)에서
+**0.01 m** 를 쓴다 → 2026-09-22 부로 우리도 0.01 m 로 맞췄다(구 5e-4 = 1/20 이었다).
+
+### §8c 패치 반경 (0.4 → 0.2) bisect
+
+4모드를 낸 조합은 **0.4** 였다. 반경만 0.2 로 되돌려 '패치 반경이 스펙트럼을 좌우하는가'를
+단독 판정했다(구동 방식 `corner2` / 1.8e-5 / `SIGMA0` 700 은 그대로).
+판독 규칙(사전등록): 4개 수렴 + 0 ERROR → 반경은 무관 = HF 정합 회복(최상).
+0~2개 → 0.4 가 결정적이었다 → 0.4 복귀. λ 값 자체는 base state 변화로 이동하는 것이 정상이다
+(개수로 판정). 오라클 값은 0.4 다.
+
+---
+
+## §9 클램프와 면외 구속 (BC)
+
+**`BC_Stabilize_Z` (전 막 `u3=0`)**: 프리텐션 단계는 **평면 인장**, 좌굴은 평면 base state 전제다.
+⇒ **정상이다. 고치면 안 된다.** 좌굴 스텝에서 `BC_Edges_Only_Z` 로 전환한다.
+
+**논문 조건 (c)**: "z-displacement is fixed in the three edges".
+
+**결함 (2026-10-05)**: `all_edges = inst_memb.edges` 가 **빗변까지 포함**해 세 변 전부를 면외
+고정했다. 그런데 논문 조건 (c) 는 **클램프가 없는 모델**의 조건이고, 우리는 클램프가 두
+사선변(빗변) 위에 붙어 그 케이블을 면내로 당긴다. ⇒ 그 선까지 면외 고정하면 클램프의 물리적
+역할(막을 붙잡아 국소 압축 생성)이 왜곡된다.
+**실측**: 그 상태의 클램프 포함 좌굴 추출은 **λ 스프레드 0.28% 의 빗변 국소 모드 100개**
+(전부 음수)만 냈다. 스프레드가 극단적으로 좁다 = 중복 근 = 물리적으로 구별되는 모드가 아니다.
+대조로 클램프-프리 성공 런의 λ 스프레드는 31.3% 로 서로 구별되는 모드 4개였다.
+
+**조치**: 3변은 유지하되 **클램프 패치 반경(`CLAMP_EXCL_R` = 0.2 m) 내 노드만** 면외 구속에서
+제외한다(`All_Edges_NoClamp`). mode 소스는 클램프가 없으므로 제외가 불필요하다.
+실측 로그: 경계 노드 474개 (클램프 반경 내 20개 제외, 전체 막 노드 18,442).
+
+**`Step-ClampTension` 삭제로 인한 6배 점프**: `Step-ClampTension` 에서
+`CLAMP_PULL = DISP_GLOBAL × d_c` = 165µm × 0.5 = 8.25e-5, `Step-Postbuckle` 에서
+`CLAMP_FINAL = 1e-3 × 0.5 = 5e-4`. 최종값은 같지만 **경로가 다르고 수렴 부담을 키운다.**
+실재하는 결함이나 **판단 보류**(논문에 클램프가 없어 정답이 없다).
+
+---
+
+## §10 균일 격자 메쉬 (2026-10-06)
+
+**왜**: 자유 메쉬(약 18,200 `S4`, `deviationFactor` + `ADVANCING_FRONT`)는 요소 수가 논문의
+1.8배이고 조성도 다르다. Galhofo(2022) Table A.1 은 **10,100 요소**로 `S3+S4`(1차 셸)까지
+보고했고(`u_z,max` 2.003e-4 m / 2×3 wrinkles), 내부 정사각형 + 경계 직각삼각형 격자
+(`h = 0.1 m`)가 `S4 9900 + S3 200 = 10,100` 으로 **그 토폴로지와 일치**한다.
+⇒ "주름 수는 논문과 비교 불가(요소 종류 의존 4배)"의 절반은 **메쉬 자체가 달랐던 것**이었다.
+
+**방법**: `h×h` 셀을 삼각형의 3개 반평면(`y≥0` / `y≤x` / `y≤BASE-x`)으로 **정확히 클리핑**
+(Sutherland-Hodgman). 무게중심 판정으로 "셀을 두 삼각형으로 쪼개 무게중심이 안이면 포함"하는
+방식은 **면적 오차 0.5%**(100.5 vs 100.0 m²)를 낸다 — 경계 셀을 통째로 넣거나 빼기 때문이다.
+클리핑은 면적을 **기계 정밀도**로 보존한다(오차 1.3e-11 m²).
+
+**품질**: 사선 기울기가 45°이고 격자가 정렬돼 사선이 셀 대각선과 정확히 일치한다.
+⇒ 경계 셀이 예외 없이 반으로 잘려 **45-45-90 직각이등변삼각형**이 된다
+(면적 전부 5.000e-03, 최소각 전부 45.00°, 종횡비 전부 2.414 = √2/(2−√2)). `S4` 9,900개는
+전부 변 길이 균일. 경계 노드 400개가 `tol=1e-4` 안에 정확히 온다(BC 판정과 일관).
+
+### §10a orphan mesh 전환 — 기하 기반 호출을 전부 요소 기반으로
+
+`part.addElements` 로 만든 메쉬는 **orphan mesh** 다. 요소가 파트 기하(face)에 붙지 않는다.
+
+| 기존 (기하 기반) | orphan mesh 에서 | 조치 |
+|---|---|---|
+| `p.SectionAssignment(region=p.Set(faces=p.faces, ...))` | 요소가 섹션을 못 받음 → `N elements have missing property definitions` | `p.Set(elements=p.elements, name='All')` + `p.SectionAssignment(region=p.sets['All'])` |
+| `a.Set(name='All_Edges', edges=inst_memb.edges)` | 인스턴스 기하 edge 가 비어 셋이 무효 | 좌표 판정 노드셋으로 교체 |
+| `p.getElementType(region=Region(faces=p.faces))` | 요소를 못 봄 | `Region(elements=p.elements)` |
+
+**섹션 할당은 요소 생성 뒤로 옮겨야 한다.** 기존 코드는 기하 기반이라 메쉬보다 앞에 있어도
+됐지만, 요소 기반이면 `p.elements` 가 채워진 뒤여야 한다.
+
+**셋 이름 `'All'` 은 유지한다** — `inst_memb.sets['All']` 참조가 HF 4 / mode 2 / buckle 2 곳에 있다.
+
+### §10b `a.Set(nodes=...)` 는 `MeshNodeArray` 를 요구한다
+
+tuple/list 를 넘기면 `Feature creation failed.` 로 죽는다(2026-10-06 실측).
+```python
+a.Set(name='S', nodes=tuple(labels))                      # 죽는다
+a.Set(name='S', nodes=inst.nodes.sequenceFromLabels(tuple(labels)))   # 정답
+```
+기존 코드가 정답 패턴을 보여준다: `a.Set(nodes=inst.nodes.getByBoundingSphere(...))`(배열),
+`a.Set(nodes=inst.nodes[0:1])`(슬라이스). 둘 다 `MeshNodeArray` 다.
+반대로 `part.addNodes` / `part.addElements` 는 **튜플**을 받는다.
+
+### §10c 미해결 — 인스턴스 생성 순서
+
+세 스크립트 모두 `a.Instance(part=p, dependent=ON)` 가 **메쉬 생성보다 앞**에 있고 그 뒤
+`a.regenerate()` 로 갱신한다(자유 메쉬에서 작동하던 순서). **orphan mesh 에서 `regenerate` 가
+같은 방식으로 갱신하는지는 미확인이다.** 실패하면 메쉬 블록을 인스턴스 생성 **앞으로** 옮긴다
+(케이블 파트 `p_c` 는 이미 파트 메쉬 → 인스턴스 순서다).
+
+---
+
+## §11 좌굴 스크립트의 클램프 모드 (buckle 전용)
+
+A-route(`run_abaqus.py`)의 클램프는 **'존재'와 '작동'이 분리**돼 있다.
+- 존재 = 강체패치 + 케이블(Tie), `u3=0`
+- 작동 = `Step-ClampTension` 에서 다리변의 **외향 법선** `(∓1,+1)/√2` 방향으로
+  `CLAMP_PULL = DISP_GLOBAL × d_c` 만큼 당김. 그리고 좌굴 base state 를 그 당김 **이후**로 잡는다.
+
+C-route(`run_abaqus_buckle.py`)는 케이블이 없으므로 RP 를 직접 구속/구동해 같은 하중 경로를
+만든다.
+
+| `CLAMP_MODE` | 의미 | 대응 |
+|---|---|---|
+| `none` | 패치 없음 | 논문 재현 기준선 (P0) |
+| `passive` | `u3=0`, in-plane 자유 | A-route 의 GlobalTension 직후 (P1) |
+| `driven` | `u3=0` + 법선 방향 구동 | A-route 의 ClampTension 직후 (P2, 설계 base) |
+| `fixed` | `u1=u2=u3=0` 완전 고정 | 기존 동작 (수치 진단용, P3) |
+
+**판정**: 2026-09-22 이전 주석의 "논문 (b) 레시피대로 클램프를 구동하지 않는다"는 근거가
+성립하지 않는다 — **논문 좌굴모델에는 클램프 자체가 없다.** 고정은 우리 선택이다.
+
+**산출물 덮임 방지**: 요소/설정이 바뀐 케이스가 같은 job 이름으로 제출되면
+`run_job_safely` 가 stale 산출물을 지우고 제출해 직전 결과 증거가 사라진다
+(2026-09-22 실제 발생: S4 런이 S4R 런 산출물을 덮어 λ 표를 잃었다).
+⇒ job 이름에 **요소 태그 + 클램프 모드**를 넣는다.
+
+---
+
+## §12 Riks 패처 (`riks_patch_input.py`)
+
+**`--relax-corr` 제거 (2026-10-05)**: 이 플래그의 유일한 기능은 field 블록 게이트였고
+(`if RC:`), 지금은 `--can=` / `--ran=` 이 같은 게이트를 자동으로 켠다. 게다가 게이트만 켜고
+값을 안 주면 `, 1.0, ,`(= `Cαn` 1.0, 기본의 100배 느슨)를 넣어 **문서 기본값과 다른 상태를
+조용히 만들었다.** ⇒ 플래그를 없애고, 값옵션을 준 경우에만 그 값을 그대로 쓴다.
+
+**field 블록 게이트**: `Rαn`/`Cαn` 은 `*Controls` 의 field 블록 데이터 줄에만 들어가므로,
+게이트가 꺼져 있으면 `--ran=`/`--can=` 이 **조용히 사라진다**(실측: field 블록이 통째로 없음).
+⇒ 둘 중 하나라도 주어지면 게이트를 자동으로 켠다. **아무것도 안 주면 field 블록을 넣지 않아
+Abaqus 기본값(`Rαn`=5e-3, `Cαn`=1e-2)이 그대로 쓰인다** — 이것이 문서 기본 상태다.
+
+**`*CONTROLS` 문서 근거** (2017 KEYRefMap `simakey-r-controls`)
+- LINE SEARCH 데이터줄: `Nls, slsmax, slsmin, flss, eta_ls`. `Nls` = 최대 line search 반복.
+  Newton 스텝 기본 **0(비활성)**, 권장 **5**. `slsmin` 기본 1e-4.
+- FIELD 데이터줄: `Rαn` = 최대잔차/평균플럭스 기준(기본 5e-3),
+  `Cαn` = 최대보정/최대증분 기준(기본 1e-2).
+- TIME INCREMENTATION 필드순서: `I0, IR, IP, IC, IL, IG, IS, IA, IJ, IT`.
+  `IA` = 증분당 최대 시도 횟수(기본 5). 초과하면 `TOO MANY ATTEMPTS MADE FOR THIS INCREMENT`.
+
+**배치 규칙**: `*Controls` 는 'Type: History data / Level: Step' 이므로 절차 키워드(`*Static`)와
+그 데이터 줄 **뒤**에 온다. `*Step` 과 `*Static` 사이에 넣으면 **입력단계에서 거부된다**(실측).
+
+**TIME INCREMENTATION 은 한 블록으로 병합한다 (2026-10-05)**: 이 블록의 데이터 줄은 필드
+**위치**로만 의미를 갖는다(1 `I0`, 2 `IR`, 4 `IC`, 5 `IL`, 6 `IG`, 8 `IA`). 옵션마다 따로
+삽입하면 블록이 2개가 되는데, 뒤 블록의 빈 칸이 앞 블록 값을 덮어쓰는지가 **문서에 없다**.
+한 줄로 합치면 그 위험이 사라진다. 문서가 `ANALYSIS=DISCONTINUOUS` 는 "overrides any values
+... for I0 and IR" 라고 명시하므로 `I0`/`IR` 은 그 파라미터 없이 **직접 필드로** 지정한다.
+문서가 "A less efficient solution may result if this parameter is set in problems that do not
+exhibit severely discontinuous behavior" 라고 경고하므로, severe discontinuity(접촉/마찰/
+콘크리트 균열)가 없는 우리 모델엔 `--speed-discont` 를 쓰지 않는다.
+
+**`--tstop` 함정 (2026-09-30 실측)**: `*Static` 데이터 줄의 `initialInc`/`minInc`/`maxInc` 는
+**스텝타임 단위**다. `timePeriod` 만 0.05 로 줄이면 같은 값이 램프 기준으로는 **20배 큰 증분**이
+되어(초기증분 0.0001 → 램프의 2e-3 = 2 µm, 완주 런은 1e-4 = 0.1 µm) 취약한 상태에서
+`C_n^a` 보정검정이 깨지고 증분이 나노미터급으로 붕괴한다(`HF_ref` 실측 5.06e-8).
+⇒ 세 증분 파라미터를 **같은 비율로 스케일**해 물리적 증분 이력을 그대로 보존한다.
+`--tstop` 의 목적: 기본 진폭(ramp)이 스텝 타임을 따라가므로 두 런을 '같은 하중 수준'에서
+대조할 수 있다.
+
+**line search 의 표적 (2026-09-29 로그 관측)**: attempt 1 에서 한 노드의 보정이 부호를 바꾸며
+커지고 `DISP. CORRECTION TOO LARGE` → `APPEARS TO BE DIVERGING`. 이 서명은 line search 가
+겨냥하는 상황이다(보정 방향을 감쇠). 정적 해석 + 기존 안정화를 그대로 두고 **삽입만** 한다.
+
+**`Cαn` 의 필요성 (2026-09-29)**: 잔차는 통과(5e-7 / 평균 1.87e-3 = 2.7e-4 < `Rαn` 5e-3)인데
+`DISP. CORRECTION TOO LARGE COMPARED TO DISP. INCREMENT` 로 계속 실패한다. 원인은 보정/증분
+비 기준 `Cαn`(기본 1e-2) 인데, 증분이 1.09e-6 m(= 0.011 t)까지 작아지면 보정 2.5e-7 이 23% 가
+되어 그 비율은 만족될 수 없다(컷백 함정). 문서: 'in cases where the incremental solution is
+essentially zero' 에서 `Cαn` 등을 수정해야 할 수 있고, 'To avoid testing the magnitude of the
+solution correction, you can set `Cαn` to 1.' **잔차 기준 `Rαn` 은 건드리지 않는다** →
+평형 정확성 근거가 유지된다.
+
+**증분 증가 조건 (2026-10-01)**: `IC=16, IL=14, IG=8`(문서 순서 4,5,6).
+실측: 증분 3.771e-04 → 1.410e-03 (3.74배), wall 5828 → 1706 s. 단 그 런은 다른 해였다.
+
+**속도 개선 (2026-10-01)**: 문서(Commonly used control parameters) —
+"Sometimes it is useful to increase both `I0` and `IR` ... to avoid premature cutbacks".
+`ANALYSIS=DISCONTINUOUS` 는 `I0=8, IR=10` 으로 자동 설정한다. 우리 런은 컷백이 20.5%
+(203/990)라 낭비가 크므로, 그 원인인 **조기 컷백**을 줄이는 것이 목적이다.
+필드 위치를 지정하지 않으므로 순서 리스크가 없다.
+
+**가드**: 리크스 스텝은 데이터 덱의 **마지막 스텝**이어야 한다. 실측 오류(2026-09-29):
+`***ERROR: IF A RIKS STEP IS SPECIFIED IT MUST BE THE LAST STEP IN A DATA DECK.`
+원본에 Postbuckle 뒤 스텝이 남아 있으면 그 입력은 입력단계에서 즉시 죽는다
+→ 쓰지 않고 중단한다.
+
+---
+
+## §13 증분 상한(`maxNumInc`)은 해결책이 아니라 연장이었다
+
+실측 1(상한 1000): 1023 증분에서 step time 0.162 도달 후
+`***ERROR: TOO MANY INCREMENTS NEEDED TO COMPLETE THE STEP` 으로 종료.
+**수렴은 완벽했다**(증분당 1 iteration, attempt 1, 잔차 8.7e-10, coupling compat 0)
+— 즉 발산이 아니라 **증분 수 소진**이다.
+
+실측 2(2026-09-28 밤, 상한 상향 뒤): **동일 시그니처가 그대로 재현**됐다
+(1023 증분 / 262 컷백 / 3572 iteration / 469 neg-eig / 1436 s / step 0.162).
+⇒ 두 갈래 중 하나다. (a) 상한이 이 런에 반영되지 않았다(**먼저 `.inp` 의 `*Step ... inc=` 값**을
+확인하라), 또는 (b) 반영됐어도 완주하지 못한다: 국소 증분이 ~4.5e-5 라 남은 0.838 에 약
+1.8만 증분이 필요해, 상한 10000 으로도 step 0.6 근처에서 다시 멈춘다.
+⇒ **이 상향은 해결책이 아니라 연장이다.** 실제 원인은 증분 크기가 강제로 눌리는 것:
+**국소 불안정**(neg-eig 469건, 마지막 프레임 압축 면적 28.8%)이다.
+
+**폐기된 레버**: `allsdtol` 0.05 → 0.15. `ALLSD/ALLIE` 실측 0.50%(허용 5%)라 상한이
+binding 이 아니므로 이 값을 바꿔도 아무 일도 일어나지 않는다.
+
+**`STEP-LIMIT READBACK` (2026-09-29)**: `maxNumInc` 를 1000 → 10000 으로 고쳤는데도 밤샘 런이
+직전 런과 **완전히 동일한 시그니처**(1023 증분 / 262 컷백 / step 0.162)로 끝났다. 디스크의
+`.inp` 를 보니 `*Step, name=Step-Postbuckle, nlgeom=YES, inc=1000` — 그 런은 **변경 이전
+리비전의 코드로 생성된 `.inp` 를 썼다.** CAE 의 `maxNumInc` 는 `.inp` 에서 `*Step` 의 `inc=` 다.
+⇒ 생성된 `.inp` 의 `*Step` 줄을 로그에 남긴다.
+
+---
+
+## §14 `WRITE_ONLY` — 덱 생성과 제출 분리
+
+**이유 (2026-10-01)**: `riks_patch_input.py` 는 **생성된 `.inp` 를 수정**해 완화 블록을 넣는데,
+`run_abaqus.py` 가 곧바로 submit + `waitForCompletion` 까지 하면 **패치 이전의 무패치 런이
+완주(약 40분)** 해 버린다. `WRITE_ONLY=True` 면 덱만 남기고 즉시 종료하므로
+'덱 생성 → 패처 → 패치 덱 제출' 순서가 낭비 없이 성립한다.
+**주의**: 뒤쪽 `print_job_diag`/`job.status`/`job_completed_ok` 는 제출된 잡을 전제하므로
+여기서 `sys.exit` 해야 안전하다(그 줄들을 주석 처리하는 방식은 쓰지 않는다).
+
+---
+
+## §15 운용점 일치 검사 (`check_model_consistency.py`)
+
+**검사 대상은 실제로 제출하는 HF 다.** 예전에는 `run_abaqus_new.py` 를 봤다 — 그 파일은
+legacy(1차 요소 S3/S4)이고 **아무도 제출하지 않는다.** 그래서 `run_abaqus.py` 의 모델
+정의(요소/메쉬/결합)를 바꿔도 검사기가 **PASS(가짜 초록불)** 를 냈다(2026-09-28 정정).
+
+**운용점 검사가 따로 필요한 이유**: HF 의 `DISP_GLOBAL = 0.000005 * PRETENSION_SCALE` 줄이
+주석 처리된 뒤에도 문자열 검사는 `HF=True` 로 통과했다 — **운용점 변경을 아무 게이트도 잡지
+못했다.** 모드 소스와 HF 의 운용점이 어긋나면 모드 형상이 다른 프리스트레스 상태의 것이 되어
+노드 섭동(임퍼펙션)이 물리적으로 틀어진다(2026-09-28 실측: **9.2배 어긋난 상태로 HF 를 돌렸다**).
+⇒ 주석을 제거한 **살아있는 코드**에서 값을 직접 뽑아 비교한다(`check_operating_point()`).
+
+**`CHECKER-DIVERGENCE` 계약**: 모드 소스와 HF 가 선언하면 달라져도 되는 항목은 모드 소스 안의
+`# CHECKER-DIVERGENCE: <이름,...>` 주석으로만 인정한다(논문 공개 의무).
+**이 주석은 검사기가 실제로 읽으므로 삭제하면 안 된다.**
+
+**`code_only()` 구현 주의**: 처음에는 `ast.unparse` 를 썼는데 unparse 가 숫자 리터럴을
+재작성한다(5.0e-6 → 5e-06, 2.5e9 → 2500000000.0). 그래서 정상 항목이 false FAIL 로 나왔다.
+⇒ 원문 리터럴을 보존해야 하므로 `tokenize` 로 토큰을 모은다. 이 정규형은 **주석과 docstring 을
+제거**하므로, 주석만 지우는 리팩토링은 `code_only` 해시를 바꾸지 않는다.
+
+---
+
+## §16 도구별 함정
+
+**`inp_mesh_compare.py`**: 라벨 → 좌표 **집합**으로 비교하면 안 된다.
+- 함정 1: 어셈블리 `.inp` 에는 파트 레벨 + 인스턴스 레벨 노드 블록이 함께 있어 **같은 라벨이
+  여러 번** 나온다(실측: 모드 7블록 / HF 13블록). dict 로 덮어쓰면 마지막 값이 남아 정합하는
+  두 메쉬를 오탐한다.
+- 함정 2(더 근본적): **각 파트는 독립적인 노드 라벨 공간을 갖는다**(멤브레인도 1번부터,
+  케이블도 1번부터). 라벨로 합치면 다른 파트의 노드가 섞여 좌표 비교가 무의미해진다
+  (실측: 정합하는 두 덱에서 "좌표 일치 4.78%").
+⇒ 좌표는 판정에 쓰지 않는다. 신뢰할 수 있는 지표만 쓴다: (1) 총 노드 수 (2) 셸/막 요소 수
+(3) A 에만 / B 에만 라벨 수. **최종 기능 판정은 HF 자신의 로그다**:
+`[IMPERFECTION] 기하 섭동 적용: <찾은>/<전체> 노드` 가 N/N 이면 모드 소스의 라벨을 전부
+찾았다는 뜻 = 주입 매핑이 성립한다.
+
+**`compare_odb_fields.py` — `ANTI` 등급 신설**: 실측 `HF_x025r` vs `HF_x025i` 가
+`corr=-0.802`, `corr(A,-B)=+0.802` 였다. 즉 '거울상'도 '무상관'도 아니다. **전역 스냅 방향이
+반대인 두 분기이면서 국소 패턴은 완전 대칭이 아닌**(클램프가 대칭을 깬다) 상태다.
+⇒ 이 등급을 따로 둔다. **크기 지표만 보면 '비슷해' 보이는 게 함정**이다.
+
+**`eval_abaqus.py`**: 인자 형식 오류를 **조용히 FAIL 로 뭉개지 않는다.** 실측:
+`eval_abaqus.py A.odb B.odb` 로 두 ODB 를 비교하려다 `HF_X025I.ODB` 가 `mode` 가 되어
+여기로 떨어졌고 사용자는 원인을 알 수 없었다. **이 스크립트는 두 ODB 비교기가 아니라
+단일 ODB 지표 추출기다.**
+
+**`base_state_probe.py`**: 사용자 실행형 도구이므로 빌드를 첫 줄에 찍는다. 출력에 이 줄이
+없거나 반경이 반영되지 않으면 옛 리비전이다(2026-10-01 실제로 이 함정에 걸렸다).
+선택 인자 4(중앙 반경 [m])가 필요한 이유: 논문의 'centre of each quadrant' 정의에 따라 중앙
+응력이 달라지므로(반경 1 m 에서 3958 Pa, 전막 평균 6634 Pa) 민감도를 본다.
+
+**`wrinkle_spectrum.py` 부호 버그 (2026-10-02)**: `vals` 는 'abs 기준 정렬이지만 부호는 유지'한
+값이다. 이전 코드는 `z > k*T` 로 비교해 **음수 변위를 전부 제외**했다(양수만 집계).
+⇒ 같은 런에 대해 `|u3|>2t` 가 49.08% 로 나왔는데 `base_state_probe` 의 절대값 기준 집계로는
+90.7% 였다 — **라벨과 계산이 불일치**했던 버그.
+
+**`run_abaqus_mode.py` 의 LANCZOS 오import (2026-09-24 제거)**: IDE 자동삽입으로
+`from matplotlib.image import LANCZOS` 가 들어왔다. matplotlib 의 LANCZOS 는 **이미지 리샘플링
+필터**이고, Abaqus 고유치 솔버 LANCZOS 는 `abaqusConstants` 에서 온다. 게다가 Abaqus Python 에
+matplotlib 이 없으면 스크립트가 시작 시 `ImportError` 로 죽는다. 이 스크립트는 LANCZOS 를
+쓰지 않는다(선형 좌굴해석 + SUBSPACE).
+
+**`aba_imperfection.py` — 인코딩 (2026-10-05)**: `encoding` 을 반드시 명시한다. 이 파일에는
+한글 주석이 있고, Windows 기본 인코딩(cp949)으로 UTF-8 파일을 열면 `UnicodeDecodeError` 가
+나는데, `except Exception: return None, {}` 가 그것을 **조용히 삼켜** 지문이 항상 사라졌다
+(실측: 모드 소스 로그에 `[MODE] 재사용 지문 없음(생략)`). 지문은 '모드표가 다른 모델에서
+만들어졌다'를 잡는 **유일한 장치**이므로 조용히 꺼지면 안 된다.
+
+**`check_model_consistency.py` — EVOL 필드출력**: `EVOL` 이 없으면 `base_state_probe` 가
+면적가중을 못 하고 균등가중으로 떨어진다(2026-09-22 실측으로 발견).
+`RF` 는 앵커 반력으로, "각 앵커(정점/클램프)가 당김을 얼마나 흡수하는가"(하중 경로 분담)를
+읽는 데 쓴다 — 2026-09-22 첫 좌굴 런에서 `RF` 미출력으로 그 계측이 비어 있었다.
+출력 요청은 해석 결과를 바꾸지 않는다.
+
+**`run_abaqus_mode.py` — 스텝 순서 가드 (2026-09-24)**: `MODE_SOURCE_STEP` 상수가
+'정의만 되고 안 쓰이던' **죽은 상수**였고, 스텝 순서가 밀리면 HF 가 **엉뚱한 스텝의 프레임을
+조용히 읽는다.** ⇒ 여기서 즉시 중단한다.
+**주의**: 이 가드는 `run_abaqus.py` 소스를 열어 `MODE_SOURCE_STEP` 줄을 파싱한다.
+`.split('#')[0]` 로 인라인 주석을 버리므로 **줄 시작이 `MODE_SOURCE_STEP` 이고 `=` 뒤에
+숫자**여야 한다. 이 줄의 형식은 계약이다.
+
+---
+
+## §17 환경변수 → 상수 (2026-09-21)
+
+구 `MFBO_*` 환경변수(예: `MFBO_N_EIG_BUCKLE`, `MFBO_VECTORS`, `MFBO_PERT_MAG`)는 전부 제거됐다.
+**값은 이 파일에 고정이고, 바꾸려면 상수를 직접 수정한다.**
+이유: 환경변수는 로그에 안 남아 재현 추적이 불가능했고, 값이 바뀐 것을 아무 게이트도 잡지
+못했다.
+`NO_CLAMP` 도 같은 원칙이다(환경변수 아님).
