@@ -205,8 +205,10 @@ try:
     d_c = float(sys.argv[-1])
     # 범위 가드: 두 클램프 패치(반경 0.2 m)는 사선변 위에서 거리 20*x_c 만큼 떨어진다.
     #   x_c < 0.05 이면 두 패치가 겹치고, x_c = 1.0 이면 꼭짓점 RP 패치와 겹친다.
-    if not (0.05 <= x_c <= 0.90):
-        emit('!!! ERROR: x_c=%.4g 는 유효범위 [0.05, 0.90] 밖이다 (패치 겹침).' % x_c)
+    #   상한은 mfbo.py 의 설계공간(x1_max=0.95)과 반드시 일치해야 한다 — 좁게 잡으면
+    #   MFBO 가 그 구간을 탐색할 때 조용히 sys.exit 으로 죽는다.
+    if not (0.05 <= x_c <= 0.95):
+        emit('!!! ERROR: x_c=%.4g 는 유효범위 [0.05, 0.95] 밖이다 (패치 겹침).' % x_c)
         sys.exit(1)
     if not (0.0 < d_c <= 2.0):
         emit('!!! ERROR: d_c=%.4g 는 유효범위 (0, 2.0] 밖이다.' % d_c)
@@ -269,8 +271,8 @@ def run_job_safely(job_name, model_name=None):
     emit("   PRETENSION_SCALE = %.6g   (GLOBAL_FINAL 이 '0.0001 * PRETENSION_SCALE' 이면 여기가 원인)"
          % PRETENSION_SCALE)
     emit("   DISP_GLOBAL    = %.6g m   (GlobalTension 단계)" % DISP_GLOBAL)
-    emit("   NO_CLAMP=%s  SEED_DIV=%.6g  WRITE_ONLY=%s  (패치 반경 0.2 m, 리터럴)"
-         % (NO_CLAMP, SEED_DIV, WRITE_ONLY))
+    emit("   NO_CLAMP=%s  SEED_DIV=%.6g  RUN_MODE=%s  (패치 반경 0.2 m, 리터럴)"
+         % (NO_CLAMP, SEED_DIV, RUN_MODE))
     emit("   stabilizationMagnitude(Postbuckle) = 0.003 / THICKNESS = %.3g m" % THICKNESS)
     emit("[run_abaqus] ====================================")
     if abs(GLOBAL_FINAL / (0.0001 * PRETENSION_SCALE) - 1.0) < 1e-9:
@@ -287,11 +289,20 @@ def run_job_safely(job_name, model_name=None):
              % ((ELEM_CODE_QUAD, ELEM_CODE_TRI), _err_et or _cnt_et))
         emit("    잡을 제출하지 않는다. ELEM_CODE_* 지정 방식을 고쳐라.")
         return False
-    # WRITE_ONLY: 덱만 생성하고 종료한다. 패처가 .inp 를 수정해야 하므로 여기서 제출하면 그 런이 낭비된다(§14).
-    if WRITE_ONLY:
-        emit("[run_abaqus] WRITE_ONLY=True : 덱만 생성(%s.inp)하고 제출하지 않는다." % job_name)
-        emit("             다음: python riks_patch_input.py ... -> abaqus job=<패치> input=<패치.inp>")
+    # 'write' 는 덱만 생성하고 종료한다(수동 패처 워크플로우).
+    if RUN_MODE == 'write':
+        emit("[run_abaqus] RUN_MODE='write' : 덱만 생성(%s.inp)하고 제출하지 않는다." % job_name)
+        emit("             다음: python riks_patch_input.py aba\\%s.inp <out>.inp Step-Postbuckle "
+             "--line-search --ran=2e-2 --can=1e-2 --i0=8 --ir=10" % job_name)
         sys.exit(0)
+    # 'auto' 는 제출 전에 *Controls 를 주입한다. 제자리 덮어쓰기라 잡 이름/입력명이 유지된다.
+    if RUN_MODE == 'auto':
+        if not run_patcher(job_name + '.inp'):
+            emit("!!! ERROR: 패처 실패 — 패치되지 않은 덱을 제출하지 않는다(§14).")
+            emit("RESULTS:FAIL")
+            sys.exit(1)
+    else:
+        emit("[run_abaqus] RUN_MODE='plain' : 패처 없이 원본 덱을 제출한다(진단용).")
     job.submit(consistencyChecking=OFF)
     
     job.waitForCompletion()
@@ -312,6 +323,69 @@ def run_job_safely(job_name, model_name=None):
               "(중도 중단 의심; odb 존재만으로는 판정 불가 — R-12)" % job_name)
     emit("Job %s completed successfully (Status: %s)." % (job_name, str(job.status)))
     return True
+
+def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=2e-2',
+                                                     '--can=1e-2', '--i0=8', '--ir=10')):
+    """패치 전 덱에 *Controls 를 주입해 같은 파일명으로 덮어쓴다.
+
+    riks_patch_input.py 는 SRC 를 전부 메모리로 읽은 뒤 DST 를 열어 쓰므로
+    SRC == DST (제자리 덮어쓰기) 가 안전하다. 덕분에 잡 이름/입력 파일명이
+    그대로 유지되어 아래 job.submit() 흐름을 손대지 않아도 된다.
+
+    반환: True(성공) / False(실패 — 호출자가 RESULTS:FAIL 로 끊는다)
+    """
+    _rp = os.path.join(_HERE, 'riks_patch_input.py')
+    if not os.path.exists(_rp):
+        emit("[PATCHER] !!! riks_patch_input.py 없음: %s" % _rp)
+        return False
+    if not os.path.exists(deck):
+        emit("[PATCHER] !!! 덱 없음: %s" % deck)
+        return False
+    # 멱등성: 이미 *Controls 가 들어 있으면 먼저 걷어낸다.
+    #   덱은 보통 run_abaqus.py 가 writeInput 으로 새로 쓰므로 초기화되지만,
+    #   'write' 로 만든 덱을 'auto' 로 다시 돌리면 주입이 두 번 되어
+    #   Abaqus 가 모르는 파라미터를 읽는다. 걷어내고 항상 같은 결과를 만든다.
+    _lines = io.open(deck, 'r', errors='replace').read().splitlines()
+    if any(ln.lstrip().lower().startswith('*controls') for ln in _lines):
+        _keep, _skip = [], False
+        for ln in _lines:
+            _ls = ln.lstrip()
+            if _ls.startswith('*'):
+                # 새 키워드 줄 — *Controls 면 블록 시작, 아니면 블록 종료
+                _skip = _ls.lower().startswith('*controls')
+            if not _skip:
+                _keep.append(ln)
+        io.open(deck, 'w', encoding='ascii', errors='replace',
+                newline='\n').write('\n'.join(_keep) + '\n')
+        emit("[PATCHER] 기존 *Controls %d 줄 제거 (멱등성)"
+             % (len(_lines) - len(_keep)))
+    before = os.path.getsize(deck)
+    cmd = ['abaqus', 'python', _rp, deck, deck, step] + list(ctrl)
+    emit("[PATCHER] %s" % ' '.join(cmd))
+    try:
+        p = subprocess.run(cmd, cwd=os.getcwd(), capture_output=True, text=True)
+    except Exception as e:
+        emit("[PATCHER] !!! 실행 실패: %s" % e)
+        return False
+    for ln in (p.stdout or '').splitlines()[-12:]:
+        emit("[PATCHER] %s" % ln.strip())
+    if p.returncode != 0:
+        emit("[PATCHER] !!! rc=%d" % p.returncode)
+        for ln in (p.stderr or '').splitlines()[-12:]:
+            emit("[PATCHER] stderr %s" % ln.strip())
+        return False
+    # 패치가 실제로 들어갔는지 확인 — 없으면 원본 그대로 제출되어 40분을 낭비한다(§14)
+    txt = io.open(deck, 'r', errors='replace').read()
+    if 'Step-Postbuckle' not in txt:
+        emit("[PATCHER] !!! 패치 후에도 Step-Postbuckle 이 없다 (원본이 그대로일 가능성)")
+        return False
+    if before == os.path.getsize(deck):
+        emit("[PATCHER] !!! 파일 크기가 변하지 않았다 (before=%d) — 패치 미적용 의심" % before)
+        return False
+    emit("[PATCHER] OK — %s 패치 완료 (%.1f KB -> %.1f KB)"
+         % (deck, before / 1024.0, os.path.getsize(deck) / 1024.0))
+    return True
+
 
 def job_completed_ok(job_name):
     """R-12: .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 가 있는지로 완주를 판정한다.
@@ -724,7 +798,12 @@ rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 
 # 클램프 RP: 우측 빗변 중점 (15,5), 좌측 빗변 중점 (5,5). NO_CLAMP=True 면 클램프를 아예 만들지 않는다.
 NO_CLAMP = False          # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
-WRITE_ONLY = True         # True = 덱(.inp)만 생성하고 제출하지 않는다 (패처 워크플로우용
+# 실행 모드.
+#   'auto'  : 덱 생성 -> riks_patch_input.py 로 *Controls 주입 -> 제출 -> 결과 추출까지 한 번에.
+#             mfbo.py 가 이 경로로 HF 를 부른다(덱 생성만 하면 RESULTS: 가 없어 실패로 읽힌다).
+#   'write' : 덱만 생성하고 종료. 수동으로 패처/job 을 돌리는 워크플로우(latex/디버깅용).
+#   'plain' : 패처 없이 원본 덱을 그대로 제출. 패처 자체를 의심할 때만 쓴다(진단용, 40분 낭비 주의).
+RUN_MODE = 'auto'
 # 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
 SIGMA0 = 500.0                   # 수렴 보조용 초기응력 [Pa]
 if NO_CLAMP:
