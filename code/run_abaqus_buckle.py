@@ -667,16 +667,22 @@ def build_model(disp):
             for _n in inst_memb.nodes.getByBoundingSphere(center=_v, radius=CLAMP_EXCL_R):
                 _excl_edges.add(_n.label)
     _tol = 1.0e-4
-    _keep_edges = []
+    _keep_labels = []
     for _n in inst_memb.nodes:
         if _n.label in _excl_edges:
             continue
         _x, _y = _n.coordinates[0], _n.coordinates[1]
         if (abs(_y) < _tol) or (abs(_y - _x) < _tol * 1.5) or (abs(_y - (BASE - _x)) < _tol * 1.5):
-            _keep_edges.append(_n)
-    a.Set(name='All_Edges_NoClamp', nodes=tuple(_keep_edges))
-    print("%s All_Edges_NoClamp: 경계 노드 %d개 (클램프 반경 %.3g m 내 %d개 제외)"
-          % (TAG, len(_keep_edges), CLAMP_EXCL_R, len(_excl_edges)))
+            _keep_labels.append(_n.label)
+    print("%s All_Edges_NoClamp 후보: 경계 노드 %d개 (클램프 반경 %.3g m 내 %d개 제외)"
+          % (TAG, len(_keep_labels), CLAMP_EXCL_R, len(_excl_edges)))
+    if not _keep_labels:
+        raise RuntimeError('%s All_Edges_NoClamp: 경계 노드를 하나도 찾지 못했다 (tol=%.1e).'
+                           % (TAG, _tol))
+    # a.Set(nodes=...) 는 MeshNodeArray 를 요구한다 — tuple/list 를 넘기면
+    # "Feature creation failed." 로 죽는다(실측). sequenceFromLabels 로 만든다.
+    a.Set(name='All_Edges_NoClamp', nodes=inst_memb.nodes.sequenceFromLabels(tuple(_keep_labels)))
+    print("%s All_Edges_NoClamp 셋 생성 완료 (노드 %d개)" % (TAG, len(_keep_labels)))
 
     my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
     my_model.DisplacementBC(
