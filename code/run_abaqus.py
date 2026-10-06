@@ -193,10 +193,6 @@ def emit_start():
 
 emit_start()
 
-emit("[run_abaqus] _HERE = %s" % _HERE)
-emit("[run_abaqus] _RUN  = %s" % _RUN)
- 
-emit("DEBUG: All sys.argv: " + str(sys.argv))
 
 try:
     # abaqus cae noGUI=run_abaqus.py -- [HF/LF] x_c d_c
@@ -234,7 +230,6 @@ def run_job_safely(job_name, model_name=None):
     for _ext in _JOB_ARTIFACTS:
         _f = '%s.%s' % (job_name, _ext)
         if os.path.exists(_f):
-            emit("Removing stale artifact: %s" % _f)
             try:
                 os.remove(_f)
             except OSError as _e:
@@ -260,23 +255,12 @@ def run_job_safely(job_name, model_name=None):
     #   주의: 라이선스 토큰이 부족하면 잡이 라이선스 오류로 죽는다 -> 그때는 1 로 되돌린다.
     #   라이선스 토큰 오류가 나면 위 NUMCPUS 상수를 1 로 바꾼다.
     _ncp = NUMCPUS
-    emit("[run_abaqus] numCpus=%d numDomains=%d (코드 상수 NUMCPUS)" % (_ncp, _ncp))
-    emit("[run_abaqus] ==== 적용된 상수 (덱 생성 시점 값) ====")
-    emit("[run_abaqus] 케이스: x_c=%.4g  d_c=%.4g  -> 클램프 %s, 클램프케이블 %s"
-         % (x_c, d_c,
-            "ON" if not NO_CLAMP else "OFF",
-            "생성" if not NO_CLAMP else "없음"))
-    emit("   GLOBAL_FINAL   = %.6g m   <- 여기를 바꿨는데 응력이 그대로면 미반영"
-         % GLOBAL_FINAL)
-    emit("   PRETENSION_SCALE = %.6g   (GLOBAL_FINAL 이 '0.0001 * PRETENSION_SCALE' 이면 여기가 원인)"
-         % PRETENSION_SCALE)
-    emit("   DISP_GLOBAL    = %.6g m   (GlobalTension 단계)" % DISP_GLOBAL)
-    emit("   NO_CLAMP=%s  SEED_DIV=%.6g  RUN_MODE=%s  (패치 반경 0.2 m, 리터럴)"
-         % (NO_CLAMP, SEED_DIV, RUN_MODE))
-    emit("   stabilizationMagnitude(Postbuckle) = 0.003 / THICKNESS = %.3g m" % THICKNESS)
-    emit("[run_abaqus] ====================================")
-    if abs(GLOBAL_FINAL / (0.0001 * PRETENSION_SCALE) - 1.0) < 1e-9:
-        emit("   (참고: GLOBAL_FINAL 이 아직 '0.0001 * PRETENSION_SCALE' 식이다)")
+    emit("[run_abaqus] 케이스: x_c=%.4g  d_c=%.4g  클램프=%s  RUN_MODE=%s  NUMCPUS=%d"
+         % (x_c, d_c, "OFF" if NO_CLAMP else "ON", RUN_MODE, _ncp))
+    emit("   DISP_GLOBAL=%.6g m  SEED_DIV=%.6g  THICKNESS=%.3g m  stabilize=0.003"
+         % (DISP_GLOBAL, SEED_DIV, THICKNESS))
+    emit("   GLOBAL_FINAL=%.6g m  PRETENSION_SCALE=%.6g  비율=%.1f"
+         % (GLOBAL_FINAL, PRETENSION_SCALE, GLOBAL_FINAL / (0.0001 * PRETENSION_SCALE)))
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
     emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
@@ -309,12 +293,11 @@ def run_job_safely(job_name, model_name=None):
 
     time.sleep(1.0)
 
-    # 잡 결과 핵심 줄을 콘솔에 직접 찍는다 (로그 일부만 붙여넣어도 원인 판별 가능)
-    print_job_diag(job_name)
     
     # 잡 성공 판정 = 산출물 + 완주 문자열. 'ODB 존재'도 'Exit code 0'도 증거가 아니다(§2).
     if (job.status == ABORTED or not os.path.exists(odb_file)
             or not job_completed_from_logs(job_name)):
+        print_job_diag(job_name)   # 원인 판별용 — 실패했을 때만(완주 잡에는 노이즈)
         emit("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
         sys.exit(1)
         
@@ -426,7 +409,7 @@ def print_job_diag(job_name):
                 if ln.strip() and any(k.lower() in ln.lower() for k in keys)]
         emit("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개"
               % (job_name, fn, size / 1024.0, len(hits)))
-        for ln in hits[-5:]:
+        for ln in hits[-3:]:
             emit("      | %s" % ln[:150])
 
 sqrt2 = 1.414
@@ -1154,8 +1137,16 @@ elif fidelity == 'HF':
                 emit("[N-6] 고유치 소스: dat=%s msg=%s" % (_dat, _msg))
                 _cmd = ('abaqus python "%s" record --dat "%s" --msg "%s" --history "%s" '
                         '--x %s --d %s --fidelity HF' % (_rec, _dat, _msg, _hist, x_c, d_c))
-                _rc = subprocess.call(_cmd, shell=True)
-                emit("[N-6] coalescence record rc=%d (x_c=%s, d_c=%s)" % (_rc, x_c, d_c))
+                _n6 = subprocess.run(_cmd, shell=True, capture_output=True, text=True)
+                # 하위 프로세스 출력을 emit 으로 회수한다. 그냥 두면 콘솔에만 새고
+                # hf_run_log.txt 에는 남지 않아 로그와 콘솔이 어긋난다.
+                for _ln in ((_n6.stdout or "") + (_n6.stderr or "")).splitlines():
+                    _ls = _ln.strip()
+                    if _ls.startswith("[record]") and (
+                            "n_modes=" in _ls or "건너뜀" in _ls or "실패" in _ls
+                            or "없음" in _ls or "찾지 못" in _ls):
+                        emit("   %s" % _ls)
+                emit("[N-6] coalescence record rc=%d (x_c=%s, d_c=%s)" % (_n6.returncode, x_c, d_c))
             else:
                 emit("[N-6] 고유치 기록 건너뜀 (script=%s, dat=%s, msg=%s)"
                       % (os.path.exists(_rec), bool(_dat), bool(_msg)))
@@ -1176,7 +1167,15 @@ elif fidelity == 'HF':
                 emit("[R-13] base state ODB: %s" % _bodb)
                 _pcmd = ('abaqus python "%s" "%s" Step-GlobalTension'
                          % (_probe, _bodb))
-                subprocess.call(_pcmd, shell=True)
+                _pr = subprocess.run(_pcmd, shell=True, capture_output=True, text=True)
+                # probe 는 40여 줄을 쏟는다(요소 좌표·단면별 통계·RF 상위 8개·인스턴스별 max|u3|).
+                # 로그에 필요한 것은 ">>>" 가 붙은 요약뿐이므로 그것만 남긴다.
+                _pr_all = ((_pr.stdout or "") + (_pr.stderr or "")).splitlines()
+                _n_kept = 0
+                for _ln in _pr_all:
+                    if ">>>" in _ln:
+                        emit("   %s" % _ln.strip()); _n_kept += 1
+                emit("[R-13] 요약 %d줄 / 원본 %d줄 (상세 생략)" % (_n_kept, len(_pr_all)))
             else:
                 emit("[R-13] base state 측정 건너뜀 (probe=%s, odb=%s : 후보 %s / %s)"
                       % (os.path.exists(_probe), bool(_bodb), BUCKLE_ODB, _HERE))
@@ -1297,32 +1296,21 @@ elif fidelity == 'HF':
 
     run_job_safely('HF_Postbuckle')
 
-    # 생성된 .inp 의 *Step 줄을 로그에 남긴다 — maxNumInc 변경이 실제로 몇으로 나갔는지 판별용(§13).
-    try:
-        _msi = my_model.steps['Step-Postbuckle'].maxNumInc
-        emit("[STEP-CHECK] 모델 maxNumInc = %s" % _msi)
-    except Exception as _e:
-        emit("[STEP-CHECK] 모델 maxNumInc 읽기 실패(무시): %s" % _e)
-    try:
-        _inp = 'HF_Postbuckle.inp'
-        if os.path.exists(_inp):
-            with open(_inp, 'r') as _f:
-                for _line in _f:
-                    if _line.lower().lstrip().startswith('*step') \
-                            or _line.lower().lstrip().startswith('*static'):
-                        emit("[STEP-CHECK] .inp: %s" % _line.strip())
-        else:
-            emit("[STEP-CHECK] %s 없음 -> 생성된 inc= 확인 불가" % _inp)
-    except Exception as _e:
-        emit("[STEP-CHECK] .inp 되읽기 실패(무시): %s" % _e)
 
     cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)   # P0-C: 짝지은 LF odb
 
 try:
-    emit("Calling extraction script: %s" % cmd)
     # shell=True로 eval_abaqus.py 실행
-    p = subprocess.Popen(cmd, shell=True)
-    rc = p.wait()
+    # stdout 을 회수해 로그에 남기되 "RESULTS:" 줄은 버린다 — 상위에는 아래
+    # extraction.txt 경로로만 전달해야 mfbo.py 가 같은 신호를 두 번 읽지 않는다.
+    p = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    rc = p.returncode
+    for _ln in ((p.stdout or "") + (p.stderr or "")).splitlines():
+        _ls = _ln.strip()
+        if _ls.startswith("RESULTS:") or not _ls:
+            continue
+        if _ls.startswith("!!!") or "ERROR" in _ls or "FAIL" in _ls or "Traceback" in _ls:
+            emit("   [eval] %s" % _ls)
     if rc != 0:
         emit("!!! ERROR: eval_abaqus.py exited with code %d" % rc)
     
