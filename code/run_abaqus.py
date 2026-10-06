@@ -86,9 +86,7 @@ def _resolve_here():
     return os.getcwd()
 
 _HERE = _resolve_here()
-# Abaqus 작업 디렉터리(=산출물 위치) = code/aba.
-# ---- 코드 상수 (2026-09-21: 환경변수 전부 제거, 값은 이 파일에 고정) ----
-# 산출물 디렉터리 이름. mfbo.py 의 RUN_DIR_NAME 과 반드시 같은 값이어야 한다.
+# 산출물 디렉터리 = code/aba. mfbo.py 의 RUN_DIR_NAME 과 같은 값이어야 한다.
 RUN_DIR_NAME = "aba"
 # Abaqus 병렬 스레드/도메인 수 (1 = 단일 CPU, 4 = 대략 1.5~2.5배 빠름).
 #   라이선스 토큰이 없으면 잡이 라이선스 오류로 즉시 죽는다 -> 그때는 1 로.
@@ -107,16 +105,9 @@ from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: 
                               imperfection_text, report, load_mode_table,
                               build_perturbation, perturbation_report, mode_table_info,
                               verify_inp_element_types, job_completed_from_logs)
-# ---- 균일 격자 메쉬 (2026-10-06). 세 스크립트가 같은 모듈을 쓴다 ----------------
-#   fill_part  : 파트를 orphan mesh 격자로 채운다 (seedPart 경로 대체)
-#   boundary_node_labels / clamp_exclude_labels / make_set : 면외 z 구속 노드셋
+# 균일 격자 메쉬 (aba_grid_mesh): fill_part / boundary_node_labels / clamp_exclude_labels / make_set. §10
 import aba_grid_mesh                                                            # noqa: E402
-# ---- 로깅 (2026-09-24): HF 콘솔이 비어 보이는 문제 대응 --------------------------
-# Abaqus `cae noGUI` 는 스크립트의 stdout 을 콘솔이 아니라 CAE 메시지 영역으로 보낼 수 있다.
-# 그래서 이 스크립트의 출력이 통째로 안 보이는 경우가 있다(실측). 게다가 execfile 로 실행되면
-# __file__ 이 없으므로 경로를 __file__ 로만 잡으면 파일도 못 만든다(실측으로 물렸다).
-# -> 이름은 emit(내장 log 와 충돌 회피), 정의는 첫 호출보다 앞, 예외는 절대 올리지 않음.
-#    로그는 _HERE(코드 폴더) 와 현재 작업 디렉터리(code\aba - 산출물 폴더) 양쪽에 남긴다.
+# 로깅 — cae noGUI 는 스크립트 stdout 을 콘솔로 보내지 않고, execfile 이라 __file__ 도 없다(§1).
 try:
     sys.stdout.reconfigure(line_buffering=True)
 except Exception:
@@ -278,10 +269,7 @@ def run_job_safely(job_name, model_name=None):
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
     emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
-    # [2026-10-02] 제출 전 요소 타입 검증 (모드 소스와 동일한 가드).
-    #   setElementType 이 조용히 무시되면 CAE 기본 셸(S4R/S3)로 남고, 막 섹션과 충돌해
-    #   'N elements have missing property definitions' 로 죽는다(실측 12,086개).
-    #   Standard 토큰을 태우기 전에 여기서 잡는다.
+    # 제출 전 요소 타입 검증 — 조용한 폴백을 Standard 토큰을 태우기 전에 잡는다(§3).
     _ok_et, _cnt_et, _err_et = verify_inp_element_types(
         job_name + '.inp', (ELEM_CODE_QUAD, ELEM_CODE_TRI))
     emit("[GUARD] .inp 요소 타입 블록: %s" % (_cnt_et or _err_et))
@@ -290,13 +278,7 @@ def run_job_safely(job_name, model_name=None):
              % ((ELEM_CODE_QUAD, ELEM_CODE_TRI), _err_et or _cnt_et))
         emit("    잡을 제출하지 않는다. ELEM_CODE_* 지정 방식을 고쳐라.")
         return False
-    # WRITE_ONLY: 덱만 만들고 제출하지 않는다.
-    #   이유(2026-10-01): riks_patch_input.py 는 '생성된 .inp' 를 수정해 완화 블록을 넣는데,
-    #   이 스크립트가 곧바로 submit+waitForCompletion 까지 하면 패치 이전의 무패치 런이
-    #   완주(약 40분)해 버린다. WRITE_ONLY=True 면 덱만 남기고 즉시 종료하므로
-    #   '덱 생성 -> 패처 -> 패치 덱 제출' 순서가 낭비 없이 성립한다.
-    #   주의: 뒤쪽 print_job_diag/job.status/job_completed_ok 는 제출된 잡을 전제하므로
-    #         여기서 exit 해야 안전하다(그 줄들을 주석 처리하는 방식은 쓰지 않는다).
+    # WRITE_ONLY: 덱만 생성하고 종료한다. 패처가 .inp 를 수정해야 하므로 여기서 제출하면 그 런이 낭비된다(§14).
     if WRITE_ONLY:
         emit("[run_abaqus] WRITE_ONLY=True : 덱만 생성(%s.inp)하고 제출하지 않는다." % job_name)
         emit("             다음: python riks_patch_input.py ... -> abaqus job=<패치> input=<패치.inp>")
@@ -310,13 +292,7 @@ def run_job_safely(job_name, model_name=None):
     # 잡 결과 핵심 줄을 콘솔에 직접 찍는다 (로그 일부만 붙여넣어도 원인 판별 가능)
     print_job_diag(job_name)
     
-    # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
-    # [2026-10-02] ABORTED 만 보면 안 된다. Abaqus 는 input processing 이 실패해도 부분 .odb 를
-    #   남기므로 'ODB 존재'가 성공 증거가 아니다(실측: 12,086개 요소가 섹션을 못 받아 죽었는데
-    #   status=None 으로 ok=True 보고). COMPLETED 가 아니면 실패로 본다.
-    # [2026-10-04] status 는 CAE noGUI 에서 None 이라 `!= COMPLETED` 는 **항상 실패로 오판**한다
-    #   (실측: .msg 에 완주 문자열이 있는데 ok=False 로 보고됐다). `== ABORTED` 만으로는 Abaqus 가
-    #   실패해도 남기는 부분 .odb 때문에 실패를 놓친다. => 산출물 + 완주 문자열로 판정한다.
+    # 잡 성공 판정 = 산출물 + 완주 문자열. 'ODB 존재'도 'Exit code 0'도 증거가 아니다(§2).
     if (job.status == ABORTED or not os.path.exists(odb_file)
             or not job_completed_from_logs(job_name)):
         emit("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
@@ -373,14 +349,8 @@ def print_job_diag(job_name):
 sqrt2 = 1.414
 N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
 
-# ---- 2-모델 레시피: 임퍼펙션(좌굴모드) 소스 분리 (2026-09-22) ----------------
-#   모드 추출 = run_abaqus_cable.py (클램프 없음 -> 실측상 항상 성공, 모드 4개)
-#     abaqus cae noGUI=run_abaqus_cable.py          (code\ 에 Buckle_Analysis.fil 생성)
-#     abaqus cae noGUI=run_abaqus.py -- HF <x_c> <d_c>   (이 파일을 스테이징해 소비)
-#   근거: 클램프 패치는 기존 노드에 Coupling 만 걸어 메쉬를 바꾸지 않으므로 두 모델의
-#         막 노드 좌표/라벨이 동일하다 -> *IMPERFECTION 의 노드 라벨 매핑이 성립한다.
-#         (클램프가 있는 base state 는 음수 고유값 598~2897/CONVERGED=0 -> 모드 추출 불가)
-#         상세 근거·실패 이력: aba_imperfection.py, references/buckle-failure-triage.md
+# 2-모델 레시피 — 모드는 클램프-프리 모델에서 뽑아 클램프 모델에 임퍼펙션으로 주입한다(§5).
+#   클램프 패치는 메쉬를 바꾸지 않으므로 두 모델의 막 노드 라벨이 같다 -> *IMPERFECTION 매핑이 성립한다.
 MODE_SOURCE = 'external'     # 'external' = 클램프 없는 외부 .fil(run_abaqus_mode.py) | 'self' = 자기 좌굴 잡
 #   모드 소스 = run_abaqus_mode.py (클램프 없음, HF 파라미터 정렬). 산출물은 code\ 에 쌓인다.
 #   (이전 소스였던 run_abaqus_cable.py 의 Buckle_Analysis.fil 을 쓰려면 아래 이름만 교체한다.)
@@ -392,10 +362,7 @@ IMPERFECTION_NAME = 'ClampFree_Buckle'   # 모드 소스 잡 이름과 '같은' 
                                          # (MODE_SOURCE_FIL 의 basename 과 함께 움직여야 한다)
 IMPERFECTION_MODES = (1, 2, 3, 4)   # 기본 = 논문(Galhofo) 주입 모드 1~4.
 IMPERFECTION_MAX_MODES = 4          # 상한. 모드표에 있는 모드가 더 적으면 그만큼만 쓴다(아래에서 자동 조정).
-                                    #   2026-09-24 실측: 좌굴 런이 양수 λ 모드 2개만 수렴시켰다
-                                    #   (subspace 가 선형종속으로 250 -> 2 로 붕괴). 논문 4개 대비 편차이므로
-                                    #   [IMPERFECTION] 로그에 조정 사실을 남긴다. 근거: 논문 λ1..4 스프레드는
-                                    #   0.036%(준축퇴)라 모드 3·4 의 기여가 작고, 우리 λ1·λ2 차이도 6% 다.
+                                    #  모드 3개를 주입한다(lambda1 탈락). 논문 lambda 스프레드 0.036% 라 모드 3.4 의 기여가 작다(§5a).
 IMPERFECTION_AMPL_T = 0.10   # 막 두께 배수(Galhofo 채택값 0.10 t). 진폭 민감도 = 0.50 으로 바꿔 재실행
 RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-24). 이유는 측정된 실패 경로다:
                              #   이 잡은 _EIGENSOLVER='LANCZOS' 로 제출되는데(아래), 이 모델의 좌굴 base state 는
@@ -411,22 +378,10 @@ RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-2
 if MODE_SOURCE not in ('external', 'self'):
     raise RuntimeError("MODE_SOURCE 는 'external' 또는 'self' 여야 합니다 (현재 %r)" % (MODE_SOURCE,))
 
-# ---- 임퍼펙션 주입 방식 (2026-09-22) --------------------------------------
-#   모드 소스의 스텝 타입이 선택을 결정한다:
-#     좌굴모드를 '선형 좌굴해석(*BUCKLE)' 으로 찾는 경우 -> 'odb_table'  [기본, 정본]
-#        *BUCKLE 은 .fil 출력이 금지된다(실측: ClampFree_Buckle.dat:7025
-#          "FILE OUTPUT IS NOT AVAILABLE FOR BUCKLING ANALYSIS"). 모드 프레임은 ODB 에만 있다.
-#          -> abaqus python aba_mode_from_odb.py <job>.odb <step> modes_ClampFree_Buckle.txt 4
-#          -> 그 표를 노드 좌표 섭동으로 주입(셸에서 *IMPERFECTION 과 등가).
-#     '진동 고유모드(*FREQUENCY)' 를 모드 소스로 쓰는 경우 -> 'file'
-#        .fil 에 모드가 기록되므로 스테이징 + *IMPERFECTION, FILE=, STEP=n (사용자 원본 08d4cbc 방식).
+# 임퍼펙션 주입 방식 — 모드 소스의 스텝 타입이 방식을 결정한다(§6).
+#   *BUCKLE   -> 'odb_direct'(기본). *BUCKLE 은 .fil 출력이 금지되므로 모드 프레임은 ODB 에만 있다.
+#   *FREQUENCY -> 'file' (.fil + *IMPERFECTION, FILE=).
 IMPERFECTION_MODE = 'odb_direct'   # 'odb_direct'(기본) | 'odb_table' | 'file'
-#   'odb_direct'(2026-09-28, 사용자 제안): HF 가 ODB 에서 좌굴모드를 '직접' 읽어 노드를 섭동한다.
-#     모드표 txt 파일이 필요 없다 -> '표가 없어서 중단' 이라는 실패 모드가 사라진다.
-#     (사용자 원본 08d4cbc 의 *IMPERFECTION, FILE=, STEP=n 은 .fil 을 읽는데, *BUCKLE 스텝은
-#      .fil 출력이 금지되므로(실측 ClampFree_Buckle.dat:7025) 그 키워드 경로는 쓸 수 없다.
-#      대신 CAE 안에서 ODB 를 읽어 같은 물리(노드 좌표 섭동)를 만든다.)
-#   'odb_table': 모드표 txt 경유(모드를 파일로 검사/재사용할 수 있다. 지문 게이트 있음).
 MODE_TABLE = os.path.join('..', 'modes_ClampFree_Buckle.txt')   # code\aba -> code\
 MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
 MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
@@ -479,13 +434,8 @@ if IMPERFECTION_MODE == 'odb_table':
           % (MODE_TABLE, sorted(_mode_table.keys()), len(_mode_table[IMPERFECTION_MODES[0]])))
     emit("[IMPERFECTION] 모드표 출처: source=%s / step=%s / instance=%s"
           % (_tinfo.get('source', '?'), _tinfo.get('step', '?'), _tinfo.get('instance', '?')))
-    # ---- 모드표 재사용 게이트 (2026-09-24) ------------------------------------------
-    # 좌굴모드는 클램프 없는 모델에서 한 번만 계산해 재사용한다(케이스 파라미터 x_c/d_c 는
-    # 클램프 부착위치와 당김비율만 바꾸므로 클램프-프리 모델의 모드에 영향이 없다).
-    # 다만 모드 소스의 상수(프리텐션/패치/안정화 등)를 바꾼 뒤 다시 뽑지 않으면 '다른 형상의
-    # 모드'를 조용히 주입하게 된다 -> 표에 박힌 지문과 현재 소스 지문을 대조해 기록한다.
-    # 판정만 하고 HF 는 계속 진행한다(차단하지 않음). 콘솔 로그가 사라지는 환경도 있으므로
-    # 판정 결과를 mode_table_check.txt 파일로도 남긴다.
+    # 모드표 재사용 게이트 — 소스 상수를 바꾼 뒤 재추출하지 않으면 '다른 형상의 모드'를 조용히 주입한다(§5b).
+    #   차단하지 않고 기록만 한다(mode_table_check.txt).
     try:
         from aba_imperfection import model_fingerprint, table_fingerprint
         _src_mode = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -545,10 +495,7 @@ elif IMPERFECTION_MODE == 'odb_direct':
     emit("[IMPERFECTION] 모드당 노드 %d개 / λ %s"
          % (len(_mode_table[IMPERFECTION_MODES[0]]),
             ['%.6e' % _lam[_picks[m - 1]] for m in IMPERFECTION_MODES]))
-# ---- 2-모델 레시피 끝 ----------------------------------------------------
-# A: 추출 요청 고유값 수 (음수모드 우회; run_abaqus_cable 과 동일)
-#   base state 가 부정정이면 요청 개수를 줄이는 것이 subspace 수렴에 유리하다.
-#   (구 MFBO_N_EIG_BUCKLE 환경변수 스윕은 2026-09-21 제거됨 -> 값을 바꾸려면 이 상수를 직접 수정)
+# A: 추출 요청 고유값 수. base state 가 부정정이면 줄이는 것이 subspace 수렴에 유리하다(§8a).
 N_EIG_BUCKLE = 100
 # subspace 반복의 기저 벡터 수 (구 MFBO_VECTORS 환경변수는 2026-09-21 제거됨)
 BUCKLE_VECTORS = 250
@@ -558,40 +505,17 @@ INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
-# [2026-09-28] 막 요소 차수 — **1차(S4/S3) 유지**. 2차 실험은 기각됐다.
-#   배경: 1차 HF 는 .sta 가 증분 크기 리밋사이클(x1.5 성장 -> 상한 1~2e-4 에서 실제 수렴 실패
-#   -> 1/4 컷백)에 빠져 완주에 2만 증분 규모(7h+)이 필요하다. 논문은 2차(STRI65/S8R5)
-#   10,100요소로 974 s 에 완주한다 -> 그래서 2차를 시험했다.
-#   기각 근거(실측 2026-09-28): 2차 + SEED_DIV=150 으로 모드 소스 잡이
-#     `THE DIFFERENTIAL MATRIX HAS 170293 NEGATIVE DIAGONAL ENTRIES`(82%) + `CONVERGED=0`
-#     + `INSTABILITIES IN THE BASE STATE` 로 죽었다 — 2차에서 base state 가 더 나빠졌다.
-#   스킬 references/buckle-failure-triage.md 도 이미 "solver/element knobs 는 ruled out,
-#   stall load 는 1차/2차 무관(0.439 -> 0.4655)" 로 기록하고 있었다.
-#   => 2차는 논문 baseline 재현(S1 사다리)에서만 쓴다. 그때는 아래 두 값만 S8R5/STRI65 로
-#      (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 변경은 잡힌다).
+# 막 요소는 1차(S4/S3) 유지 — 2차는 base state 를 더 나쁘게 만들어 기각됐다(§4).
+#   요소코드는 모드 소스와 같아야 한다(*IMPERFECTION 이 노드 라벨로 주입된다).
 ELEM_CODE_QUAD = S4         # [2026-10-04] 막(M3D4/M3D3) 실험 철회 -> 1차 셸 복귀.
-                            #   이유1: 막은 굽힘강성이 없어 *BUCKLE 의 SUBSPACE 가 수렴하지 못한다.
-                            #     문서: membrane elements have no bending stiffness -> "high number of
-                            #     nonrigid-body zero-energy modes". 실측: 668 iter 에 23/100 수렴,
-                            #     λ 가 전부 음수(-2.0e-03)라 쓸 모드가 나오지 않는다.
-                            #   이유2: 요소 타입을 바꾸면 CAE 메셔가 **노드 수까지** 바꾼다
-                            #     (막 덱 12,155 노드 / 셸 덱 18,442 노드, SEED_DIV 는 양쪽 200).
-                            #     -> *IMPERFECTION 은 노드 라벨로 주입되므로 모드 소스와 HF 의
-                            #        요소코드가 같아야 한다. inp_mesh_compare.py 로 확인(2026-10-04).
 ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 셸 복귀
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6 # F2: 2.5e-6 -> 5.0e-6 (cable 변형, 2.5um는 수렴 매우 어려움)
 TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
 
 CLAMP_EXCL_R = 0.2   # m — 클램프 패치 반경(create_rigid_patch 의 radius=0.2)과 같은 값.
-                     #     [2026-10-05] 이 반경 내 '경계 노드'는 면외 z 구속에서 제외한다.
-                     #     근거: 논문 조건 (c) "z-displacement is fixed in the three edges" 는
-                     #     클램프가 없는 모델의 조건이다. 우리는 클램프가 두 사선변(빗변) 위에
-                     #     붙어 그 케이블을 면내로 당기므로, 그 선까지 면외 고정하면 클램프의
-                     #     물리적 역할(막을 붙잡아 국소 압축 생성)이 왜곡된다. 실측: 그 상태의
-                     #     클램프 포함 좌굴 추출은 lambda 스프레드 0.28% 의 빗변 국소 모드 100개
-                     #     (전부 음수)만 냈다. => 3변은 유지하되 클램프 구간만 면외 구속에서 뺀다.
-                     #     mode 소스(run_abaqus_mode.py)는 클램프가 없으므로 이 제외가 불필요하다.
+                     #     이 반경 내 경계 노드는 면외 z 구속에서 제외한다(§9).
+                     #     근거: 논문 (c) 는 클램프 없는 모델의 조건이고, 클램프가 붙은 선을 면외 고정하면 클램프의 물리가 왜곡된다.
 
 # 케이블 파라미터 (Galhofo reference)
 CABLE_RADIUS = 5.0e-4 # m
@@ -617,21 +541,10 @@ V_CR = clamp_coord_R(x_c)
 # 사전 장력 크기. base state 장력을 키워 시스템행렬 부정정(음수 고유값) 완화를 시도한다.
 # 1.0 = 기존값. 값을 바꾸려면 이 상수를 직접 수정한다(구 MFBO_PRETENSION_SCALE 환경변수는 제거됨).
 PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
-# R-13 실측(2026-09-21): PRETENSION_SCALE=10 -> 평균 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배.
-#   운용점을 목표에 맞추려면 약 33배(= DISP_GLOBAL 165um)가 필요하다.
-#   단 PRETENSION_SCALE 는 최종 하중까지 함께 키우므로(포스트버클 변위 1mm -> 3.3mm),
-#   운용점만 따로 맞추려면 DISP_GLOBAL / GLOBAL_FINAL 상수를 직접 수정한다(절대값).
-#DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 운용점: 코너 당김 5e-5 m
+# PRETENSION_SCALE=10 -> 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배. 운용점 조정은 DISP_GLOBAL 로 한다(§8).
 DISP_GLOBAL = 165e-6
 CLAMP_PULL = DISP_GLOBAL * d_c
-# 좌굴 스텝의 perturbation 변위 (K_delta 를 만드는 항).
-#   Abaqus 문서 §6.2.3: 좌굴 스텝의 nonzero prescribed BC 는 '증분 응력'에 기여하고,
-#   그 증분이 미분 초기응력 강성 K_delta 를 만든다. 크기 자체는 lambda 로 스케일되어
-#   사라지지만(CONVERGED 수에는 영향 없음), K_delta 가 K0 대비 너무 작으면 고유값 분리가
-#   나빠져 subspace 반복이 'EIGENVALUES CANNOT BE FOUND' 로 실패한다.
-#   성공한 run_abaqus_cable.py 는 같은 솔버 설정(numEigen=100/SUBSPACE/vectors=250)에서
-#   0.01 m 를 쓴다 -> 2026-09-22 부로 우리도 0.01 m 로 맞췄다(구 5e-4 = 1/20 이었다).
-#   값을 바꾸려면 이 상수를 직접 수정한다(구 MFBO_PERT_MAG 환경변수는 제거됨).
+# 좌굴 스텝 perturbation — K_delta 를 만든다. 너무 작으면 고유값 분리가 나빠져 추출이 실패한다(§8b).
 PERTURBATION = 0.01
 CLAMP_PERT = PERTURBATION * d_c
 GLOBAL_FINAL = 1e-3  # 최종 하중: 코너 당김 1e-3 m
@@ -667,12 +580,7 @@ s.Line(point1=V2[:2], point2=V1[:2])
 s.Line(point1=V1[:2], point2=V3[:2])
 p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
 p.BaseShell(sketch=s)
-# [orphan mesh 전환 2026-10-06] 섹션 할당을 여기서 하지 않는다.
-#   a.Set(nodes=)/part.Set(faces=...) 는 기하 기반이고, 격자(fill_part)는
-#   part.addElements 로 **orphan mesh** 를 만든다. 기하 face 기반으로 두면
-#   요소가 섹션을 못 받아 'N elements have missing property definitions' 로
-#   입력 단계에서 죽는다. => 요소 생성 뒤(아래 메쉬 블록)로 옮기고 요소 기반 셋을 쓴다.
-#   셋 이름 'All' 은 유지한다(inst_memb.sets['All'] 참조가 여러 곳에 있다).
+# 섹션 할당은 요소 생성 뒤여야 한다 — fill_part 가 orphan mesh 를 만든다(§10a). 셋 이름 'All' 은 유지.
 
 # 케이블 생성
 def create_cable_part(name, length):
@@ -715,11 +623,8 @@ def create_rigid_patch(name, coord, radius):
     
     patch_set = a.Set(name=name+'_Nodes', nodes=nodes)
     
-    # Coupling (RP <-> Membrane Nodes) — DISTRIBUTING: 표면 절점을 강체로 묶지 않고 하중/변위만 가중 분배한다.
-    #   influenceRadius 는 CAE API 상 필수 인자다(실측: 없애면 'expected 5, got 4' 로 죽는다).
-    #   DISTRIBUTING 에서는 무시되고 weightingMethod 가 분배 방식을 정한다.
-    #   [2026-09-28] KINEMATIC(WHOLE_SURFACE)은 패치 표면 전체를 RP에 강체 구속해
-    #   패치 경계에 응력 특이점(실측 maxP/mean = 52배)과 국소 압축 면적(30.9%)을 만들었다.
+    # Coupling — DISTRIBUTING 은 표면 절점을 강체로 묶지 않고 하중/변위만 가중 분배한다(§7).
+    #   KINEMATIC+WHOLE_SURFACE 는 패치 경계에 응력 특이점(52배)을 만들었다. influenceRadius 는 API 필수 인자.
     my_model.Coupling(
         name=name+'_Coupling', controlPoint=rp_region, surface=patch_set, 
         influenceRadius=WHOLE_SURFACE, couplingType=DISTRIBUTING, weightingMethod=UNIFORM,
@@ -751,14 +656,8 @@ def connect_cable(name, part, coord, vector_dir):
 
     return region_start, region_end
 
-# ---- 메쉬: 균일 격자 (내부 정사각형 + 경계 직각삼각형), orphan mesh ----
-#   [2026-10-06] seedPart + setMeshControls(QUAD_DOMINATED, FREE, MEDIAL_AXIS) +
-#     deviationFactor + ADVANCING_FRONT 의 자유 메쉬(약 18,200 S4)를 격자로 교체한다.
-#     Galhofo(2022) Table A.1 은 10,100 요소로 S3+S4(1차)까지 보고했고(u_z,max 2.003e-4 m /
-#     2x3 wrinkles), 이 격자가 S4 9900 + S3 200 = 10,100 으로 그 토폴로지와 일치한다.
-#     논문과 주름 수를 비교할 수 없었던 이유의 절반(메쉬 자체가 다름)이 제거된다.
-#   fill_part 는 part.addElements 로 orphan mesh 를 만들므로, 섹션 할당은 요소 기반
-#   셋으로 해야 한다(위에서 옮겨온 이유). 셋 이름 'All' 은 유지한다.
+# 메쉬: 균일 격자(내부 정사각형 + 경계 직각삼각형), orphan mesh. 논문 10,100 요소 토폴로지와 일치(§10).
+#   섹션 할당을 요소 기반으로 하는 이유와 셋 이름 유지 이유는 §10a.
 import aba_grid_mesh
 _n_s4, _n_s3, _n_nd = aba_grid_mesh.fill_part(
     p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
@@ -769,15 +668,8 @@ emit("[grid] S4=%d S3=%d nodes=%d  (SEED_DIV=%.6g, h=%.6g m)"
 p.Set(elements=p.elements, name='All')
 p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
 
-# ---- 임퍼펙션(기하 섭동) 주입 (2026-09-22) --------------------------------
-#   원본(업스트림) docstring 의 계획: "1차 해석 결과(.odb)에서 고유모드를 추출하여 초기 결함으로 주입".
-#   셸 요소에서 *IMPERFECTION 은 결국 노드 좌표를 모드 형상만큼 옮기는 것이므로, 모드표
-#   (aba_mode_from_odb.py)를 진폭 0.10 t 로 합산해 좌표를 직접 섭동한다(.fil/스텝타입 제약 우회).
-#   위치: generateMesh 직후 + 어셈블리 regenerate 전 -> 의존 인스턴스가 이 좌표를 물려받는다.
-# (2026-09-28 수정) 예전 조건은 'if _pert is None:' 이었는데, _pert 는 위에서 None 으로만 초기화되고
-#   여기서 처음 만든다 -> 조건이 항상 True 라 else(실제 주입)가 **한 번도 실행되지 않았다**.
-#   즉 이전 HF 런들은 전부 '임퍼펙션 없는 완전 평탄 막'으로 돌았다(로그의 '기하 섭동 없음').
-#   조건을 '모드가 있는가'로 바꾼다.
+# 임퍼펙션(기하 섭동) 주입 — 셸에서 *IMPERFECTION 은 노드 좌표 섭동과 같다. 메쉬 직후에 넣어야
+#   어셈블리 regenerate 가 이 좌표를 물려받는다(§5·§6a).
 if not _mode_table:
     emit("[IMPERFECTION] 기하 섭동 없음 (모드 없음: IMPERFECTION_MODE=%s, table=%s)"
          % (IMPERFECTION_MODE, type(_mode_table).__name__))
@@ -794,12 +686,7 @@ else:
         _cx, _cy, _cz = _nd.coordinates
         _apply.append(_nd)
         _new.append((_cx, _cy, _cz + _dz))
-    # (2026-09-28 실측) MeshNode 객체에는 setValues(coordinates=...) 가 없다.
-    #   -> TypeError: keyword error on coordinates  (사용자 콘솔에서 확인)
-    #   좌표 수정은 Part.editNode(nodes=..., coordinates=...) 로 한다.
-    #   (Abaqus Scripting Reference > Edit mesh commands > Part object: editNode —
-    #    "changes the coordinates of the given nodes on an orphan mesh part or on an Abaqus native mesh")
-    #   노드별 호출 대신 한 번에 넘긴다(빠르고, 실패 시 부분 적용이 남지 않는다).
+    #     MeshNode 에는 setValues(coordinates=...) 가 없다 — Part.editNode 로 한 번에 넘긴다(§6b).
     p.editNode(nodes=tuple(_apply), coordinates=tuple(_new))
     _n = len(_apply)
     emit("[IMPERFECTION] 기하 섭동 적용: %d/%d 노드, %s (진폭 %.2f t = %.3e m)"
@@ -825,12 +712,7 @@ rp1_obj, rp1_reg = create_rigid_patch('Top', V1, radius=0.2)
 rp2_obj, rp2_reg = create_rigid_patch('Right', V2, radius=0.2)
 rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 
-# 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5)
-# [대조 실험] 아래 NO_CLAMP 상수를 True 로 바꾸면 클램프(강체패치 + cable_CL/CR + BC)를
-#   아예 만들지 않는다 (환경변수 아님 — 2026-09-21 부로 환경변수는 전부 제거됨).
-#   run_abaqus_cable.py(성공)는 클램프가 없다. 우리만 클램프가 base state 하중의 33%를
-#   받아 sigma2<0 영역(21.5%)을 만들고, 그 때문에 좌굴 고유값 추출이 실패한다는 가설을
-#   클램프만 제거해 직접 검증한다.
+# 클램프 RP: 우측 빗변 중점 (15,5), 좌측 빗변 중점 (5,5). NO_CLAMP=True 면 클램프를 아예 만들지 않는다.
 NO_CLAMP = False          # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
 WRITE_ONLY = True         # True = 덱(.inp)만 생성하고 제출하지 않는다 (패처 워크플로우용
 # 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
@@ -1032,16 +914,10 @@ if not NO_CLAMP:
 # Step Buckle 에서는 전체 z 구속에서 모서리 z 구속으로 교체 Galhofo reference
 my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
 
-# [orphan mesh 전환 2026-10-06] all_edges = inst_memb.edges 제거.
-#   fill_part 가 part.addElements 로 orphan mesh 를 만들면 인스턴스의 기하 edge 가
-#   비어(또는 geometry 셋이 무효가) 된다. All_Edges 는 이제 어디서도 참조되지 않고
-#   BC_Edges_Only_Z 는 좌표 판정으로 만든 All_Edges_NoClamp 를 쓰므로 그대로 없앤다.
+# all_edges = inst_memb.edges 제거 — orphan mesh 에서는 인스턴스의 기하 edge 가 비어 셋이 무효다(§10a).
 
-# ---- 면외 z 구속용 노드셋: 클램프 부착 구간을 제외한다 (CLAMP_EXCL_R 참조) ----
-#   삼각형 세 변의 방정식은 y=0 / y=x / y=BASE-x 다 (꼭짓점 (0,0),(BASE,0),(BASE/2,HEIGHT)).
-#   [2026-10-06] 좌표 판정을 aba_grid_mesh 로 옮겼다 — 세 스크립트(HF/mode/buckle)가
-#   같은 함수를 써야 노드 집합이 일치한다. edge->노드 API 를 쓰지 않는 이유는
-#   (1) CAE 버전 의존 (2) orphan mesh 에서 인스턴스의 기하 edge 가 비어 있기 때문이다.
+# 면외 z 구속용 노드셋(All_Edges_NoClamp) — 클램프 부착 구간을 제외한다(§9).
+#   세 변의 방정식은 y=0 / y=x / y=BASE-x. 좌표 판정은 aba_grid_mesh 로 일원화(세 스크립트가 같은 함수).
 _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
                if not NO_CLAMP else set())
 _keep_labels = aba_grid_mesh.boundary_node_labels(
@@ -1240,20 +1116,8 @@ elif fidelity == 'HF':
         minInc=1e-8,          # R-9: 1e-15 는 발산 시 증분 소진까지 수시간
         maxInc=0.1,
         maxNumInc=10000       # R-9 / [2026-09-28] 1000 -> 10000
-        #   실측 1(상한 1000): 1023 증분에서 step time 0.162 도달 후
-        #     ***ERROR: TOO MANY INCREMENTS NEEDED TO COMPLETE THE STEP 으로 종료.
-        #   수렴은 완벽했다(증분당 1 iteration, attempt 1, 잔차 8.7e-10, coupling compat 0)
-        #   — 즉 발산이 아니라 증분 수 소진이다.
-        #   실측 2(2026-09-28 밤, 상한 상향 뒤): **동일 시그니처가 그대로 재현**됐다
-        #     (1023 증분 / 262 컷백 / 3572 iteration / 469 neg-eig / 1436 s / step 0.162).
-        #     -> 두 갈래 중 하나다. (a) 상한이 이 런에 반영되지 않았다
-        #        (먼저 .inp 의 '*Step ... inc=' 값을 확인하라), 또는 (b) 반영됐어도 완주하지 못한다:
-        #        국소 증분이 ~4.5e-5 라 남은 0.838 에 약 1.8만 증분이 필요해,
-        #        상한 10000 으로도 step 0.6 근처에서 다시 멈춘다.
-        #   => 이 상향은 **해결책이 아니라 연장**이다. 실제 원인은 증분 크기가 강제로 눌리는 것:
-        #      국소 불안정(neg-eig 469건, 마지막 프레임 압축 면적 28.8%) 이다.
-        #   폐기된 레버: allsdtol 0.05 -> 0.15. ALLSD/ALLIE 실측 0.50%(허용 5%)라
-        #      상한이 binding 이 아니므로 이 값을 바꿔도 아무 일도 일어나지 않는다.
+        # 상한 상향은 해결책이 아니라 연장이다 — 실제 원인은 국소 불안정으로 증분이 눌리는 것(§13).
+        #   ALLSD/ALLIE 가 0.50%(허용 5%)라 allsdtol 상향은 binding 이 아니다(폐기된 레버).
     )
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 
@@ -1294,10 +1158,8 @@ elif fidelity == 'HF':
     # Buckle_Analysis.odb 파일의 결과(고유모드)를 초기 결함으로 주입
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
     
-    # --- 2-모델 레시피: 임퍼펙션 소스 (2026-09-22) ---------------------------
-    #   모드 형상은 '클램프 없는' 모델에서 나온 것을 쓴다(Galhofo 와 동일한 구조).
-    #   소스 .fil 을 IMPERFECTION_NAME 으로 스테이징 -> 자기 좌굴 잡의 0-모드 .fil 이
-    #   조용히 소비되는 사고(원장 C-1)를 이름 분리로 차단하고, 모드 개수를 검증한다.
+    # 2-모델 레시피: 모드 형상은 클램프 없는 모델에서 온다. 소스 .fil 을 별도 이름으로 스테이징해
+    #   자기 좌굴 잡의 0-모드 .fil 이 조용히 소비되는 사고를 차단한다.
     imp_scale = THICKNESS * IMPERFECTION_AMPL_T   # Galhofo 채택값 0.10 t
     if IMPERFECTION_MODE in ('odb_table', 'odb_direct'):
         # 이미 모델 빌드 단계에서 노드 좌표를 섭동했다(모드표 txt 또는 ODB 직접). 키워드 경로는 쓰지 않는다.
@@ -1346,12 +1208,7 @@ elif fidelity == 'HF':
 
     run_job_safely('HF_Postbuckle')
 
-    # [STEP-LIMIT READBACK, 2026-09-29] 생성된 .inp 의 *Step 줄을 로그에 남긴다.
-    #   배경: maxNumInc 를 1000 -> 10000 으로 고쳤는데도 밤샘 런이 직전 런과 완전히 동일한
-    #   시그니처(1023 증분 / 262 컷백 / step 0.162)로 끝났다. 디스크의 .inp 를 보니
-    #   '*Step, name=Step-Postbuckle, nlgeom=YES, inc=1000' — 즉 그 런은 변경 이전
-    #   리비전의 코드로 생성된 .inp 를 썼다. CAE 의 maxNumInc 는 .inp 에서 '*Step' 의 inc= 다.
-    #   여기서 되읽어 두면 '상한이 실제로 몇으로 나갔나'를 로그만으로 판정할 수 있다.
+    # 생성된 .inp 의 *Step 줄을 로그에 남긴다 — maxNumInc 변경이 실제로 몇으로 나갔는지 판별용(§13).
     try:
         _msi = my_model.steps['Step-Postbuckle'].maxNumInc
         emit("[STEP-CHECK] 모델 maxNumInc = %s" % _msi)

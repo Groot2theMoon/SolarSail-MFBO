@@ -38,10 +38,8 @@
     0 = 좌굴모드 1개 이상 + 모드표 저장 / 1 = 0개(실패) 또는 잡 이상
 """
 
-# (제거 2026-09-24) `from matplotlib.image import LANCZOS` — IDE 자동삽입으로 들어온 잘못된 import.
-#   matplotlib 의 LANCZOS 는 이미지 리샘플링 필터이고, Abaqus 고유치 솔버 LANCZOS 는 abaqusConstants 에서 온다.
-#   게다가 Abaqus Python 에 matplotlib 이 없으면 스크립트가 시작 시 ImportError 로 죽는다.
-#   이 스크립트는 LANCZOS 를 쓰지 않는다(선형 좌굴해석 + SUBSPACE).
+# (2026-09-24 제거) from matplotlib.image import LANCZOS — IDE 자동삽입. matplotlib 의 LANCZOS 는
+#   이미지 필터이고 Abaqus Python 에 matplotlib 이 없으면 ImportError 로 죽는다(§16).
 from abaqus import *
 from abaqusConstants import *
 from step import *
@@ -54,14 +52,8 @@ import subprocess
 import time
 import numpy as np
 
-# ---- 로깅 (2026-09-24 실측으로 발견한 두 문제 대응) ------------------------------
-# 문제 1) Abaqus `cae noGUI` 에서 이 스크립트의 print 는 콘솔에 안 보이고 CAE 메시지 영역으로 갈 수
-#         있다(자식 프로세스로 뜬 base_state_probe 의 [R-13] 만 콘솔에 보였다 — 실측).
-#         -> 따라서 **파일이 주 채널**이다.
-# 문제 2) noGUI 는 스크립트를 execfile 로 실행하므로 __file__ 이 없다. __file__ 로만 경로를 잡으면
-#         NameError 가 나고 (try/except 로 감싸면) 조용히 파일이 하나도 안 생긴다 — 실측으로 물렸다.
-#         -> 후보 경로를 여러 개 잡고 각각에 append 한다.
-# canary: 이 파일이 실제로 실행되는지부터 확인한다(실패해도 무해).
+# 로깅 — cae noGUI 는 스크립트 stdout 을 콘솔로 보내지 않고 execfile 이라 __file__ 도 없다(§1).
+#   파일이 주 채널이다. canary 로 이 파일이 실제 실행되는지부터 확인한다.
 try:
     with open('mode_run_log.txt', 'w') as _cf:
         _cf.write('[canary] run_abaqus_mode.py start %s  cwd=%s  argv=%s\n'
@@ -153,10 +145,7 @@ from aba_imperfection import (count_modes, parse_eigenvalues, verify_inp_element
 # ---- 균일 격자 메쉬 (2026-10-06). HF/buckle 과 같은 모듈을 쓴다 ------------------
 import aba_grid_mesh                                                            # noqa: E402
 emit("[run_abaqus_mode] _HERE = %s" % _HERE)
-# [2026-10-05] 코드 지문. 왜 필요한가: 사용자가 git pull 을 빠뜨린 채 실행하면 로그만으로는
-#   '고친 코드가 안 먹었다'와 '옛 코드가 돌았다'를 구분할 수 없다(실측: 가드 오탐을 고친 뒤
-#   재실행했는데 로그에 옛 메시지가 찍혀 판정이 막혔다). 스크립트와 공용 모듈의 md5 를 찍으면
-#   로그 첫머리에서 즉시 판정된다.
+# 코드 지문 — 스크립트·공용 모듈 md5 를 로그 첫머리에 찍어 'pull 누락'과 '옛 코드'를 구분한다(§1).
 try:
     import hashlib as _hl
     for _fn in ('run_abaqus_mode.py', 'aba_imperfection.py'):
@@ -184,9 +173,7 @@ def run_job_safely(job_name, model_name=None):
     job = mdb.Job(name=job_name, model=model_name)
     emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
-    # [2026-10-02] 제출 전 요소 타입 검증. setElementType 이 조용히 무시되면 CAE 기본 셸
-    #   (S4R/S3)로 남고, 막 섹션과 충돌해 'N elements have missing property definitions' 로
-    #   죽는다(실측 12,086개). 그때 콘솔에는 단서가 없었다. 여기서 잡고 라이선스를 아낀다.
+    # 제출 전 요소 타입 검증 — 조용한 폴백을 Standard 토큰 전에 잡는다(§3).
     _ok_et, _cnt_et, _err_et = verify_inp_element_types(
         job_name + '.inp', (ELEM_CODE_QUAD, ELEM_CODE_TRI))
     emit("[GUARD] .inp 요소 타입 블록: %s" % (_cnt_et or _err_et))
@@ -201,12 +188,7 @@ def run_job_safely(job_name, model_name=None):
     job.submit(consistencyChecking=OFF)
     job.waitForCompletion()
     time.sleep(1.0)
-    # [2026-10-02] ABORTED 만 보면 안 된다. Abaqus 는 input processing 이 실패해도 부분 .odb 를
-    #   만들어 둔다 -> 'ODB 존재'가 성공 증거가 아니다(실측: 12,086개 요소가 섹션을 못 받아
-    #   죽었는데 status=None / ok=True 로 보고됐다). COMPLETED 가 아니면 실패로 본다.
-    # [2026-10-04] job.status 는 CAE noGUI 에서 None 이라 `!= COMPLETED` 는 **항상 실패**로
-    #   오판한다(실측). `== ABORTED` 만 보면 부분 .odb 때문에 실패를 놓친다. 둘 다 피해
-    #   산출물 + .msg 완주 문자열로 판정한다.
+    # 잡 성공 판정 = 산출물 + 완주 문자열(§2).
     if (job.status == ABORTED or not os.path.exists(job_name + '.odb')
             or not job_completed_from_logs(job_name)):
         emit("!!! ERROR: Job %s failed (status=%s, odb=%s, .msg 완주=%s)"
@@ -292,26 +274,9 @@ INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
-# [2026-09-28] 막 요소 차수 — **1차(S4/S3) 유지**. 2차 실험은 기각됐다.
-#   배경: 1차 HF 는 .sta 가 증분 크기 리밋사이클(x1.5 성장 -> 상한 1~2e-4 에서 실제 수렴 실패
-#   -> 1/4 컷백)에 빠져 완주에 2만 증분 규모(7h+)이 필요하다. 논문은 2차(STRI65/S8R5)
-#   10,100요소로 974 s 에 완주한다 -> 그래서 2차를 시험했다.
-#   기각 근거(실측 2026-09-28): 2차 + SEED_DIV=150 으로 모드 소스 잡이
-#     `THE DIFFERENTIAL MATRIX HAS 170293 NEGATIVE DIAGONAL ENTRIES`(82%) + `CONVERGED=0`
-#     + `INSTABILITIES IN THE BASE STATE` 로 죽었다 — 2차에서 base state 가 더 나빠졌다.
-#   스킬 references/buckle-failure-triage.md 도 이미 "solver/element knobs 는 ruled out,
-#   stall load 는 1차/2차 무관(0.439 -> 0.4655)" 로 기록하고 있었다.
-#   => 2차는 논문 baseline 재현(S1 사다리)에서만 쓴다. 그때는 아래 두 값만 S8R5/STRI65 로
-#      (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 변경은 잡힌다).
+# 막 요소는 1차(S4/S3) 유지 — 2차는 기각됐다(§4). 요소코드는 HF 와 같아야 한다
+#   (*IMPERFECTION 이 노드 라벨로 주입된다).
 ELEM_CODE_QUAD = S4         # [2026-10-04] 막(M3D4/M3D3) 실험 철회 -> 1차 셸 복귀.
-                            #   이유1: 막은 굽힘강성이 없어 *BUCKLE 의 SUBSPACE 가 수렴하지 못한다.
-                            #     문서: membrane elements have no bending stiffness -> "high number of
-                            #     nonrigid-body zero-energy modes". 실측: 668 iter 에 23/100 수렴,
-                            #     λ 가 전부 음수(-2.0e-03)라 쓸 모드가 나오지 않는다.
-                            #   이유2: 요소 타입을 바꾸면 CAE 메셔가 **노드 수까지** 바꾼다
-                            #     (막 덱 12,155 노드 / 셸 덱 18,442 노드, SEED_DIV 는 양쪽 200).
-                            #     -> *IMPERFECTION 은 노드 라벨로 주입되므로 모드 소스와 HF 의
-                            #        요소코드가 같아야 한다. inp_mesh_compare.py 로 확인(2026-10-04).
 ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 셸 복귀
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
@@ -334,70 +299,27 @@ angle_rad = np.deg2rad(angle_deg)
 cos_val = float(np.cos(angle_rad))
 sin_val = float(np.sin(angle_rad))
 
-# ---- 정렬: 프리텐션 정의 (HF 와 동일한 줄) ----
-#   [2026-09-24 3회차 실측 -> 근본 수정] 코너 2개만 1e-7 m 당기면 base state 가 slack 이 되고,
-#   좌굴 스펙트럼이 뭉개진다(실측: ITER2 양수 모드가 1회차 4.6e-5~3.1e-3 -> 3회차 6.9e-7~1.8e-5,
-#   즉 요구 모드가 사실상 영에너지 모드로 퇴화). 논문 Galhofo2022 의 좌굴 모델은
-#   '세 꼭짓점에 prescribed displacement 로 초기 프리텐션' + 좌굴 BC(정점 u_y=1e-3 m,
-#   아래 두 꼭짓점 성분 (5e-4,-5e-4) m) -> 3중 대칭으로 세 꼭짓점을 모두 당긴다.
-# CHECKER-DIVERGENCE: DISP_GLOBAL, SIGMA0, PRETENSION_SCALE, stabilizationMagnitude, radius
-#   radius 는 오라클 재현 런(0.4)을 위해 추가했다. 지금은 0.2 로 복원되어 '값'은 HF 와 같다.
-#   다만 값이 PATCH_RADIUS 상수로 들어가므로 검사기가 찾는 리터럴 'radius=0.2' 는 코드에 없고,
-#   결과는 DIVRG(선언됨) 로 표시된다. 즉 이 선언이 남아 있는 동안에는 PATCH_RADIUS 를 0.9 등으로
-#   바꿔도 검사기가 통과시킨다 -> PATCH_RADIUS 를 바꿀 때는 사람이 HF 값(0.2)과 직접 대조할 것.
-#   HF(run_abaqus.py)와 이 모드 소스는 base state 프리텐션 정의가 다르다(모드 소스는 3꼭짓점 프리텐션).
+# 프리텐션 정의 — HF 와 다르다(모드 소스는 3꼭짓점 prescribed displacement). 근거는 §8.
 #   메쉬/형상/요소/재료는 동일하므로 모드 노드 라벨 매핑은 그대로 성립한다.
-#   논문에는 '클램프 유무' 외에 이 프리텐션 정의 차이도 함께 명시할 것.
+# CHECKER-DIVERGENCE: DISP_GLOBAL, SIGMA0, PRETENSION_SCALE, stabilizationMagnitude, radius
+#   이 선언이 남아 있는 동안에는 PATCH_RADIUS 를 바꿔도 검사기가 통과시킨다 —
+#   PATCH_RADIUS 를 바꿀 때는 사람이 HF 값(0.2)과 직접 대조할 것.
 PRETENSION_MODE = 'corner2'  # [2026-09-24 오라클 재현] 케이블 런(run_abaqus_cable.py)과 동일한 구동:
                              #   정점(BC_Anchor_Top)은 완전 고정한 채, 아래 두 꼭짓점만 케이블 축으로 당긴다.
                              #   성공 실적: 이 설정에서 CONVERGED=4 (양수 λ 4개).
                              # 'paper3' = 논문 좌굴모델: 꼭짓점 3개를 모두 당김(3중 대칭).
                              #   5·7회차 실측: 양수 2개 / 0개 -> 재현 실험 뒤 bisect 단계에서 하나씩 되돌린다.
 DISP_GLOBAL = 1.8e-5         # 꼭짓점 당김 [m] — 모드 소스의 운용점. HF 와 **다르다(의도된 선언 분기)**.
-#   [2026-09-28 실측] HF 운용점 165e-6 에 맞춰 이 값을 올렸더니 모드 추출이 실패했다:
-#     ITERATION 2 고유값 250개가 거의 전부 음수(-1.7e-2 대역, 양수는 1번 6.8e-3 / 248번 1.95e-2 뿐),
-#     `NUMBER OF EIGENVALUES CONVERGED UPTO THIS ITERATION = 0`,
-#     `***ERROR: THE EIGENVALUES CANNOT BE FOUND ... INSTABILITIES IN THE BASE STATE`,
-#     ANALYSIS SUMMARY: 1 NEGATIVE EIGENVALUE WARNING.  -> 165 µm 운용점의 base state 는 불안정하다.
-#   따라서 모드 소스는 '좌굴모드를 뽑을 수 있는 안정 영역'에 남겨 둔다(check_model_consistency.py 의
-#   DECLARABLE 주석 참조). 임퍼펙션 모드가 HF 와 다른 프리스트레스에서 계산된다는 사실은 로그에
-#   두 운용점과 비율로 매번 찍히므로 판독 가능하다.
-#   값싼 미지수: 안정 상한이 어디인가? 40e-6 / 80e-6 로 각 1회(~60 s) 시험하면 경계가 나온다.#   값이 어긋나면 모드 형상이 '다른 프리스트레스 상태'의 것이 되어 임퍼펙션 주입이 물리적으로 틀어진다.
-                             #   [2026-09-24 오라클 재현 실험] 아래 '창/기저 소진' 기록은 그대로 유효하다.
-                             #     프리텐션 5.0e-6 하향은 이 재현 실험 뒤 bisect 단계로 미룬다(한 번에 한 축).
-                             #     실측: 요청 100/기저 400 -> CONVERGED=0 (ITER4 에서 396개까지 추적 후 붕괴) /
-                             #           요청 60/기저 120 -> CONVERGED=0 (창 부족: 필요 총개수 63 > 요청 60) /
-                             #           요청 100/기저 250 -> 양수 2개 수렴 (이 배치의 최선).
-                             #     -> subspace 로는 2개가 상한이므로 음수 대역 자체를 줄이는 축으로 간다.
-                             #     근거(단조 실측): 시스템 음수 고유값 88개(1e-3 m) -> 56개(1.8e-5 m) -> 16개(1e-7 m).
-                             #     지표(사전등록): 새 런의 "SYSTEM MATRIX HAS N NEGATIVE EIGENVALUES" 의 N 이
-                             #       56 보다 줄었는가. 줄지 않으면 이 축도 아니라는 뜻이다.
-                             #     [R-13] 선형 환산 예상 면내응력 ~344 Pa (= 6.874e+04 x 5e-6/1e-3), 운용점 7000 Pa 의 0.049배.
-                             #     하한 주의: 1e-7 m 대는 좌굴모드가 영에너지로 퇴화한다(3회차 진단) -> 그보다 위에 둔다.
-                             #   근거 1(계측): base_state_probe 헤드라인 = 평균 면내응력 6.874e+04 Pa,
-                             #     면내평균<0 면적비 0.0000, minP<0 0.0017, |u3|max 5.6e-22 m (=주름 0, 완전 평탄).
-                             #     목표 7000 Pa 대비 배율 9.820 -> 1e-3 m 는 운용점의 약 10배로 과대했다.
-                             #   근거 2(회차별 대조): 양수 좌굴모드가 나온 회차는 전부 저프리텐션이다.
-                             #     1e-7 m  -> 양수 3~4개 (2·3회차)  /  5e-5 m -> 양수 4개 (1회차)
-                             #     1e-3 m  -> 양수 0개 (4회차, 면내 68.7 kPa)  ← 양수가 사라지는 구간
-                             #   근거 3(양성 대조군): 성공한 케이블 런(run_abaqus_cable.py, CONVERGED=4)은
-                             #     DISP_MAG = 1.8e-5 m 이다. 같은 값으로 맞춘다.
-                             #   주의: 이 값은 '좌굴모드를 뽑기 위한 저프리텐션'이다. HF 운용점(7000 Pa)과 다르며
-                             #         그 차이는 HF/모드소스 분기로 이미 선언돼 있다(check_model_consistency.py).
+# 모드 소스는 저프리텐션에 둔다 — HF 운용점(165e-6)은 base state 가 불안정해 모드 추출이 실패했다(§8).
+#   양수 모드가 나온 회차는 전부 저프리텐션(1e-7 / 5e-5 m)이고 1e-3 m 에서는 0개였다.
+#   1e-7 m 대는 모드가 영에너지로 퇴화하므로 그보다 위에 둔다. 안정 상한은 40e-6/80e-6 각 1회로 좁힌다.
 DISP_TOP_OVER_CORNER = 1.4142135623
 SIGMA0 = 700.0                               # 초기 가짜 응력(수렴 보조) [Pa] — 프리텐션의 대체물이 아니다
                                              #   [2026-09-24 오라클 재현] 케이블 런 값 = 700.0 (HF 는 500.0)
 MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 크기 [m] (케이블 런·HF 와 동일)
 PATTERN_SIGN = 1.0                           # 좌굴 '하중 패턴'의 부호: 1.0 = 바깥으로 더 당김 (오라클과 동일)
-                                             #   [2026-09-24 철회] 직전에 -1.0 으로 뒤집었다가 되돌렸다.
-                                             #   뒤집은 근거였던 "4회차 스펙트럼이 전부 λ<0 이니 패턴 부호 문제"는
-                                             #   양성 대조군으로 반증되었다: 성공한 케이블 런(CONVERGED=4)도
-                                             #   패턴이 똑같이 '바깥 당김'(+PERTURBATION)이고 λ 4개가 양수다.
-                                             #   -> λ 의 부호를 정하는 것은 패턴 부호가 아니라 base state(프리텐션 크기)다.
-                                             #      실측: 1e-7 m 와 5e-5 m 에서는 양수 모드가 나왔고(3~4개),
-                                             #            1e-3 m(면내 68.7 kPa)에서는 0개였다.
-                                             #   -> 원인은 DISP_GLOBAL 이며, 위 상수에서 1.8e-5 m 로 내렸다.
+                                             # PATTERN_SIGN 은 바꾸지 않는다 — λ 부호를 정하는 것은 패턴이 아니라 base state 크기다(§8).
 N_EIG_BUCKLE = 100                           # [2026-10-05 복귀] 8 -> 100. 요청 수는
                                              #   **base state 의 음수 고유값 개수보다 커야 한다**
                                              #   (규칙: N_EIG_BUCKLE > 음수 개수).
@@ -412,21 +334,9 @@ BUCKLE_VECTORS = 250                         # [2026-10-05 복귀] 40 -> 250. �
 N_MODES = 4                                  # HF 에 주입할 모드 수(= ODB 모드 프레임에서 뽑는 개수)
 PATCH_RADIUS = 0.2                           # 꼭짓점 강체패치 반경 [m] — HF 와 동일값(0.2)으로 복원.
 COUPLING_TYPE = DISTRIBUTING     # 패치 절점 결합 방식: 'DISTRIBUTING' | 'KINEMATIC'.
-#   [2026-09-28] KINEMATIC+WHOLE_SURFACE 는 패치 표면을 강체로 구속해 응력 특이점(52배)과
-#   국소 압축(30.9%)을 만들었다. DISTRIBUTING 이면 weightingMethod=UNIFORM 으로 가중 분배만 한다.
-#   influenceRadius 는 CAE API 필수 인자(실측: 없애면 'expected 5, got 4') — DISTRIBUTING 에서는 무시된다.
-#   **문자열을 넣으면 안 된다**: 'DISTRIBUTING'(따옴표) 은 그대로 죽는다(실측).
-#     TypeError: couplingType; found string, expecting KINEMATIC, DISTRIBUTING, STRUCTURAL or UNIFORM_NDOF
-#   abaqusConstants 의 심볼(DISTRIBUTING / KINEMATIC)을 그대로 쓴다. weightingMethod 도 UNIFORM 심볼.
-#   이 값을 'KINEMATIC' 으로 되돌리면 weightingMethod 인자를 빼야 한다.
-#   모델 지문(FINGERPRINT_KEYS)에 포함되므로 값을 바꾸면 모드 재추출이 필요하다.
-                                             #   [2026-09-24 bisect 2단계, 사용자 지시] 4모드를 낸 조합은 0.4 였다.
-                                             #   이제 반경만 0.2 로 되돌려 '패치 반경이 스펙트럼을 좌우하는가'를
-                                             #   단독으로 판정한다(구동 방식 corner2 / 1.8e-5 / SIGMA0 700 은 그대로).
-                                             #   판독 규칙(사전등록): 4개 수렴 + 0 ERROR -> 반경은 무관
-                                             #     = HF 정합 회복(최상). 0~2개 -> 0.4 가 결정적이었다 -> 0.4 복귀.
-                                             #   lambda 값 자체는 base state 변화로 이동하는 것이 정상이다(개수로 판정).
-                                             #   되돌리기: 0.4 (오라클 값, run_abaqus_cable.py:144).
+# Coupling — DISTRIBUTING + weightingMethod=UNIFORM. KINEMATIC+WHOLE_SURFACE 는 응력 특이점(52배)을
+#   만들었다(§7). couplingType 에 문자열을 넘기면 죽는다 — abaqusConstants 심볼을 쓴다.
+#   influenceRadius 는 API 필수 인자다. 모델 지문에 포함되므로 값을 바꾸면 모드 재추출이 필요하다.
 MODE_STEP_NAME = 'Step-Buckle'               # 이 모델의 2번째 스텝(HF 의 MODE_SOURCE_STEP=2 와 짝)
 JOB_NAME = 'ClampFree_Buckle'
 MODE_TABLE = 'modes_%s.txt' % JOB_NAME       # HF 는 ..\modes_ClampFree_Buckle.txt 를 읽는다
@@ -460,9 +370,7 @@ s.Line(point1=V2[:2], point2=V1[:2])
 s.Line(point1=V1[:2], point2=V3[:2])
 p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
 p.BaseShell(sketch=s)
-# [orphan mesh 전환 2026-10-06] 섹션 할당은 요소 생성 뒤로 이동(아래 메쉬 블록).
-#   part.addElements 로 만든 orphan mesh 는 기하 face 를 갖지 않는다.
-#   셋 이름 'All' 은 inst_memb.sets['All'] 참조를 위해 유지한다.
+# 섹션 할당은 요소 생성 뒤여야 한다 — fill_part 가 orphan mesh 를 만든다(§10a).
 
 # -------------------------------------------------------------
 # 4. 파트 생성: 케이블
@@ -527,11 +435,8 @@ def connect_cable(name, part, sail_corner, vector_dir, radius=1e-4):
     return region_start, region_end
 
 
-# 1. 메쉬 생성 (노드를 찾기 전에 필요)
-#   [2026-10-06] 자유 메쉬(seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 18,200 S4)를
-#     균일 격자(내부 정사각형 + 경계 직각삼각형, S4 9900 + S3 200 = 10,100)로 교체한다.
-#     Galhofo(2022) Table A.1 의 10,100 요소 S3+S4 행과 같은 토폴로지다.
-#     세 스크립트(HF/mode/buckle)가 **같은 메쉬**여야 모드를 같은 노드에 이식할 수 있다.
+# 메쉬: HF/buckle 과 동일한 균일 격자. 세 스크립트의 메쉬가 같아야 모드를 같은 노드에 이식한다(§10).
+#   grid_report 를 참고해 S4 9900 + S3 200 = 10,100 요소.
 import aba_grid_mesh
 _n_s4, _n_s3, _n_nd = aba_grid_mesh.fill_part(
     p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
@@ -541,9 +446,7 @@ emit("[grid] S4=%d S3=%d nodes=%d  (SEED_DIV=%.6g, h=%.6g m)"
 # [orphan mesh] 요소 기반 셋 + 섹션 할당
 p.Set(elements=p.elements, name='All')
 p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
-# [2026-10-02] 읽기 검증. setElementType 이 조용히 무시되면 CAE 기본 셸(S4R/S3)로 남고,
-#   막 섹션과 충돌해 'N elements have missing property definitions' 로 죽는다(실측 12,086개).
-#   선언이 아니라 '실제로 무엇이 붙었는가'를 본다. 실패해도 스크립트는 계속 간다.
+# 요소 타입 읽기 검증 — 선언이 아니라 실제로 무엇이 붙었는가를 본다(§3). 실패해도 계속 간다.
 for _shp, _nm in ((QUAD, 'QUAD'), (TRI, 'TRI')):
     try:
         # [orphan mesh 전환 2026-10-06] faces -> elements. 기하 face 는 요소를 갖지 않는다.
@@ -679,10 +582,8 @@ if PRETENSION_MODE == 'paper3':
 emit("[MODE] 좌굴 하중 패턴 부호 PATTERN_SIGN=%+0.1f (%s) — 크기 %g m"
       % (PATTERN_SIGN, '안쪽(당김을 푸는 방향)' if PATTERN_SIGN < 0 else '바깥 당김', PERTURBATION))
 my_model.boundaryConditions['BC_Stabilize_Z'].deactivate(MODE_STEP_NAME)
-# [orphan mesh 전환 2026-10-06] all_edges = inst_memb.edges -> 좌표 판정으로 교체.
-#   fill_part 의 orphan mesh 에서는 인스턴스의 기하 edge 가 비어 BC 가 무효가 된다.
-#   HF/buckle 과 **같은 함수**를 써서 노드 집합을 일치시킨다 — 모드 이식이 노드 라벨에
-#   의존하므로 세 스크립트의 셋이 어긋나면 안 된다. mode 는 클램프가 없어 제외가 없다.
+# all_edges = inst_memb.edges -> 좌표 판정으로 교체. orphan mesh 에서는 기하 edge 가 비고,
+#   HF/buckle 과 같은 함수를 써야 노드 집합이 일치한다(§10a). mode 는 클램프가 없어 제외가 없다.
 _keep_labels = aba_grid_mesh.boundary_node_labels(inst_memb, base=BASE, height=HEIGHT)
 aba_grid_mesh.make_set(a, 'All_Edges_NoClamp', inst_memb, _keep_labels)
 emit("[BC] All_Edges_NoClamp (mode): 경계 노드 %d개 (클램프 없음, 전체 막 노드 %d개)"
@@ -700,9 +601,8 @@ my_model.fieldOutputRequests['F-Output-1'].setValues(
     frequency=1
 )
 
-# --- 스텝 순서 가드: HF 는 MODE_SOURCE_STEP 번째 스텝의 프레임을 모드 소스로 읽는다 ------
-#   (2026-09-24) 이 상수가 '정의만 되고 안 쓰이던' 죽은 상수였고, 스텝 순서가 밀리면
-#   HF 가 엉뚱한 스텝의 프레임을 조용히 읽는다 -> 여기서 즉시 중단한다.
+# 스텝 순서 가드 — HF 는 MODE_SOURCE_STEP 번째 스텝의 프레임을 모드 소스로 읽는다.
+#   순서가 밀리면 엉뚱한 스텝을 조용히 읽으므로 여기서 중단한다.
 _step_seq = [s for s in my_model.steps.keys() if s != 'Initial']
 if len(_step_seq) != BUCKLE_STEP_NO or _step_seq[BUCKLE_STEP_NO - 1] != MODE_STEP_NAME:
     raise RuntimeError("스텝 순서 불일치: %s (기대: %s) — HF 의 MODE_SOURCE_STEP=%d 와 어긋난다."
