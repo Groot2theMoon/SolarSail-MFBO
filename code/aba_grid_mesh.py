@@ -160,18 +160,86 @@ def grid_report(base=20.0, height=10.0, seed_div=200.0):
                                   boundary_nodes=nb)
 
 
-def fill_part(part, base=20.0, height=10.0, seed_div=200.0, verbose=True):
+def boundary_node_labels(instance, base=20.0, height=10.0,
+                         tol=BOUNDARY_TOL, exclude_labels=()):
+    """인스턴스에서 삼각형 3변(y=0 / y=x / y=BASE-x) 위의 노드 라벨을 고른다.
+
+    edge->노드 API 를 쓰지 않고 좌표로 판정한다. 이유 두 가지:
+      (1) CAE 버전에 따라 edge->노드 API 가 다르다.
+      (2) fill_part 의 orphan mesh 에서는 인스턴스의 기하 edge 가 비어 있다.
+    exclude_labels 에 든 라벨은 뺀다(클램프 부착 구간 제외용).
+
+    **세 스크립트(HF / mode / buckle)가 반드시 이 함수를 써야** 같은 노드 집합이
+    나온다. 한 곳에서 손으로 판정하면 tolerance 나 조건이 어긋나 모드 이식이 깨진다.
+
+    판정은 격자에서 정확하다: generate_grid 는 경계 노드를 사선 위에 정확히 놓고,
+    격자 h=0.1 일 때 tol=1e-4 로 400개(y=0 201 / y=x 101 / y=BASE-x 101, 꼭짓점
+    3개 중복)가 잡힌다(실측).
+    """
+    ex = set(exclude_labels)
+    out = []
+    for n in instance.nodes:
+        if n.label in ex:
+            continue
+        x, y = n.coordinates[0], n.coordinates[1]
+        if (abs(y) < tol) or (abs(y - x) < tol * 1.5) or (abs(y - (base - x)) < tol * 1.5):
+            out.append(n.label)
+    return out
+
+
+def clamp_exclude_labels(instance, centers, radius):
+    """클램프/패치 중심들에서 반경 radius 내 노드 라벨(면외 구속에서 제외할 대상)."""
+    ex = set()
+    for c in centers:
+        for n in instance.nodes.getByBoundingSphere(center=c, radius=radius):
+            ex.add(n.label)
+    return ex
+
+
+def make_set(assembly, name, instance, labels):
+    """라벨 리스트로 어셈블리 노드셋을 만든다.
+
+    a.Set(nodes=...) 는 MeshNodeArray 를 요구한다 — tuple/list 를 넘기면
+    'Feature creation failed.' 로 죽는다(실측 2026-10-06). sequenceFromLabels 로 만든다.
+    빈 라벨이면 RuntimeError 를 올린다(조용히 빈 셋을 만들면 BC 가 아무 데도
+    안 걸려 물리적으로 다른 문제가 된다).
+    """
+    if not labels:
+        raise RuntimeError("%s: 노드를 하나도 찾지 못했다. 좌표/tol 을 확인하라." % name)
+    assembly.Set(name=name, nodes=instance.nodes.sequenceFromLabels(tuple(labels)))
+    return assembly.sets[name]
+
+
+def fill_part(part, base=20.0, height=10.0, seed_div=200.0,
+              elem_quad=None, elem_tri=None, verbose=True):
     """Abaqus CAE Part 를 격자로 채운다 (seedPart 경로 대체).
 
       part.deleteMesh()
       part.addNodes(nodeData=((label,(x,y,z)), ...))
-      part.addElements(elementData=((label,(n1,n2,n3,n4)), ...), type=S4)
-      part.addElements(elementData=((label,(n1,n2,n3)),   ...), type=S3)
+      part.addElements(elementData=((label,(n1,n2,n3,n4)), ...), type=elem_quad)
+      part.addElements(elementData=((label,(n1,n2,n3)),   ...), type=elem_tri)
 
     addNodes/addElements 는 **튜플**을 받는다 (a.Set(nodes=) 와 달리 MeshNodeArray 를
     요구하지 않는다). 라벨은 1부터 연속으로 준다.
+
+    elem_quad / elem_tri 는 호출 스크립트의 ELEM_CODE_QUAD / ELEM_CODE_TRI 를
+    넘긴다. 여기서 S4/S3 를 하드코딩하면 스크립트의 상수와 어긋날 수 있어
+    인자로 받는다(스크립트마다 요소 코드를 바꾸는 실험이 있었다).
+
+    반환: (n_S4, n_S3, n_nodes)
+
+    주의: 이 함수는 **orphan mesh** 를 만든다. 즉 요소가 파트 기하(face)에 붙지
+    않는다. 따라서 호출 측은 섹션 할당을 반드시 요소 기반으로 해야 한다:
+        p.SectionAssignment(region=p.Set(elements=p.elements, name='All'), ...)
+    faces 기반(p.Set(faces=p.faces, ...))으로 두면 요소가 섹션을 못 받아
+    'N elements have missing property definitions' 로 입력 단계에서 죽는다.
+    같은 이유로 어셈블리 인스턴스의 .edges 도 비게 되므로 geometry 기반 셋
+    (All_Edges)은 쓰면 안 된다.
     """
-    from abaqusConstants import S4, S3   # noqa: F401  (심볼)
+    if elem_quad is None or elem_tri is None:
+        from abaqusConstants import S4, S3
+        elem_quad = elem_quad if elem_quad is not None else S4
+        elem_tri = elem_tri if elem_tri is not None else S3
 
     nodes, s4, s3 = generate_grid(base, height, seed_div)
     part.deleteMesh()
@@ -179,10 +247,10 @@ def fill_part(part, base=20.0, height=10.0, seed_div=200.0, verbose=True):
         (i + 1, (float(x), float(y), 0.0)) for i, (x, y) in enumerate(nodes)))
     if s4:
         part.addElements(elementData=tuple(
-            (k + 1, tuple(n + 1 for n in t)) for k, t in enumerate(s4)), type=S4)
+            (k + 1, tuple(n + 1 for n in t)) for k, t in enumerate(s4)), type=elem_quad)
     if s3:
         part.addElements(elementData=tuple(
-            (k + 1 + len(s4), tuple(n + 1 for n in t)) for k, t in enumerate(s3)), type=S3)
+            (k + 1 + len(s4), tuple(n + 1 for n in t)) for k, t in enumerate(s3)), type=elem_tri)
     if verbose:
         rep, _ = grid_report(base, height, seed_div)
         print(rep)

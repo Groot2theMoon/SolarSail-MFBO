@@ -56,14 +56,20 @@ SHARED = [
     "s.Line(point1=V1[:2], point2=V3[:2])",
     "p.BaseShell(sketch=s)",
     # ---- 메쉬 (모드 노드 일치의 핵심) ----
-    "p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)",
-    "p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)",
-    "elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)",
-    "elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)",
+    #   [2026-10-06] 자유 메쉬를 균일 격자(aba_grid_mesh.fill_part)로 교체했다.
+    #     옛 항목(seedPart / setMeshControls / elemTypeQuad / elemTypeTri / setElementType)
+    #     은 세 스크립트에서 제거됐다. 대신 아래 5개가 세 스크립트에 모두 있어야 한다.
+    #     fill_part 는 **orphan mesh** 를 만들므로 섹션 할당이 요소 기반이어야 한다 —
+    #     기하 face 기반으로 두면 'N elements have missing property definitions' 로 죽는다.
+    #   코드가 여러 줄에 걸쳐 있어도 code_only 가 공백을 모두 지우므로 아래 문자열로 매칭된다.
+    "aba_grid_mesh.fill_part(",
+    "p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,",
+    "elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)",
+    "p.Set(elements=p.elements, name='All')",
+    "p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')",
     "ELEM_CODE_QUAD = S4",
     "ELEM_CODE_TRI = S3",
     "SEED_DIV = 200.0",
-    "p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))",
     # ---- 클램프/정점 강체 패치 ----
     "radius=0.2",
     "u1=ON, u2=ON, u3=ON, ur1=ON, ur2=ON, ur3=ON",

@@ -150,6 +150,8 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 from aba_imperfection import (count_modes, parse_eigenvalues, verify_inp_element_types,  # noqa: E402
                               job_completed_from_logs)
+# ---- 균일 격자 메쉬 (2026-10-06). HF/buckle 과 같은 모듈을 쓴다 ------------------
+import aba_grid_mesh                                                            # noqa: E402
 emit("[run_abaqus_mode] _HERE = %s" % _HERE)
 # [2026-10-05] 코드 지문. 왜 필요한가: 사용자가 git pull 을 빠뜨린 채 실행하면 로그만으로는
 #   '고친 코드가 안 먹었다'와 '옛 코드가 돌았다'를 구분할 수 없다(실측: 가드 오탐을 고친 뒤
@@ -458,7 +460,9 @@ s.Line(point1=V2[:2], point2=V1[:2])
 s.Line(point1=V1[:2], point2=V3[:2])
 p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
 p.BaseShell(sketch=s)
-p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
+# [orphan mesh 전환 2026-10-06] 섹션 할당은 요소 생성 뒤로 이동(아래 메쉬 블록).
+#   part.addElements 로 만든 orphan mesh 는 기하 face 를 갖지 않는다.
+#   셋 이름 'All' 은 inst_memb.sets['All'] 참조를 위해 유지한다.
 
 # -------------------------------------------------------------
 # 4. 파트 생성: 케이블
@@ -524,18 +528,26 @@ def connect_cable(name, part, sail_corner, vector_dir, radius=1e-4):
 
 
 # 1. 메쉬 생성 (노드를 찾기 전에 필요)
-p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)
-p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
-elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
-p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
-p.generateMesh()
+#   [2026-10-06] 자유 메쉬(seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 18,200 S4)를
+#     균일 격자(내부 정사각형 + 경계 직각삼각형, S4 9900 + S3 200 = 10,100)로 교체한다.
+#     Galhofo(2022) Table A.1 의 10,100 요소 S3+S4 행과 같은 토폴로지다.
+#     세 스크립트(HF/mode/buckle)가 **같은 메쉬**여야 모드를 같은 노드에 이식할 수 있다.
+import aba_grid_mesh
+_n_s4, _n_s3, _n_nd = aba_grid_mesh.fill_part(
+    p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+    elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
+emit("[grid] S4=%d S3=%d nodes=%d  (SEED_DIV=%.6g, h=%.6g m)"
+     % (_n_s4, _n_s3, _n_nd, SEED_DIV, BASE / SEED_DIV))
+# [orphan mesh] 요소 기반 셋 + 섹션 할당
+p.Set(elements=p.elements, name='All')
+p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
 # [2026-10-02] 읽기 검증. setElementType 이 조용히 무시되면 CAE 기본 셸(S4R/S3)로 남고,
 #   막 섹션과 충돌해 'N elements have missing property definitions' 로 죽는다(실측 12,086개).
 #   선언이 아니라 '실제로 무엇이 붙었는가'를 본다. 실패해도 스크립트는 계속 간다.
 for _shp, _nm in ((QUAD, 'QUAD'), (TRI, 'TRI')):
     try:
-        _et = p.getElementType(region=regionToolset.Region(faces=p.faces), elemShape=_shp)
+        # [orphan mesh 전환 2026-10-06] faces -> elements. 기하 face 는 요소를 갖지 않는다.
+        _et = p.getElementType(region=regionToolset.Region(elements=p.elements), elemShape=_shp)
         emit("[ET-CHECK] %s -> elemCode=%s" % (_nm, getattr(_et, 'elemCode', _et)))
     except Exception as _e2:
         emit("[ET-CHECK] %s 읽기 생략 (%s) — 실제 검증은 제출 전 .inp 가드가 한다" % (_nm, _e2))
@@ -667,11 +679,18 @@ if PRETENSION_MODE == 'paper3':
 emit("[MODE] 좌굴 하중 패턴 부호 PATTERN_SIGN=%+0.1f (%s) — 크기 %g m"
       % (PATTERN_SIGN, '안쪽(당김을 푸는 방향)' if PATTERN_SIGN < 0 else '바깥 당김', PERTURBATION))
 my_model.boundaryConditions['BC_Stabilize_Z'].deactivate(MODE_STEP_NAME)
-a.Set(name='All_Edges', edges=inst_memb.edges)
+# [orphan mesh 전환 2026-10-06] all_edges = inst_memb.edges -> 좌표 판정으로 교체.
+#   fill_part 의 orphan mesh 에서는 인스턴스의 기하 edge 가 비어 BC 가 무효가 된다.
+#   HF/buckle 과 **같은 함수**를 써서 노드 집합을 일치시킨다 — 모드 이식이 노드 라벨에
+#   의존하므로 세 스크립트의 셋이 어긋나면 안 된다. mode 는 클램프가 없어 제외가 없다.
+_keep_labels = aba_grid_mesh.boundary_node_labels(inst_memb, base=BASE, height=HEIGHT)
+aba_grid_mesh.make_set(a, 'All_Edges_NoClamp', inst_memb, _keep_labels)
+emit("[BC] All_Edges_NoClamp (mode): 경계 노드 %d개 (클램프 없음, 전체 막 노드 %d개)"
+     % (len(_keep_labels), len(inst_memb.nodes)))
 my_model.DisplacementBC(
     name='BC_Edges_Only_Z',
     createStepName=MODE_STEP_NAME,
-    region=a.sets['All_Edges'],
+    region=a.sets['All_Edges_NoClamp'],
     u3=SET
 )
 

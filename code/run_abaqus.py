@@ -107,6 +107,10 @@ from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: 
                               imperfection_text, report, load_mode_table,
                               build_perturbation, perturbation_report, mode_table_info,
                               verify_inp_element_types, job_completed_from_logs)
+# ---- 균일 격자 메쉬 (2026-10-06). 세 스크립트가 같은 모듈을 쓴다 ----------------
+#   fill_part  : 파트를 orphan mesh 격자로 채운다 (seedPart 경로 대체)
+#   boundary_node_labels / clamp_exclude_labels / make_set : 면외 z 구속 노드셋
+import aba_grid_mesh                                                            # noqa: E402
 # ---- 로깅 (2026-09-24): HF 콘솔이 비어 보이는 문제 대응 --------------------------
 # Abaqus `cae noGUI` 는 스크립트의 stdout 을 콘솔이 아니라 CAE 메시지 영역으로 보낼 수 있다.
 # 그래서 이 스크립트의 출력이 통째로 안 보이는 경우가 있다(실측). 게다가 execfile 로 실행되면
@@ -663,7 +667,12 @@ s.Line(point1=V2[:2], point2=V1[:2])
 s.Line(point1=V1[:2], point2=V3[:2])
 p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
 p.BaseShell(sketch=s)
-p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
+# [orphan mesh 전환 2026-10-06] 섹션 할당을 여기서 하지 않는다.
+#   a.Set(nodes=)/part.Set(faces=...) 는 기하 기반이고, 격자(fill_part)는
+#   part.addElements 로 **orphan mesh** 를 만든다. 기하 face 기반으로 두면
+#   요소가 섹션을 못 받아 'N elements have missing property definitions' 로
+#   입력 단계에서 죽는다. => 요소 생성 뒤(아래 메쉬 블록)로 옮기고 요소 기반 셋을 쓴다.
+#   셋 이름 'All' 은 유지한다(inst_memb.sets['All'] 참조가 여러 곳에 있다).
 
 # 케이블 생성
 def create_cable_part(name, length):
@@ -742,13 +751,23 @@ def connect_cable(name, part, coord, vector_dir):
 
     return region_start, region_end
 
-p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
-p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-# S4R-> S4 (cable 변형과 동일)
-elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
-elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
-p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
-p.generateMesh()
+# ---- 메쉬: 균일 격자 (내부 정사각형 + 경계 직각삼각형), orphan mesh ----
+#   [2026-10-06] seedPart + setMeshControls(QUAD_DOMINATED, FREE, MEDIAL_AXIS) +
+#     deviationFactor + ADVANCING_FRONT 의 자유 메쉬(약 18,200 S4)를 격자로 교체한다.
+#     Galhofo(2022) Table A.1 은 10,100 요소로 S3+S4(1차)까지 보고했고(u_z,max 2.003e-4 m /
+#     2x3 wrinkles), 이 격자가 S4 9900 + S3 200 = 10,100 으로 그 토폴로지와 일치한다.
+#     논문과 주름 수를 비교할 수 없었던 이유의 절반(메쉬 자체가 다름)이 제거된다.
+#   fill_part 는 part.addElements 로 orphan mesh 를 만들므로, 섹션 할당은 요소 기반
+#   셋으로 해야 한다(위에서 옮겨온 이유). 셋 이름 'All' 은 유지한다.
+import aba_grid_mesh
+_n_s4, _n_s3, _n_nd = aba_grid_mesh.fill_part(
+    p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+    elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
+emit("[grid] S4=%d S3=%d nodes=%d  (SEED_DIV=%.6g, h=%.6g m)"
+     % (_n_s4, _n_s3, _n_nd, SEED_DIV, BASE / SEED_DIV))
+# [orphan mesh] 요소 기반 셋 + 섹션 할당 (기하 face 는 요소를 갖지 않는다)
+p.Set(elements=p.elements, name='All')
+p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
 
 # ---- 임퍼펙션(기하 섭동) 주입 (2026-09-22) --------------------------------
 #   원본(업스트림) docstring 의 계획: "1차 해석 결과(.odb)에서 고유모드를 추출하여 초기 결함으로 주입".
@@ -1013,33 +1032,23 @@ if not NO_CLAMP:
 # Step Buckle 에서는 전체 z 구속에서 모서리 z 구속으로 교체 Galhofo reference
 my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
 
-all_edges = inst_memb.edges
-a.Set(name='All_Edges', edges=all_edges)
+# [orphan mesh 전환 2026-10-06] all_edges = inst_memb.edges 제거.
+#   fill_part 가 part.addElements 로 orphan mesh 를 만들면 인스턴스의 기하 edge 가
+#   비어(또는 geometry 셋이 무효가) 된다. All_Edges 는 이제 어디서도 참조되지 않고
+#   BC_Edges_Only_Z 는 좌표 판정으로 만든 All_Edges_NoClamp 를 쓰므로 그대로 없앤다.
 
 # ---- 면외 z 구속용 노드셋: 클램프 부착 구간을 제외한다 (CLAMP_EXCL_R 참조) ----
 #   삼각형 세 변의 방정식은 y=0 / y=x / y=BASE-x 다 (꼭짓점 (0,0),(BASE,0),(BASE/2,HEIGHT)).
-#   edge->노드 API 대신 좌표로 판정해 CAE 버전 의존을 피한다.
-#   주의: a.Set(nodes=...) 는 MeshNodeArray 를 요구한다. tuple/list 를 넘기면
-#         "Feature creation failed." 로 죽는다(실측). sequenceFromLabels 로 만든다.
-_excl_edges = set()
-if not NO_CLAMP:
-    for _v in (V_CL, V_CR):
-        for _n in inst_memb.nodes.getByBoundingSphere(center=_v, radius=CLAMP_EXCL_R):
-            _excl_edges.add(_n.label)
-_tol = 1.0e-4
-_keep_labels = []
-for _n in inst_memb.nodes:
-    if _n.label in _excl_edges:
-        continue
-    _x, _y = _n.coordinates[0], _n.coordinates[1]
-    if (abs(_y) < _tol) or (abs(_y - _x) < _tol * 1.5) or (abs(_y - (BASE - _x)) < _tol * 1.5):
-        _keep_labels.append(_n.label)
+#   [2026-10-06] 좌표 판정을 aba_grid_mesh 로 옮겼다 — 세 스크립트(HF/mode/buckle)가
+#   같은 함수를 써야 노드 집합이 일치한다. edge->노드 API 를 쓰지 않는 이유는
+#   (1) CAE 버전 의존 (2) orphan mesh 에서 인스턴스의 기하 edge 가 비어 있기 때문이다.
+_excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
+               if not NO_CLAMP else set())
+_keep_labels = aba_grid_mesh.boundary_node_labels(
+    inst_memb, base=BASE, height=HEIGHT, exclude_labels=_excl_edges)
 emit("[BC] All_Edges_NoClamp 후보: 경계 노드 %d개 (클램프 반경 %.3g m 내 %d개 제외, 전체 막 노드 %d개)"
      % (len(_keep_labels), CLAMP_EXCL_R, len(_excl_edges), len(inst_memb.nodes)))
-if not _keep_labels:
-    raise RuntimeError('All_Edges_NoClamp: 경계 노드를 하나도 찾지 못했다 (tol=%.1e). '
-                       '메쉬가 다르면 tol 을 키워야 한다.' % _tol)
-a.Set(name='All_Edges_NoClamp', nodes=inst_memb.nodes.sequenceFromLabels(tuple(_keep_labels)))
+aba_grid_mesh.make_set(a, 'All_Edges_NoClamp', inst_memb, _keep_labels)
 emit("[BC] All_Edges_NoClamp 셋 생성 완료 (노드 %d개)" % len(_keep_labels))
 
 my_model.DisplacementBC(

@@ -90,6 +90,13 @@ os.chdir(_RUN)
 print("%s _HERE = %s" % (TAG, _HERE))
 print("%s _RUN  = %s" % (TAG, _RUN))
 
+# ---- 균일 격자 메쉬 (2026-10-06). HF/mode 와 같은 모듈을 쓴다 --------------------
+#   이 스크립트는 원래 sys.path 를 건드리지 않았지만, aba_grid_mesh 를 import 하려면
+#   _HERE 가 경로에 있어야 한다(CAE noGUI 에서 sys.path[0] 을 신뢰할 수 없다).
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import aba_grid_mesh                                                            # noqa: E402
+
 
 
 # ============================================================================
@@ -481,7 +488,9 @@ def build_model(disp):
     s.Line(point1=V1[:2], point2=V3[:2])
     p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
     p.BaseShell(sketch=s)
-    p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
+    # [orphan mesh 전환 2026-10-06] 섹션 할당은 요소 생성 뒤로 이동(아래 메쉬 블록).
+    #   aba_grid_mesh.fill_part 는 part.addElements 로 orphan mesh 를 만들므로 기하 face 를
+    #   갖지 않는다. 셋 이름 'All' 은 유지한다.
 
     # [제외] create_cable_part(...) 5개 — 케이블 part 자체를 만들지 않는다.
 
@@ -489,26 +498,23 @@ def build_model(disp):
     a.DatumCsysByDefault(CARTESIAN)
     inst_memb = a.Instance(name=INSTANCE_NAME, part=p, dependent=ON)
 
-    # ---- 메쉬: run_abaqus_new.py 와 완전히 동일 ----
-    p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1) # 약 1.82만개 (1차 요소)
-    p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-    # ★ 요소 타입은 run_abaqus_new.py(HF) 와 반드시 같아야 한다.
-    #   이유: 좌굴 모드는 HF 와 **같은 노드**에 정의되어야 *IMPERFECTION 으로 이식된다.
-    #   HF 쪽 요소 타입을 바꾸면 이 두 줄도 함께 바꿔야 한다.
-    #   현재값은 HF 기준 S4/S3 (커밋 6e0ef6e "cable deformation compatibility" 이후).
-    #   참고: Galhofo 검증모델은 S4R(s4R) 을 썼다 — 남은 차이는 요소 종류 하나다.
-    #   [2026-09-22 실측, x_c=0.5 / DISP=1e-3 m (alpha=20), 다른 조건 동일]
-    #     S4R -> 잡이 죽지 않고 GlobalTension 완주(24 inc) + base_state_probe 까지 진행.
-    #            단 그 런의 lambda 표는 확인 전에 아래 S4 런이 산출물을 덮어 잃었다.
-    #     S4  -> 좌굴 스텝에서 ***ERROR: THE EIGENVALUES CANNOT BE FOUND
-    #            (SYSTEM MATRIX 598 NEGATIVE EIGENVALUES, CONVERGED=0, .dat 표 없음)
-    #   => 좌굴 스텝이 실제로 돌아가는 쪽(S4R)을 기본값으로 둔다. S4 로 바꾸려면
-    #      ELEM_TAG 도 's4' 로 함께 바꿔 산출물이 서로 덮이지 않게 한다.
-    #      (HF 소비 모델은 S4 라서 check_model_consistency 는 이 한 항목만 EXIT=1 — 미해결)
-    elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
-    elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
-    p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
-    p.generateMesh()
+    # ---- 메쉬: HF/mode 와 완전히 동일한 균일 격자 (orphan mesh) ----
+    #   [2026-10-06] 자유 메쉬(seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 18,200 S4)를
+    #     격자(내부 정사각형 + 경계 직각삼각형, S4 9900 + S3 200 = 10,100)로 교체한다.
+    #     Galhofo(2022) Table A.1 의 10,100 요소 S3+S4 행과 같은 토폴로지다.
+    #   ★ 요소 타입은 HF(run_abaqus.py)/mode 와 반드시 같아야 한다.
+    #     이유: 좌굴 모드는 HF 와 **같은 노드**에 정의되어야 *IMPERFECTION 으로 이식된다.
+    #     세 스크립트 모두 aba_grid_mesh.fill_part 를 쓰고 ELEM_CODE_* 를 그대로 넘기므로
+    #     노드 라벨과 요소 코드가 자동으로 일치한다(수동으로 맞출 필요가 없다).
+    _n_s4, _n_s3, _n_nd = aba_grid_mesh.fill_part(
+        p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+        elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
+    print("%s [grid] S4=%d S3=%d nodes=%d  (SEED_DIV=%.6g, h=%.6g m)"
+          % (TAG, _n_s4, _n_s3, _n_nd, SEED_DIV, BASE / SEED_DIV))
+    # [orphan mesh] 요소 기반 셋 + 섹션 할당 (기하 face 는 요소를 갖지 않는다).
+    #   셋 이름 'All' 은 inst_memb.sets['All'] 참조를 위해 유지한다.
+    p.Set(elements=p.elements, name='All')
+    p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
     a.regenerate()
 
     # 꼭짓점 RP — 동일 (radius=0.2)
@@ -658,30 +664,16 @@ def build_model(disp):
 
     # ---- Buckle 스텝: 논문 (c) "z-displacement is fixed in the three edges" ----
     #   [2026-10-05] 3변은 유지하되 클램프 부착 구간은 면외 구속에서 제외한다 (CLAMP_EXCL_R 참조).
-    all_edges = inst_memb.edges
-    a.Set(name='All_Edges', edges=all_edges)
-
-    _excl_edges = set()
-    if CLAMP_MODE != 'none':
-        for _v in (V_CL, V_CR):
-            for _n in inst_memb.nodes.getByBoundingSphere(center=_v, radius=CLAMP_EXCL_R):
-                _excl_edges.add(_n.label)
-    _tol = 1.0e-4
-    _keep_labels = []
-    for _n in inst_memb.nodes:
-        if _n.label in _excl_edges:
-            continue
-        _x, _y = _n.coordinates[0], _n.coordinates[1]
-        if (abs(_y) < _tol) or (abs(_y - _x) < _tol * 1.5) or (abs(_y - (BASE - _x)) < _tol * 1.5):
-            _keep_labels.append(_n.label)
-    print("%s All_Edges_NoClamp 후보: 경계 노드 %d개 (클램프 반경 %.3g m 내 %d개 제외)"
-          % (TAG, len(_keep_labels), CLAMP_EXCL_R, len(_excl_edges)))
-    if not _keep_labels:
-        raise RuntimeError('%s All_Edges_NoClamp: 경계 노드를 하나도 찾지 못했다 (tol=%.1e).'
-                           % (TAG, _tol))
-    # a.Set(nodes=...) 는 MeshNodeArray 를 요구한다 — tuple/list 를 넘기면
-    # "Feature creation failed." 로 죽는다(실측). sequenceFromLabels 로 만든다.
-    a.Set(name='All_Edges_NoClamp', nodes=inst_memb.nodes.sequenceFromLabels(tuple(_keep_labels)))
+    #   [2026-10-06] all_edges = inst_memb.edges 제거 — fill_part 의 orphan mesh 에서는
+    #     인스턴스의 기하 edge 가 비어 셋이 무효가 된다. 좌표 판정을 aba_grid_mesh 로 옮겨
+    #     HF/mode 와 **같은 함수**를 쓴다(모드 이식이 노드 라벨에 의존하므로 셋이 일치해야 한다).
+    _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
+                   if CLAMP_MODE != 'none' else set())
+    _keep_labels = aba_grid_mesh.boundary_node_labels(
+        inst_memb, base=BASE, height=HEIGHT, exclude_labels=_excl_edges)
+    print("%s All_Edges_NoClamp 후보: 경계 노드 %d개 (클램프 반경 %.3g m 내 %d개 제외, 전체 막 노드 %d개)"
+          % (TAG, len(_keep_labels), CLAMP_EXCL_R, len(_excl_edges), len(inst_memb.nodes)))
+    aba_grid_mesh.make_set(a, 'All_Edges_NoClamp', inst_memb, _keep_labels)
     print("%s All_Edges_NoClamp 셋 생성 완료 (노드 %d개)" % (TAG, len(_keep_labels)))
 
     my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
