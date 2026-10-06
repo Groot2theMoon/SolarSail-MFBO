@@ -142,10 +142,13 @@ if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
                        % (CLAMP_MODE,))
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
-PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
-#   mode/HF/cable 과 같은 값이다. 이 값이 작으면 K_delta 가 K0 대비 작아져 고유값 분리가
-#   나빠지고 subspace 반복이 폭증한다(실측: 1e-4 일 때 844 iteration / wallclock 1040 s).
-#   lambda 는 이 값으로 스케일되어 사라지므로 값 자체는 결과에 영향이 없다(§8b).
+PERTURBATION = 1e-4  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
+#   [2026-10-06] 0.01 로 올렸다가 되돌렸다. 실측: 0.01 이면 CONVERGED=0 이고
+#   lambda 가 전부 음수(-5.16e-03 대역, 스프레드 0.16 %), 1e-4 이면 CONVERGED=100 이다.
+#   => 'lambda 는 PERTURBATION 으로 스케일되어 사라진다'(§8b)는 **선형 K_delta 전제**에서만
+#      성립한다. nlgeom 에서 0.01 m(막 두께 5 um, 크기 20 m)는 거시 변위라 증분 응력 상태가
+#      달라지고 고유문제가 오염된다. 이 스크립트는 1e-4 를 유지한다 — mode/HF 는 0.01 로
+#      성공하지만 그쪽은 클램프가 없어 base state 가 다르다.
 N_EIG_BUCKLE = 100      # 추출 요청 고유값 수
 BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (요청 수의 2.5배)
 BUCKLE_MAXITER = 5000
