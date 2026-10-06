@@ -370,7 +370,7 @@ s.Line(point1=V2[:2], point2=V1[:2])
 s.Line(point1=V1[:2], point2=V3[:2])
 p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
 p.BaseShell(sketch=s)
-# 섹션 할당은 요소 생성 뒤여야 한다 — fill_part 가 orphan mesh 를 만든다(§10a).
+p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
 # -------------------------------------------------------------
 # 4. 파트 생성: 케이블
@@ -435,22 +435,16 @@ def connect_cable(name, part, sail_corner, vector_dir, radius=1e-4):
     return region_start, region_end
 
 
-# 메쉬: HF/buckle 과 동일한 균일 격자. 세 스크립트의 메쉬가 같아야 모드를 같은 노드에 이식한다(§10).
-#   grid_report 를 참고해 S4 9900 + S3 200 = 10,100 요소.
-import aba_grid_mesh
-_n_s4, _n_s3, _n_nd = aba_grid_mesh.fill_part(
-    p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
-    elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
-emit("[grid] S4=%d S3=%d nodes=%d  (SEED_DIV=%.6g, h=%.6g m)"
-     % (_n_s4, _n_s3, _n_nd, SEED_DIV, BASE / SEED_DIV))
-# [orphan mesh] 요소 기반 셋 + 섹션 할당
-p.Set(elements=p.elements, name='All')
-p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
+p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
+p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
+elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
+elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
+p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
+p.generateMesh()
 # 요소 타입 읽기 검증 — 선언이 아니라 실제로 무엇이 붙었는가를 본다(§3). 실패해도 계속 간다.
 for _shp, _nm in ((QUAD, 'QUAD'), (TRI, 'TRI')):
     try:
-        # [orphan mesh 전환 2026-10-06] faces -> elements. 기하 face 는 요소를 갖지 않는다.
-        _et = p.getElementType(region=regionToolset.Region(elements=p.elements), elemShape=_shp)
+        _et = p.getElementType(region=regionToolset.Region(faces=p.faces), elemShape=_shp)
         emit("[ET-CHECK] %s -> elemCode=%s" % (_nm, getattr(_et, 'elemCode', _et)))
     except Exception as _e2:
         emit("[ET-CHECK] %s 읽기 생략 (%s) — 실제 검증은 제출 전 .inp 가드가 한다" % (_nm, _e2))

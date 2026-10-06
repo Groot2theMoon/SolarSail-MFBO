@@ -444,7 +444,7 @@ def build_model(disp):
     s.Line(point1=V1[:2], point2=V3[:2])
     p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
     p.BaseShell(sketch=s)
-    # 섹션 할당은 요소 생성 뒤여야 한다 — fill_part 가 orphan mesh 를 만든다(§10a).
+    p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
     # [제외] create_cable_part(...) 5개 — 케이블 part 자체를 만들지 않는다.
 
@@ -452,17 +452,12 @@ def build_model(disp):
     a.DatumCsysByDefault(CARTESIAN)
     inst_memb = a.Instance(name=INSTANCE_NAME, part=p, dependent=ON)
 
-    # ---- 메쉬: HF/mode 와 동일한 균일 격자(orphan mesh) ----
-    #   균일 격자라 HF/mode 와 노드 라벨이 자동 일치한다(§10).
-    _n_s4, _n_s3, _n_nd = aba_grid_mesh.fill_part(
-        p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
-        elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
-    print("%s [grid] S4=%d S3=%d nodes=%d  (SEED_DIV=%.6g, h=%.6g m)"
-          % (TAG, _n_s4, _n_s3, _n_nd, SEED_DIV, BASE / SEED_DIV))
-    # [orphan mesh] 요소 기반 셋 + 섹션 할당 (기하 face 는 요소를 갖지 않는다).
-    #   셋 이름 'All' 은 inst_memb.sets['All'] 참조를 위해 유지한다.
-    p.Set(elements=p.elements, name='All')
-    p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
+    p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
+    p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
+    elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
+    elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
+    p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
+    p.generateMesh()
     a.regenerate()
 
     # 꼭짓점 RP — 동일 (radius=0.2)

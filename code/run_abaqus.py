@@ -580,7 +580,7 @@ s.Line(point1=V2[:2], point2=V1[:2])
 s.Line(point1=V1[:2], point2=V3[:2])
 p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
 p.BaseShell(sketch=s)
-# 섹션 할당은 요소 생성 뒤여야 한다 — fill_part 가 orphan mesh 를 만든다(§10a). 셋 이름 'All' 은 유지.
+p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
 # 케이블 생성
 def create_cable_part(name, length):
@@ -656,17 +656,12 @@ def connect_cable(name, part, coord, vector_dir):
 
     return region_start, region_end
 
-# 메쉬: 균일 격자(내부 정사각형 + 경계 직각삼각형), orphan mesh. 논문 10,100 요소 토폴로지와 일치(§10).
-#   섹션 할당을 요소 기반으로 하는 이유와 셋 이름 유지 이유는 §10a.
-import aba_grid_mesh
-_n_s4, _n_s3, _n_nd = aba_grid_mesh.fill_part(
-    p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
-    elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
-emit("[grid] S4=%d S3=%d nodes=%d  (SEED_DIV=%.6g, h=%.6g m)"
-     % (_n_s4, _n_s3, _n_nd, SEED_DIV, BASE / SEED_DIV))
-# [orphan mesh] 요소 기반 셋 + 섹션 할당 (기하 face 는 요소를 갖지 않는다)
-p.Set(elements=p.elements, name='All')
-p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
+p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
+p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
+elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
+elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
+p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
+p.generateMesh()
 
 # 임퍼펙션(기하 섭동) 주입 — 셸에서 *IMPERFECTION 은 노드 좌표 섭동과 같다. 메쉬 직후에 넣어야
 #   어셈블리 regenerate 가 이 좌표를 물려받는다(§5·§6a).
