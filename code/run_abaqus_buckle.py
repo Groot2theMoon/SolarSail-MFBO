@@ -90,9 +90,8 @@ os.chdir(_RUN)
 print("%s _HERE = %s" % (TAG, _HERE))
 print("%s _RUN  = %s" % (TAG, _RUN))
 
-# ---- 균일 격자 메쉬 (2026-10-06). HF/mode 와 같은 모듈을 쓴다 --------------------
-#   이 스크립트는 원래 sys.path 를 건드리지 않았지만, aba_grid_mesh 를 import 하려면
-#   _HERE 가 경로에 있어야 한다(CAE noGUI 에서 sys.path[0] 을 신뢰할 수 없다).
+# 균일 격자 메쉬 (aba_grid_mesh). HF/mode 와 같은 모듈을 쓴다 — 세 스크립트의 메쉬가 같아야
+#   모드 노드 라벨 매핑이 성립한다. CAE noGUI 에서 sys.path[0] 을 믿을 수 없어 _HERE 를 넣는다.
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import aba_grid_mesh                                                            # noqa: E402
@@ -108,35 +107,15 @@ INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
-# [2026-09-28] 막 요소 차수 — **1차(S4/S3) 유지**. 2차 실험은 기각됐다.
-#   배경: 1차 HF 는 .sta 가 증분 크기 리밋사이클(x1.5 성장 -> 상한 1~2e-4 에서 실제 수렴 실패
-#   -> 1/4 컷백)에 빠져 완주에 2만 증분 규모(7h+)이 필요하다. 논문은 2차(STRI65/S8R5)
-#   10,100요소로 974 s 에 완주한다 -> 그래서 2차를 시험했다.
-#   기각 근거(실측 2026-09-28): 2차 + SEED_DIV=150 으로 모드 소스 잡이
-#     `THE DIFFERENTIAL MATRIX HAS 170293 NEGATIVE DIAGONAL ENTRIES`(82%) + `CONVERGED=0`
-#     + `INSTABILITIES IN THE BASE STATE` 로 죽었다 — 2차에서 base state 가 더 나빠졌다.
-#   스킬 references/buckle-failure-triage.md 도 이미 "solver/element knobs 는 ruled out,
-#   stall load 는 1차/2차 무관(0.439 -> 0.4655)" 로 기록하고 있었다.
-#   => 2차는 논문 baseline 재현(S1 사다리)에서만 쓴다. 그때는 아래 두 값만 S8R5/STRI65 로
-#      (checker SHARED 와 모드 지문이 '값'까지 검사하므로 조용한 변경은 잡힌다).
+# 막 요소는 1차(S4/S3) 유지. 2차는 base state 를 더 나쁘게 만들어 기각됐다(§4).
+#   요소코드는 HF/mode 와 같아야 한다 — *IMPERFECTION 이 노드 라벨로 주입된다.
 ELEM_CODE_QUAD = S4         # [2026-10-04] 막(M3D4/M3D3) 실험 철회 -> 1차 셸 복귀.
-                            #   이유1: 막은 굽힘강성이 없어 *BUCKLE 의 SUBSPACE 가 수렴하지 못한다.
-                            #     문서: membrane elements have no bending stiffness -> "high number of
-                            #     nonrigid-body zero-energy modes". 실측: 668 iter 에 23/100 수렴,
-                            #     λ 가 전부 음수(-2.0e-03)라 쓸 모드가 나오지 않는다.
-                            #   이유2: 요소 타입을 바꾸면 CAE 메셔가 **노드 수까지** 바꾼다
-                            #     (막 덱 12,155 노드 / 셸 덱 18,442 노드, SEED_DIV 는 양쪽 200).
-                            #     -> *IMPERFECTION 은 노드 라벨로 주입되므로 모드 소스와 HF 의
-                            #        요소코드가 같아야 한다. inp_mesh_compare.py 로 확인(2026-10-04).
 ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 셸 복귀
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 
 CLAMP_EXCL_R = 0.2   # m — 클램프 패치 반경(create_rigid_patch 의 radius=0.2)과 같은 값.
-                     #     [2026-10-05] 이 반경 내 '경계 노드'는 면외 z 구속에서 제외한다.
-                     #     논문 조건 (c) "3변 u3=0" 은 클램프가 없는 모델의 조건이고, 우리는
-                     #     클램프가 사선변 위에 붙어 그 케이블을 면내로 당기므로 그 선까지 면외
-                     #     고정하면 클램프의 물리적 역할이 왜곡된다. HF(run_abaqus.py)와 같은 값.
+#     이 반경 내 경계 노드는 면외 z 구속에서 제외한다(§9). HF 와 같은 값.
 
 V1 = (BASE/2.0, HEIGHT, 0.0) # Top
 V2 = (BASE, 0.0, 0.0)        # Right
@@ -149,17 +128,9 @@ def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 PRETENSION_SCALE = 10.0
 DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 기본 코너 당김 5e-5 m
 
-# ---- 클램프 처리 모드 (2026-09-22 신설) ----
-#   A-route(run_abaqus.py)의 클램프는 '존재'와 '작동'이 분리돼 있다:
-#     존재 = 강체패치 + 케이블(Tie), u3=0
-#     작동 = Step-ClampTension 에서 다리변의 **외향 법선** (∓1,+1)/sqrt2 방향으로
-#            CLAMP_PULL = DISP_GLOBAL*d_c 만큼 당김. 그리고 좌굴 base state 는
-#            그 당김 **이후** 로 잡는다 (BuckleStep(previous='Step-ClampTension')).
-#   C-route 는 케이블이 없으므로 RP 를 직접 구속/구동해 같은 하중 경로를 만든다:
-#     'none'    : 패치 없음                -> 논문 재현 기준선 (P0)
-#     'passive' : u3=0, in-plane 자유      -> A-route 의 GlobalTension 직후 (P1)
-#     'driven'  : u3=0 + 법선 방향 구동    -> A-route 의 ClampTension 직후 (P2, 설계 base)
-#     'fixed'   : u1=u2=u3=0 완전 고정     -> 기존 동작 (수치 진단용, P3)
+# ---- 클램프 처리 모드 (CLAMP_MODE) ----
+#   A-route(run_abaqus.py)의 클램프 '존재'(패치+케이블 Tie, u3=0)와 '작동'(법선 방향
+#   CLAMP_PULL 당김)을, C-route 는 케이블 없이 RP 직접 구속/구동으로 재현한다. 4종은 §11.
 CLAMP_MODE = 'passive'
 CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c, A-route 와 동일)
 # 오타로 조용히 다른 케이스가 되는 것을 막는다 (값 검증은 메쉬 생성 전에).
@@ -177,9 +148,7 @@ BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
 BUCKLE_MIN_EIGEN = 0.0          # LANCZOS 전용 (음의 고유값도 보고 싶으면 -1e30 등)
 BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 넘기지 않는다)
 
-# Abaqus API 는 **심볼릭 상수**를 요구한다. 문자열을 그대로 넘기면
-#   "eigensolver; found string, expecting SUBSPACE, LANCZOS or AMS"
-# 로 즉시 죽는다(2026-09-22 실측: 전 케이스 BUILD_FAIL). 여기서 변환해서 넘긴다.
+# Abaqus API 는 심볼릭 상수를 요구한다 — 문자열을 넘기면 즉시 죽는다(§7).
 if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
     # 원장 P3: 값 검증이 없으면 dict KeyError 로 죽어 원인이 안 보인다.
     raise RuntimeError("BUCKLE_SOLVER must be 'SUBSPACE' or 'LANCZOS' (got %r)"
@@ -189,17 +158,9 @@ EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
 SIGMA0 = 500.0          # 초기응력 [Pa] — 수렴 보조 (run_abaqus_new.py 와 동일)
 
 
-# ============================================================================
-# 인자 — 한 번에 한 케이스만 받는다. 스윕 기능은 없다.
-#   abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]
-# ============================================================================
-# Abaqus CAE 러너가 scripts 에 넘기는 sys.argv 전문(2026-09-22 Windows, Abaqus 2026 실측):
-#   ['C:\...\win_b64\code\bin\ABQcaeK.exe', '-cae', '-noGUI', 'run_abaqus_buckle.py',
-#    '-academic', 'RESEARCH', '-tmpdir', 'C:\Users\...\Temp', '-lmlog', 'ON', '0.5', '1e-3']
-# 즉 (a) 러너가 자기 플래그와 **그 값**(RESEARCH, Temp 경로, ON)을 앞에 붙이고,
-#    (b) 셸의 '--' 구분자는 스크립트까지 전달되지 않으며,
-#    (c) 사용자 인자는 **맨 뒤에 숫자로** 온다.
-# => 뒤에서부터 훑어 러너 토큰은 건너뛰고 숫자가 끊길 때까지 모은다.
+# 인자 — 한 번에 한 케이스만(x_c [disp_m]). 스윕 없음.
+#   러너가 자기 플래그와 그 값을 앞에 붙이고 셸의 '--' 는 전달되지 않는다.
+#   => 뒤에서부터 훑어 러너 토큰을 건너뛰고 숫자가 끊길 때까지 모은다(§1).
 _LAUNCHER_WORDS = ('abaqus', 'cae', 'cae.exe', 'abq', 'standard', 'explicit')
 
 
@@ -341,12 +302,7 @@ def run_job_safely(job_name, model_name=None):
 
     # 진단 출력은 호출측에서 report_job() 한 번으로 끝낸다.
 
-    # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
-    # [2026-10-02] ABORTED 만 보면 안 된다. Abaqus 는 input processing 이 실패해도 부분 .odb 를
-    #   남기므로 'ODB 존재'가 성공 증거가 아니다(실측: 12,086개 요소가 섹션을 못 받아 죽었는데
-    #   status=None 으로 ok=True 보고). COMPLETED 가 아니면 실패로 본다.
-    # [2026-10-04] status 는 CAE noGUI 에서 None 이라 `!= COMPLETED` 는 항상 실패로 오판한다.
-    #   `== ABORTED` 만으로는 부분 .odb 때문에 실패를 놓친다. => 완주 문자열까지 본다.
+# 잡 성공 판정 = 산출물 + 완주 문자열. 'ODB 존재'도 'Exit code 0'도 증거가 아니다(§2).
     if (job.status == ABORTED or not os.path.exists(odb_file)
             or not job_completed_ok(job_name)):
         raise RuntimeError('Job %s 실패 (Status=%s). sys.exit 대신 예외로 올린다: '
@@ -488,9 +444,7 @@ def build_model(disp):
     s.Line(point1=V1[:2], point2=V3[:2])
     p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
     p.BaseShell(sketch=s)
-    # [orphan mesh 전환 2026-10-06] 섹션 할당은 요소 생성 뒤로 이동(아래 메쉬 블록).
-    #   aba_grid_mesh.fill_part 는 part.addElements 로 orphan mesh 를 만들므로 기하 face 를
-    #   갖지 않는다. 셋 이름 'All' 은 유지한다.
+    # 섹션 할당은 요소 생성 뒤여야 한다 — fill_part 가 orphan mesh 를 만든다(§10a).
 
     # [제외] create_cable_part(...) 5개 — 케이블 part 자체를 만들지 않는다.
 
@@ -498,14 +452,8 @@ def build_model(disp):
     a.DatumCsysByDefault(CARTESIAN)
     inst_memb = a.Instance(name=INSTANCE_NAME, part=p, dependent=ON)
 
-    # ---- 메쉬: HF/mode 와 완전히 동일한 균일 격자 (orphan mesh) ----
-    #   [2026-10-06] 자유 메쉬(seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 18,200 S4)를
-    #     격자(내부 정사각형 + 경계 직각삼각형, S4 9900 + S3 200 = 10,100)로 교체한다.
-    #     Galhofo(2022) Table A.1 의 10,100 요소 S3+S4 행과 같은 토폴로지다.
-    #   ★ 요소 타입은 HF(run_abaqus.py)/mode 와 반드시 같아야 한다.
-    #     이유: 좌굴 모드는 HF 와 **같은 노드**에 정의되어야 *IMPERFECTION 으로 이식된다.
-    #     세 스크립트 모두 aba_grid_mesh.fill_part 를 쓰고 ELEM_CODE_* 를 그대로 넘기므로
-    #     노드 라벨과 요소 코드가 자동으로 일치한다(수동으로 맞출 필요가 없다).
+    # ---- 메쉬: HF/mode 와 동일한 균일 격자(orphan mesh) ----
+    #   균일 격자라 HF/mode 와 노드 라벨이 자동 일치한다(§10).
     _n_s4, _n_s3, _n_nd = aba_grid_mesh.fill_part(
         p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
         elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
@@ -557,14 +505,12 @@ def build_model(disp):
     #   numEigen=100 (음수 모드 건너뛰기), SUBSPACE, vectors=250, maxIterations=5000
     if 'Step-Buckle' in my_model.steps:
         del my_model.steps['Step-Buckle']
-    # ---- 필드출력: HF(run_abaqus_new.py:724) 와 동일. EVOL 이 없으면 base_state_probe 가
-    #      면적가중을 못 하고 균등가중으로 떨어진다(2026-09-22 실측으로 발견).
+    # EVOL 필수 — 없으면 base_state_probe 가 면적가중 대신 균등가중으로 떨어진다.
     my_model.FieldOutputRequest(name='F-Output-1',
                                 createStepName='Step-GlobalTension',
                                 variables=('S', 'E', 'U', 'COORD', 'EVOL', 'RF'))
-    # 'RF' = 앵커 반력. base_state_probe 가 "각 앵커(정점/클램프)가 당김을 얼마나
-    # 흡수하는가"(하중 경로 분담)를 읽는 데 쓴다 — 2026-09-22 첫 좌굴 런에서
-    # RF 미출력으로 그 계측이 비어 있었다. 출력 요청은 해석 결과를 바꾸지 않는다.
+    # RF = 앵커 반력. 각 앵커가 당김을 얼마나 흡수하는가(하중 경로 분담)를 읽는다.
+    #   출력 요청은 해석 결과를 바꾸지 않는다.
 
     # ---- 좌굴 스텝: 솔버는 코드 상수 하나로 교체 (SUBSPACE <-> LANCZOS) ----
     _eig = dict(name='Step-Buckle', previous='Step-GlobalTension',
@@ -626,16 +572,7 @@ def build_model(disp):
         u2=-disp_a * sin_val
     )
 
-    # ---- 클램프 RP 처리 (CLAMP_MODE) ----
-    #   A-route 는 클램프를 '존재'(패치 + 케이블 Tie)와 '작동'(Step-ClampTension 에서
-    #   다리변 법선 방향 구동)으로 분리하고, 좌굴 base state 를 당김 **이후**로 잡는다.
-    #   C-route 는 케이블이 없으므로 RP 를 직접 구속/구동해 같은 하중 경로를 만든다.
-    #     none    : (패치 없음 — 여기서는 아무것도 하지 않는다)
-    #     passive : u3=0, in-plane 자유
-    #     driven  : u3=0 + 법선 (∓1,+1)/sqrt2 구동 (Step-GlobalTension)
-    #     fixed   : u1=u2=u3=0 완전 고정 (기존 동작)
-    #   [판정] 2026-09-22 이전 주석의 "논문 (b) 레시피대로 클램프를 구동하지 않는다"는
-    #   근거가 성립하지 않는다 — 논문 좌굴모델에는 클램프 자체가 없다. 고정은 우리 선택이다.
+    # ---- CLAMP_MODE 별 RP 처리 (4종 의미는 §11) ----
     _sq2 = 2.0 ** 0.5
     if CLAMP_MODE == 'none':
         pass
@@ -662,11 +599,7 @@ def build_model(disp):
                 stepName='Step-GlobalTension',
                 u1=+CLAMP_PULL/_sq2, u2=+CLAMP_PULL/_sq2)
 
-    # ---- Buckle 스텝: 논문 (c) "z-displacement is fixed in the three edges" ----
-    #   [2026-10-05] 3변은 유지하되 클램프 부착 구간은 면외 구속에서 제외한다 (CLAMP_EXCL_R 참조).
-    #   [2026-10-06] all_edges = inst_memb.edges 제거 — fill_part 의 orphan mesh 에서는
-    #     인스턴스의 기하 edge 가 비어 셋이 무효가 된다. 좌표 판정을 aba_grid_mesh 로 옮겨
-    #     HF/mode 와 **같은 함수**를 쓴다(모드 이식이 노드 라벨에 의존하므로 셋이 일치해야 한다).
+    # ---- Buckle 스텝: 논문 (c) 3변 u3=0 유지 + 클램프 구간은 면외 구속에서 제외(§9) ----
     _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
                    if CLAMP_MODE != 'none' else set())
     _keep_labels = aba_grid_mesh.boundary_node_labels(
@@ -708,13 +641,8 @@ def build_model(disp):
 
     return model_name
 
-# ============================================================================
-# 실행 — 한 케이스: 모델 빌드 -> 잡 제출 -> 결과 덤프 -> base state 측정(선택)
-# ============================================================================
-# 요소/설정이 바뀐 케이스가 같은 job 이름으로 제출되면 run_job_safely 가 stale 산출물
-# (.dat/.msg/.odb/.diag)을 지우고 제출해 직전 결과 증거가 사라진다
-# (2026-09-22 실제 발생: S4 런이 S4R 런 산출물을 덮어 lambda 표를 잃었다).
-# 그래서 job 이름에 요소 태그 + 클램프 모드를 넣는다 (산출물이 서로 덮이지 않는다).
+# job 이름에 요소 태그 + 클램프 모드를 넣는다. 같은 이름이면 run_job_safely 가 stale
+#   산출물을 지워 직전 증거가 사라진다(§11).
 ELEM_TAG = 's4'
 JOB_NAME = 'Buckle_xc%03d_d%03dum_%s_%s' % (int(round(x_c * 100.0)),
                                             int(round(DISP * 1.0e6)),
