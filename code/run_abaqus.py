@@ -514,7 +514,10 @@ SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 
 THICKNESS = 5.0e-6 # F2: 2.5e-6 -> 5.0e-6 (cable 변형, 2.5um는 수렴 매우 어려움)
 TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
 
-CLAMP_EXCL_R = 0.2   # m — 클램프 패치 반경(create_rigid_patch 의 radius=0.2)과 같은 값.
+CLAMP_EXCL_R = 0.0   # m — 클램프 패치 반경(create_rigid_patch 의 radius=0.2)과 같은 값.
+#   [2026-10-06 철회] 0.2 로 두면 클램프 부착 구간의 경계 노드가 면외 자유로워져
+#   base state 가 불안정해진다(실측: lambda 전부 음수, CONVERGED 0, 스프레드 0.406%).
+#   이전에 CONVERGED=100 이었던 설정과 같게 0.0 으로 되돌린다(§9).
                      #     이 반경 내 경계 노드는 면외 z 구속에서 제외한다(§9).
                      #     근거: 논문 (c) 는 클램프 없는 모델의 조건이고, 클램프가 붙은 선을 면외 고정하면 클램프의 물리가 왜곡된다.
 
