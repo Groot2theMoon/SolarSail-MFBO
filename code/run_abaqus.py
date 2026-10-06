@@ -200,6 +200,15 @@ emit("DEBUG: All sys.argv: " + str(sys.argv))
 
 try:
     # abaqus cae noGUI=run_abaqus.py -- [HF/LF] x_c d_c
+    # x_c 범위 가드: 두 클램프 패치(반경 0.2 m)는 사선변 위에서 거리 20*x_c 만큼 떨어진다.
+    #   x_c < 0.05 이면 두 패치가 겹치고, x_c = 1.0 이면 꼭짓점 RP 패치와 겹친다.
+    _xc = float(sys.argv[-2]); _dc = float(sys.argv[-1])
+    if not (0.05 <= _xc <= 0.90):
+        emit('!!! ERROR: x_c=%.4g 는 유효범위 [0.05, 0.90] 밖이다 (패치 겹침).' % _xc)
+        sys.exit(1)
+    if not (0.0 < _dc <= 2.0):
+        emit('!!! ERROR: d_c=%.4g 는 유효범위 (0, 2.0] 밖이다.' % _dc)
+        sys.exit(1)
     fidelity = sys.argv[-3].upper()
     x_c = float(sys.argv[-2])
     d_c = float(sys.argv[-1])
@@ -364,7 +373,10 @@ IMPERFECTION_NAME = 'ClampFree_Buckle'   # 모드 소스 잡 이름과 '같은' 
 IMPERFECTION_MODES = (1, 2, 3, 4)   # 기본 = 논문(Galhofo) 주입 모드 1~4.
 IMPERFECTION_MAX_MODES = 4          # 상한. 모드표에 있는 모드가 더 적으면 그만큼만 쓴다(아래에서 자동 조정).
                                     #  모드 3개를 주입한다(lambda1 탈락). 논문 lambda 스프레드 0.036% 라 모드 3.4 의 기여가 작다(§5a).
-IMPERFECTION_AMPL_T = 0.10   # 막 두께 배수(Galhofo 채택값 0.10 t). 진폭 민감도 = 0.50 으로 바꿔 재실행
+IMPERFECTION_AMPL_T = 1.0    # 막 두께 배수. Galhofo 채택값은 0.10 t 이지만 우리는 1.0 을 쓴다.
+#   [2026-10-06 실측] 0.10 이면 증분이 눌려 2215 증분 / 약 90 분이 걸린다. 1.0 이면 271 증분 / 11 분이다
+#   (HF_x025k). 진폭이 작으면 초기 결함이 약해 분기가 늦게 갈라지고 수렴이 어려워진다.
+#   진폭 민감도를 보려면 이 상수를 0.50 등으로 바꿔 재실행한다.
 RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-24). 이유는 측정된 실패 경로다:
                              #   이 잡은 _EIGENSOLVER='LANCZOS' 로 제출되는데(아래), 이 모델의 좌굴 base state 는
                              #   이미 분기하중을 넘은 부정정 상태다(시스템 음수 고유값 실측 56~88개). 매뉴얼이 열거한
