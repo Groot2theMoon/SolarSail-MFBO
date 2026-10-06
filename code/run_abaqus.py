@@ -200,18 +200,17 @@ emit("DEBUG: All sys.argv: " + str(sys.argv))
 
 try:
     # abaqus cae noGUI=run_abaqus.py -- [HF/LF] x_c d_c
-    # x_c 범위 가드: 두 클램프 패치(반경 0.2 m)는 사선변 위에서 거리 20*x_c 만큼 떨어진다.
-    #   x_c < 0.05 이면 두 패치가 겹치고, x_c = 1.0 이면 꼭짓점 RP 패치와 겹친다.
-    _xc = float(sys.argv[-2]); _dc = float(sys.argv[-1])
-    if not (0.05 <= _xc <= 0.90):
-        emit('!!! ERROR: x_c=%.4g 는 유효범위 [0.05, 0.90] 밖이다 (패치 겹침).' % _xc)
-        sys.exit(1)
-    if not (0.0 < _dc <= 2.0):
-        emit('!!! ERROR: d_c=%.4g 는 유효범위 (0, 2.0] 밖이다.' % _dc)
-        sys.exit(1)
     fidelity = sys.argv[-3].upper()
     x_c = float(sys.argv[-2])
     d_c = float(sys.argv[-1])
+    # 범위 가드: 두 클램프 패치(반경 0.2 m)는 사선변 위에서 거리 20*x_c 만큼 떨어진다.
+    #   x_c < 0.05 이면 두 패치가 겹치고, x_c = 1.0 이면 꼭짓점 RP 패치와 겹친다.
+    if not (0.05 <= x_c <= 0.90):
+        emit('!!! ERROR: x_c=%.4g 는 유효범위 [0.05, 0.90] 밖이다 (패치 겹침).' % x_c)
+        sys.exit(1)
+    if not (0.0 < d_c <= 2.0):
+        emit('!!! ERROR: d_c=%.4g 는 유효범위 (0, 2.0] 밖이다.' % d_c)
+        sys.exit(1)
     
 except:
     emit("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus.py -- HF x_c d_c")
