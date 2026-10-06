@@ -114,10 +114,10 @@ ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 
-CLAMP_EXCL_R = 0.0   # m — 클램프 패치 반경(create_rigid_patch 의 radius=0.2)과 같은 값.
-#   [2026-10-06 철회] 0.2 로 두면 클램프 부착 구간의 경계 노드가 면외 자유로워져
-#   base state 가 불안정해진다(실측: lambda 전부 음수, CONVERGED 0, 스프레드 0.406%).
-#   이전에 CONVERGED=100 이었던 설정과 같게 0.0 으로 되돌린다(§9).
+CLAMP_EXCL_R = 0.0   # m — 0.0 이면 제외 노드가 없어 All_Edges_NoClamp == All_Edges 다.
+#   [2026-10-06 철회] 0.2 로 두면 클램프 부착 구간의 경계 노드가 면외 자유로워져 base state 가
+#   불안정해진다(실측: lambda 전부 음수, CONVERGED 0, 스프레드 0.406 %). 이전에 CONVERGED=100
+#   이었던 설정과 같게 0.0 으로 되돌린다. 근거와 실측은 §9.
 #     이 반경 내 경계 노드는 면외 z 구속에서 제외한다(§9). HF 와 같은 값.
 
 V1 = (BASE/2.0, HEIGHT, 0.0) # Top
