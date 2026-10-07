@@ -163,8 +163,15 @@ PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 ->
 #   [2026-10-06 이력] 1e-4 에서 CONVERGED=100, 0.01 에서 CONVERGED=0 이었던 관측은
 #   클램프가 있는 상태에서 얻은 것이다. 이제 나머지 조건을 mode.py 와 맞췄으므로
 #   0.01 로 두고 다시 판정한다 — 클램프만 다른 상태에서 비교하려면 이 값도 같아야 한다.
-N_EIG_BUCKLE = 100      # 추출 요청 고유값 수
-BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (요청 수의 2.5배)
+# ---- 추출 창 (래더 L4) ----
+#   규칙(mode.py L26): '요청 고유값 수 > base state 의 음수 고유값 수' 여야 양수
+#   좌굴모드가 subspace 창에 들어온다. 그런데 클램프(passive)를 켜면 음수 고유값이
+#   48 개로 늘고, N_EIG=100 / vectors=250 에서는 ***ERROR: THE EIGENVALUES CANNOT BE
+#   FOUND (INSTABILITIES IN THE BASE STATE) 로 죽는다. 클램프를 끄면(none) 같은
+#   조건에서 CONVERGED=4 다 — 즉 창이 아니라 음수 개수가 문제다.
+#   그래서 창을 넓혀(D) 음수 48 개를 넘겨 본다. 실패 비용이 40 초라 판정이 빠르다.
+N_EIG_BUCKLE = 200      # 추출 요청 고유값 수  [2026-10-07] 100 -> 200 (래더 L4)
+BUCKLE_VECTORS = 500    # subspace 기저 벡터 수  [2026-10-07] 250 -> 500 (래더 L4)
 BUCKLE_MAXITER = 5000
 BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
 BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
