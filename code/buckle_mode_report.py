@@ -217,6 +217,26 @@ def read_odb_modes(odb_path, step_name, n_modes=8, instance=DEFAULT_INSTANCE, da
             pass
 
 
+def fmt_mode_line(i, lam, met, label=None, note_if_none='(지표 계산 불가)'):
+    """모드 한 줄 포맷. **순수 함수** — 면내 모드(met['cx'] is None)에서도 크래시하지 않는다.
+
+    실측 크래시(2026-10-07, control_none M1): 그 모드는 u3 가 **항등적으로 0**(면내 모드)이라
+    mode_metrics 가 cx=None 을 돌려주는데, 포맷이 '%7.3f' % None 을 시도해
+    `TypeError: must be real number, not NoneType` 로 죽었다. 포맷을 순수 함수로 빼서
+    그 입력을 로컬 단위검증에 넣는다.
+    """
+    _lab = label if label is not None else 'M%d(fr%d)' % (i, i)
+    _lam = '%.5e' % lam if lam is not None else '?'
+    if met is None:
+        return '  %-10s lambda=%-13s %s' % (_lab, _lam, note_if_none)
+    _c = ('(%7.3f,%7.3f)' % (met['cx'], met['cy'])
+          if met.get('cx') is not None else '(   면내   )')
+    _rw = ('%.3f' % met['rw']) if met.get('rw') is not None else '  -  '
+    _r90 = ('%.3f' % met['r90']) if met.get('r90') is not None else '  -  '
+    return ('  %-10s lambda=%-13s u3_frac=%-8.3g centroid=%s rw=%-7s r90=%-7s >2t=%5.1f%%'
+            % (_lab, _lam, met['u3_frac'], _c, _rw, _r90, 100.0 * met['over_2t']))
+
+
 def _report_one(odb_path, step_name, n_modes, instance, dat_hint, limit):
     nodes, disps, lams, msgs = read_odb_modes(odb_path, step_name, n_modes, instance, dat_hint)
     for m in msgs:
@@ -232,15 +252,7 @@ def _report_one(odb_path, step_name, n_modes, instance, dat_hint, limit):
         lam = lams[i] if i < len(lams) else None
         label_list.append('M%d(fr%d)' % (i + 1, i + 1))
         metric_list.append(met)
-        if met is None:
-            print('  %-10s lambda=%-13s (지표 계산 불가)' % (label_list[-1],
-                                                          '%.5e' % lam if lam is not None else '?'))
-            continue
-        print('  %-10s lambda=%-13s u3_frac=%-8.3g centroid=(%7.3f,%7.3f)  r90=%-7s >2t=%5.1f%%'
-              % (label_list[-1], '%.5e' % lam if lam is not None else '?', met['u3_frac'],
-                 met['cx'], met['cy'],
-                 ('%.3f' % met['r90']) if met['r90'] is not None else '  -  ',
-                 100.0 * met['over_2t']))
+        print(fmt_mode_line(i + 1, lam, met, label_list[-1]))
     ok, drop = judge_modes(metric_list)
     print('  -> 시드 후보 모드: %s' % (ok or '없음'))
     for i, why in drop:
@@ -311,12 +323,16 @@ def selftest():
     wide = bump(5.6, 5.0, s=8.0)      # 같은 0.6 m 이동이지만 상대 이동량은 작다
     anti = dict((l, (0.0, 0.0, -base[l][2])) for l in base)
     inplane = dict((l, (base[l][2], 0.0, 1e-16)) for l in base)
+    #  u3 가 **항등적으로 0** 인 픽스처 — 실측 크래시(control_none M1)의 실제 입력이다.
+    #  1e-16 이면 early-return 경로를 타지 않으므로(w 합 > 0) 크래시 회귀를 시험하지 못한다.
+    inplane0 = dict((l, (base[l][2], 0.0, 0.0)) for l in base)
 
     mb = mode_metrics(nodes, base)
     mm = mode_metrics(nodes, moved)
     mw0 = mode_metrics(nodes, wide0)
     mw = mode_metrics(nodes, wide)
     mn = mode_metrics(nodes, inplane)
+    mn0 = mode_metrics(nodes, inplane0)
     c_move = corr_u3(base, moved)
     c_anti = corr_u3(base, anti)
     c_wide = corr_u3(wide0, wide)
@@ -335,6 +351,11 @@ def selftest():
         ('면내 모드가 judge 에서 버려짐', judge_modes([mn])[0] == []),
         ('정상 모드가 judge 를 통과', judge_modes([mb])[0] == [1]),
         ('스케일 민감성: 넓은 모드의 같은 0.6 m 이동은 MOVES 가 아니다', v_wide != 'MOVES'),
+        #  포맷 회귀 — 실측 크래시(면내 모드 = u3 항등 0 -> cx=None)를 그대로 입력으로 넣는다
+        ('면내 픽스처가 early-return 경로를 탄다(cx=None)', mn0 is not None and mn0['cx'] is None),
+        ('크래시 회귀: 면내 모드(cx=None) 포맷', '면내' in fmt_mode_line(1, 1.5e-4, mn0)),
+        ('크래시 회귀: met=None 포맷', '계산 불가' in fmt_mode_line(1, None, None)),
+        ('정상 모드 포맷에 lambda 가 들어감', '1.48328e-04' in fmt_mode_line(1, 1.48328e-4, mb)),
     ]
     nfail = 0
     print('  [합성] shift=0.6 m, r90=%.3f -> corr=%.4f, d=%.3f, d/r90=%.3f -> %s'
