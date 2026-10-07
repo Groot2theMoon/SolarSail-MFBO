@@ -1,6 +1,10 @@
 # Abaqus 산출물 전용 디렉터리 (통째로 무시)
 code/aba/
 code/abaqus/
+# [2026-10-07] code/buckle/ 은 run_abaqus_buckle.py 의 RUN_DIR_NAME 이 만든 별도 디렉터리다.
+#   규칙이 없어서 실행 후 `git add -A` 하면 .odb(수백 MB)/.dat/.msg 가 스테이징됐다
+#   (실측: git check-ignore -v code/buckle/x.odb -> 무시 안 됨). 디렉터리 통째 무시한다.
+code/buckle/
 
 # ---------------------------------------------------------------
 # Abaqus 실행 산출물 (매 해석마다 생성 — 커밋 금지)
