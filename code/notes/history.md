@@ -681,3 +681,64 @@ lambda 의 부호와 개수는 "그 점이 좌굴 후인가" 만 말해 준다. 
 
 `run_abaqus_buckle.py` 는 런마다 `buckle/buckle_ledger.jsonl` 에 **한 행**을 남긴다. 원인 판정은
 **한 열만 다른 두 행**에서만 한다 — 두 열이 함께 움직인 두 행에서는 원인을 말하지 않는다.
+
+---
+
+## §19 좌굴모드 추출을 막는 것 둘: API 와 창 (2026-10-07)
+
+### 19.1 하중 구동은 prescribed 변위 BC 로만 (완주 기록 기반)
+
+`clamp_lf` 를 CLOAD 로 짜는 동안 CAE 가 세 번 막았다. 순서대로:
+1. `ConcentratedForce(createStepName='Initial')` → **하중은 Initial 스텝에 만들 수 없다**(BC 는 가능).
+2. `model.concentratedForces[...]` → **그런 저장소가 없다**(집중하중은 `model.loads` 에 들어간다).
+3. `loads[...].setValuesInStep(stepName='Step-Buckle', ...)` →
+   `ValueError: The load does not exist in the specified step or is suppressed or inactive`.
+
+그래서 저장소를 뒤져 **완주한 스크립트가 쓰는 관용구**를 발췌했다. HF(run_abaqus.py) ·
+대조(run_abaqus_cable.py) · 모드소스(run_abaqus_mode.py) 세 스크립트가 전부
+(a) `Disp_Control_*` 를 **Initial 에 생성**하고 (b) `boundaryConditions[...].setValuesInStep(stepName=...)`
+로 스텝마다 값을 바꾼다(클램프까지 같은 방식: CL=(-1,+1)/√2, CR=(+1,+1)/√2, 크기 CLAMP_PULL/√2).
+**CLOAD 로 완주한 기록은 0건**이다(유일한 CLOAD 조합이 §18.1 의 실패 조합).
+
+=> **규칙: 하중 구동은 prescribed 변위 BC 로 한다.** CLOAD 를 새로 쓰려면 최소 모델로 CAE 에서
+   먼저 성공을 확인한다(추측 금지). 실제로 `probe_load_api.py` 를 쓰다가 저장소 안에 더 강한 증거
+   (완주한 스크립트)가 있어 폐기했다 — **발췌가 프로브보다 먼저다.**
+
+부수적으로 스텁 하네스의 목을 실제 API 로 맞추고 법칙 4종을 넣었다: 하중은 Initial 금지 /
+저장소 이름은 allow-list 만 / 없는 이름은 AttributeError / 없는 스텝에 setValuesInStep 금지.
+부정 테스트 3종으로 "이제 라이선스 없이 로컬에서 잡힌다"를 확인했다.
+
+### 19.2 좌굴모드 추출을 막는 것은 창(window)이다 — 실측 2점
+
+`*BUCKLE` 의 요청 개수(`N_EIG_BUCKLE`)와 기저(`BUCKLE_VECTORS`)는 base state 의
+**음수 고유값 개수**보다 커야 하고, 동시에 실제 subspace 차원(`REDUCED TO n`) 이하여야 한다.
+
+| 런 | base state | SYSTEM 음수 | 요청 | 결과 |
+|---|---|---|---|---|
+| `paper_s1` | 논문 좌굴 스텝(apex 1e-3 m = 좌굴점의 약 50배, 즉 좌굴 후) | 62 | 10 | CONVERGED 0 → `THE EIGENVALUES CANNOT BE FOUND` |
+| `clamp_lf` x_c=0.2 | DEAD_FRAC=0.018 (운용의 1.8%) | **126** | 10 | 같음 (양수 4개가 보였으나 수렴 실패) |
+
+두 런 모두 **양수 고유값이 실재한다**는 것을 확인했다(창에 못 들어왔을 뿐):
+`paper_s1` +2.008e-4 / +3.702e-4 (논문 3.18e-4 대역과 일치),
+`clamp_lf` +9.2703e-3 / +1.4031e-2 / +3.6710e-2 / +1.2800e-1.
+
+### 19.3 clamp_lf 의 첫 네 좌굴 계수 (물리 해석)
+
+DEAD_FRAC=0.018, LIVE=0.982 이므로 lambda=1 ⇔ 운용점. 첫 좌굴은 운용 하중의
+`0.018 + 0.982 x lambda` 비율에서 일어난다:
+
+| 모드 | lambda | 운용 하중 대비 |
+|---|---|---|
+| 1 | 9.2703e-3 | **2.71 %** |
+| 2 | 1.4031e-2 | 3.18 % |
+| 3 | 3.6710e-2 | 5.40 % |
+| 4 | 1.2800e-1 | 14.4 % |
+
+=> 운용점은 첫 분기점의 약 **37배 뒤**다(주름이 이미 있는 상태 — 물리적으로 타당).
+그리고 **DEAD_FRAC=0.018 < 2.71 %** 이므로 base state 가 첫 분기 **앞**에 있다(설계 의도대로).
+이 두 성질이 §18.2 의 정규화(lambda=1 ⇔ 운용점)가 옳았다는 증거다.
+
+**미확정**: `clamp_lf` 의 음수 126개가 어디서 오는가. `paper_s1`(클램프 없음, 훨씬 큰 하중)이 62인데
+클램프 모델이 126이면 **클램프 패치/구동이 만드는 국소 모드**가 의심된다. §18.6 의 규율대로
+"한 열만 다른 두 행"으로 가른다: `seed`(클램프 없음) vs `control_none`(클램프 구속만) vs
+`clamp_lf`(구속+구동) — 음수 개수를 나란히 놓으면 기여가 갈린다.

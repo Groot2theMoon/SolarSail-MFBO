@@ -332,14 +332,18 @@ PAPER_S1_LIVE_M = 0.10   # m — Galhofo 2022 의 좌굴 스텝은 꼭짓점 변
 #     (a) N_EIG_BUCKLE > base state 의 SYSTEM 음수 고유값 개수
 #     (b) N_EIG_BUCKLE <= 실제 subspace 차원 ("REDUCED TO n" 의 n)
 #   (a)는 음수 모드 뒤에 양수 모드가 들어오게 하는 조건, (b)는 원리적 상한이다.
-N_EIG_BUCKLE = 10      # 추출 요청 고유값 수  [2026-10-07 이력] 100 -> 200 -> (REDUCED TO 14) -> 10
-BUCKLE_VECTORS = 20    # subspace 기저 벡터 수  [2026-10-07 이력] 250 -> 500 -> (REDUCED TO 14) -> 20
+N_EIG_BUCKLE = 150      # 추출 요청 고유값 수  (mode.py 와 같은 값이어야 한다 — 계약)
+#   [2026-10-07 이력] 100 -> 200 -> (REDUCED TO 14) -> 10 -> **150**
+#     마지막 상향 근거(실측): CASE='clamp_lf' 의 base state 가 SYSTEM 음수 **126개**를 가져
+#     요청 10개로는 양수 모드가 창에 들어오지 못했다(CONVERGED=0, §19.2).
+#     조건은 **요청 수 > 음수 개수**, 상한은 실제 subspace 차원("REDUCED TO n")이다.
+BUCKLE_VECTORS = 300    # subspace 기저 벡터 수 = 요청 수의 2배(관례 유지). 같은 이력.
 #   ⚠️ 실측 반증(2026-10-07, cload 라우트): 요청 500 -> "VECTORS IN SUBSPACE IS REDUCED TO 14".
 #      즉 실제 기저는 14 차원인데 200 개를 요청했다 -> ITERATION 마다 수렴 수가 출렁이고
 #      (4,5,2,4,4,2) 결국 ***ERROR: THE EIGENVALUES CANNOT BE FOUND.
 #      "N_EIG <= 실제 subspace 차원" 이 조건이다. 창을 키우는 것은 역효과다.
 #      => 창을 키우는 대신 **이 두 상수를 직접 줄여서** 시험한다 (CLI 로 받지 않는다).
-#         예: N_EIG_BUCKLE = 10 / BUCKLE_VECTORS = 20   (우리에게 필요한 것은 양수 모드 몇 개뿐)
+#         예: N_EIG_BUCKLE = 150 / BUCKLE_VECTORS = 300   (우리에게 필요한 것은 양수 모드 몇 개뿐)
 #      [이력] 잠시 `neig=`/`vec=` CLI 로 열었다가 되돌렸다(2026-10-07). Windows 런처가
 #      `key=value` 의 `=` 를 소비해 값만 도착했고, 파서가 그것을 disp_m/clamp_pull_m 으로 받아
 #      조용히 다른 모델(10 m 당김)을 만들었다. 인자 표면을 늘리지 않는 편이 안전하다.
