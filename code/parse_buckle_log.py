@@ -54,6 +54,9 @@ def parse(text):
         'maxIter': _int(r'MAXIMUM NUMBER OF ITERATIONS\s+(\d+)', text),
         'eqs': _int(r'NUMBER OF EQUATIONS:\s+(\d+)', text),
         'sysNeg': _int(r'SYSTEM MATRIX HAS (\d+) NEGATIVE', text),
+        # [2026-10-07] subspace 실제 차원 — 창(window) 추천의 상한이다.
+        #   실측 문구: "THE NUMBER OF VECTORS IN SUBSPACE IS REDUCED TO 14 DUE TO LINEAR DEPENDENCY"
+        'reduced_to': _int(r'VECTORS IN SUBSPACE IS REDUCED TO\s+(\d+)', text),
         'diffNeg': _int(r'DIFFERENTIAL MATRIX HAS (\d+) NEGATIVE DIAGONAL', text),
         'wall': _float(r'WALLCLOCK TIME \(SEC\)\s*=\s*([\d.eE+]+)', text),
         'cpu': _float(r'TOTAL CPU TIME \(SEC\)\s*=\s*([\d.eE+]+)', text),
@@ -81,6 +84,30 @@ def parse(text):
     return d
 
 
+def _window_hint(d):
+    """창(window) 추천 — 두 조건의 교집합이다.
+
+      (a) N_EIG_BUCKLE > base state 의 SYSTEM 음수 고유값 개수
+      (b) N_EIG_BUCKLE <= 실제 subspace 차원 ("VECTORS IN SUBSPACE IS REDUCED TO n" 의 n)
+
+    (a)는 '음수 모드 뒤에 양수 모드가 들어오게' 하는 조건이고 (b)는 '원리적으로 찾을 수 있는 수'의
+    상한이다. 둘 다 만족해야 하며, 교집합이 비면 **창으로 못 푸는 실패**다 — 그때는 창을 키우지 말고
+    base state 를 의심한다(ITERATION 1 이 전부 음수면 그 점이 좌굴 후다).
+    """
+    neg, red = d.get('sysNeg'), d.get('reduced_to')
+    if neg is None:
+        return
+    if red is None:
+        print('  window hint  : N_EIG_BUCKLE > %d  (SYSTEM 음수 %d개)' % (neg, neg))
+        print('                 로그에 "REDUCED TO n" 이 있으면 n 이 상한이다(그때는 n 이하로).')
+    elif neg + 1 <= red:
+        print('  window hint  : N_EIG_BUCKLE in (%d, %d]   (음수 %d < 요청 <= subspace %d)'
+              % (neg, red, neg, red))
+    else:
+        print('  window hint  : 공집합 — 음수 %d >= subspace %d  ==> 창으로 못 푼다.' % (neg, red))
+        print('                 base state 가 좌굴 후이거나(ITERATION 1 전부 음수) 다른 원인이다.')
+
+
 def report(path, d):
     print('=' * 78)
     try:
@@ -96,6 +123,7 @@ def report(path, d):
     print('  base state   : SYSTEM MATRIX HAS %s NEGATIVE EIGENVALUES   |   DIFFERENTIAL MATRIX HAS %s NEGATIVE DIAGONALS'
           % (d['sysNeg'], d['diffNeg']))
     print('  iterations   : %d listed   CONVERGED series %s' % (len(d['iters']), d['conv']))
+    _window_hint(d)
     for it in d['iters']:
         note = ('positives: ' + ', '.join('%+.4e' % v for v in it['posFirst'])) if it['posFirst'] else ''
         print('    ITER %-4d n=%-4d pos=%-3d neg=%-4d  min=%+.4e  max=%+.4e  %s'
