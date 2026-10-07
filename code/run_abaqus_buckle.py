@@ -185,6 +185,17 @@ CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 *
 CLAMP_DIR = 'normal'
 if CLAMP_DIR not in ('normal', 'balanced', 'inward'):
     raise RuntimeError("CLAMP_DIR must be 'normal'|'balanced'|'inward' (got %r)" % (CLAMP_DIR,))
+
+# ---- 클램프 케이블 (driven 전용) ----
+#   [2026-10-07] 교수님 지적: 꼭짓점 3개는 모두 케이블 경유인데 **클램프만 강제 변위**였다.
+#   driven 이 RP_CL_Set 에 in-plane BC 를 직접 걸면 강체 패치가 강제 이동해 사선변에
+#   대량 국소 면외 모드가 생긴다 — 실측: ***WARNING: THE SYSTEM MATRIX HAS 1256
+#   NEGATIVE EIGENVALUES, subspace 500 -> 123 붕괴, CONVERGED=0.
+#   HF(run_abaqus.py)는 클램프에 케이블(Cable_CL/CR)을 붙여 **축력만** 전달한다:
+#       RP_CL(Coupling) <-Tie- start_cl -Cable_CL- end_cl(구동점)
+#       RP_CL 에는 BC 가 없고(완전 자유), 구동은 end_cl 에 건다 -> 힘평형이 물리적으로 자동.
+#   driven 을 이 구조로 바꾼다. CLAMP_CABLE_LEN 은 HF 와 같은 0.5 m.
+CLAMP_CABLE_LEN = 0.5   # m (HF 의 CLAMP_CABLE_LEN 과 동일)
 # 오타로 조용히 다른 케이스가 되는 것을 막는다 (값 검증은 메쉬 생성 전에).
 if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
     raise RuntimeError("CLAMP_MODE must be 'none'|'passive'|'driven'|'fixed' (got %r)"
@@ -344,6 +355,10 @@ print("%s x_c=%g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
 print("%s d_c_eff=%.4f (CLAMP_PULL=%.4e, CLAMP_PERT=%.4e)" % (TAG, CLAMP_DC_EFF, CLAMP_PULL, CLAMP_PERT))
 print("%s CLAMP_DIR=%s -> DIR_CL=%s DIR_CR=%s  (y성분 합=%+.3e m)"
       % (TAG, CLAMP_DIR, DIR_CL, DIR_CR, CLAMP_PULL * (DIR_CL[1] + DIR_CR[1])))
+if CLAMP_MODE == 'driven':
+    print("%s [driven] 클램프 = 케이블 경유: RP_CL/RP_CR 은 BC 없음(자유), "
+          "구동은 케이블 끝단에 건다 (HF 와 동일, CLAMP_CABLE_LEN=%.2f m)"
+          % (TAG, CLAMP_CABLE_LEN))
 print("%s corner pull DISP=%.4e m (= alpha %.4g x 5e-5 m)  perturbation=%.3e m"
       % (TAG, DISP, DISP / 5.0e-5, PERTURBATION))
 print("%s buckle step: solver=%s numEigen=%d vectors=%d"
@@ -524,7 +539,7 @@ def create_rigid_patch(a, inst_memb, name, coord, radius):
 
 
 
-def connect_cable(a, name, part, sail_corner, vector_dir, radius=1e-4):
+def connect_cable(a, name, part, sail_corner, vector_dir, radius=1e-4, cable_len=None):
     """케이블 인스턴스를 꼭짓점에 붙이고 (시작단, 끝단) 노드 영역을 돌려준다.
 
     mode.py 와 같은 정의. 케이블은 'RP <-> 구동 끝단' 사이의 하중 전달 로드이므로,
@@ -543,7 +558,8 @@ def connect_cable(a, name, part, sail_corner, vector_dir, radius=1e-4):
         print("%s Warning: Node not found by sphere, trying closest for %s" % (TAG, name))
         node_start = inst.nodes.getClosest(coordinates=sail_corner)
     region_start = regionToolset.Region(nodes=node_start)
-    cable_len = LEN_TOP if 'Top' in name else LEN_BOT
+    if cable_len is None:
+        cable_len = LEN_TOP if 'Top' in name else LEN_BOT
     end_coord = (sail_corner[0] + target_vec[0] * cable_len,
                  sail_corner[1] + target_vec[1] * cable_len, 0.0)
     node_end = inst.nodes.getByBoundingSphere(center=end_coord, radius=radius)
@@ -593,6 +609,10 @@ def build_model(disp):
 
     p_cable_top = create_cable_part('Cable_Top', LEN_TOP)
     p_cable_bot = create_cable_part('Cable_Bot', LEN_BOT)
+    if CLAMP_MODE == 'driven':
+        # HF 와 동일: 클램프 케이블 2개 (Kevlar T3D2, 1요소, 길이 0.5 m)
+        p_cable_cl = create_cable_part('Cable_CL', CLAMP_CABLE_LEN)
+        p_cable_cr = create_cable_part('Cable_CR', CLAMP_CABLE_LEN)
 
     a = my_model.rootAssembly
     a.DatumCsysByDefault(CARTESIAN)
@@ -623,6 +643,12 @@ def build_model(disp):
     start_c1, end_c1 = connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))
     start_c2, end_c2 = connect_cable(a, 'Cable_Right', p_cable_bot, V2, (cos_val, -sin_val, 0.0))
     start_c3, end_c3 = connect_cable(a, 'Cable_Left', p_cable_bot, V3, (-cos_val, -sin_val, 0.0))
+    if CLAMP_MODE == 'driven':
+        # 케이블 축 = DIR_CL/DIR_CR (클램프 패치 중심에서 바깥으로). HF 와 같은 (-1,+1)/(+1,+1).
+        start_cl, end_cl = connect_cable(a, 'Cable_CL', p_cable_cl, V_CL,
+                                         (DIR_CL[0], DIR_CL[1], 0.0), cable_len=CLAMP_CABLE_LEN)
+        start_cr, end_cr = connect_cable(a, 'Cable_CR', p_cable_cr, V_CR,
+                                         (DIR_CR[0], DIR_CR[1], 0.0), cable_len=CLAMP_CABLE_LEN)
 
     a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
     a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
@@ -637,6 +663,12 @@ def build_model(disp):
                  positionToleranceMethod=COMPUTED)
     my_model.Tie(name='Tie_Left', main=a.sets['RP_Left_Set'], secondary=start_c3,
                  positionToleranceMethod=COMPUTED)
+    if CLAMP_MODE == 'driven':
+        # HF 와 동일: 클램프 패치 RP <-Tie- 케이블 시작단. RP 에는 BC 를 걸지 않는다(자유).
+        my_model.Tie(name='Tie_CL', main=a.sets['RP_CL_Set'], secondary=start_cl,
+                     positionToleranceMethod=COMPUTED)
+        my_model.Tie(name='Tie_CR', main=a.sets['RP_CR_Set'], secondary=start_cr,
+                     positionToleranceMethod=COMPUTED)
     a.regenerate()
 
     # ---- Step 1: GlobalTension (프리텐션) — run_abaqus_new.py 와 동일 ----
@@ -750,23 +782,31 @@ def build_model(disp):
                                 region=a.sets['RP_CL_Set'], u1=0, u2=0, u3=0)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
                                 region=a.sets['RP_CR_Set'], u1=0, u2=0, u3=0)
-    else:
+    elif CLAMP_MODE == 'passive':
+        # 구속만: 패치 RP 의 면외(u3)만 막고 in-plane 은 자유. 케이블 없음.
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
                                 region=a.sets['RP_CL_Set'], u3=0)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
                                 region=a.sets['RP_CR_Set'], u3=0)
-        if CLAMP_MODE == 'driven':
-            # A-route 와 동일 패턴: u3 전용 BC 와 in-plane 구동 BC 를 분리해 만든다.
-            my_model.DisplacementBC(name='Disp_Clamp_CL', createStepName='Initial',
-                                    region=a.sets['RP_CL_Set'], u1=0, u2=0)
-            my_model.DisplacementBC(name='Disp_Clamp_CR', createStepName='Initial',
-                                    region=a.sets['RP_CR_Set'], u1=0, u2=0)
-            my_model.boundaryConditions['Disp_Clamp_CL'].setValuesInStep(
-                stepName='Step-GlobalTension',
-                u1=DIR_CL[0] * CLAMP_PULL, u2=DIR_CL[1] * CLAMP_PULL)
-            my_model.boundaryConditions['Disp_Clamp_CR'].setValuesInStep(
-                stepName='Step-GlobalTension',
-                u1=DIR_CR[0] * CLAMP_PULL, u2=DIR_CR[1] * CLAMP_PULL)
+    elif CLAMP_MODE == 'driven':
+        # [2026-10-07] 클램프 = 케이블 경유 구동 (HF 와 동일 구조).
+        #   패치 RP(RP_CL_Set) 에는 **BC 를 걸지 않는다** — 완전 자유(6 DOF).
+        #   구동은 케이블 끝단(end_cl/end_cr)에만 건다. 케이블은 축력만 전달하므로
+        #   패치가 스스로 힘평형 위치로 가고, 강제 변위의 과구속(음수 1256)이 사라진다.
+        my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
+                                region=end_cl, u3=0)
+        my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
+                                region=end_cr, u3=0)
+        my_model.DisplacementBC(name='Disp_Clamp_CL', createStepName='Initial',
+                                region=end_cl, u1=0, u2=0)
+        my_model.DisplacementBC(name='Disp_Clamp_CR', createStepName='Initial',
+                                region=end_cr, u1=0, u2=0)
+        my_model.boundaryConditions['Disp_Clamp_CL'].setValuesInStep(
+            stepName='Step-GlobalTension',
+            u1=DIR_CL[0] * CLAMP_PULL, u2=DIR_CL[1] * CLAMP_PULL)
+        my_model.boundaryConditions['Disp_Clamp_CR'].setValuesInStep(
+            stepName='Step-GlobalTension',
+            u1=DIR_CR[0] * CLAMP_PULL, u2=DIR_CR[1] * CLAMP_PULL)
 
     # ---- Buckle 스텝: 논문 (c) 3변 u3=0 유지 + 클램프 구간은 면외 구속에서 제외(§9) ----
     _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
