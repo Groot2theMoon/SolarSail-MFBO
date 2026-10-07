@@ -260,6 +260,20 @@ def _report_one(odb_path, step_name, n_modes, instance, dat_hint, limit):
     return nodes, disps, metric_list, label_list
 
 
+def cmp_verdicts(da, db, ma, mb):
+    """두 ODB 의 모드 대응 판정 목록. **순수 함수** — 프레임 수와 메트릭 수가 달라도 안전하다.
+
+    실측 크래시(2026-10-07): ODB 프레임 수가 메트릭 수보다 많아(요청 4 인데 프레임이 더 있다)
+    range(min(len(da), len(db))) 로 돌다 ma[k] 에서 IndexError.
+    => 루프 상한은 **메트릭 수**로 잡는다. 반환 = [(모드번호, corr, 판정)].
+    """
+    out = []
+    for k in range(min(len(ma), len(mb))):
+        c = corr_u3(da[k], db[k]) if (k < len(da) and k < len(db)) else None
+        out.append((k + 1, c, verdict_pair(ma[k], mb[k], c)))
+    return out
+
+
 def _interp(v):
     """문자열 -> (kind, value). 'p2 xc000' 같은 태그에서 x_c 를 뽑는다."""
     import re
@@ -274,7 +288,9 @@ def _cmp(argv, step_name, n_modes, instance):
     outs = []
     for p in argv:
         print('--- %s ---' % os.path.basename(p))
-        nodes, disps, metrics, labels = _report_one(p, step_name, n_modes, instance, None, 12)
+        # .dat 을 물려 lambda 를 ODB frameValue(=모드 번호) 대신 실제 고유값으로 읽는다.
+        nodes, disps, metrics, labels = _report_one(
+            p, step_name, n_modes, instance, os.path.splitext(p)[0] + '.dat', 12)
         outs.append((p, nodes, disps, metrics))
         print()
     bad = False
@@ -282,11 +298,8 @@ def _cmp(argv, step_name, n_modes, instance):
         pa, na, da, ma = outs[i]
         pb, nb, db, mb = outs[i + 1]
         print('=== %s  vs  %s ===' % (os.path.basename(pa), os.path.basename(pb)))
-        for k in range(min(len(da), len(db))):
-            c = corr_u3(da[k], db[k])
-            v = verdict_pair(ma[k], mb[k], c)
-            print('  M%-3d corr(u3)=%-8s  -> %s' % (k + 1,
-                                                   ('%.4f' % c) if c is not None else '  -  ', v))
+        for k, c, v in cmp_verdicts(da, db, ma, mb):
+            print('  M%-3d corr(u3)=%-8s  -> %s' % (k, ('%.4f' % c) if c is not None else '  -  ', v))
             if v == 'PINNED':
                 bad = True
         print()
@@ -356,6 +369,11 @@ def selftest():
         ('크래시 회귀: 면내 모드(cx=None) 포맷', '면내' in fmt_mode_line(1, 1.5e-4, mn0)),
         ('크래시 회귀: met=None 포맷', '계산 불가' in fmt_mode_line(1, None, None)),
         ('정상 모드 포맷에 lambda 가 들어감', '1.48328e-04' in fmt_mode_line(1, 1.48328e-4, mb)),
+        #  cmp 회귀 — 프레임 수가 메트릭 수보다 많은 실측 상황
+        ('cmp 상한: 프레임 수 > 메트릭 수여도 안전',
+         len(cmp_verdicts([base] * 6, [moved] * 6, [mb, mb], [mm, mm])) == 2),
+        ('cmp 판정: 같은 모드쌍은 PINNED',
+         cmp_verdicts([base], [base], [mb], [mb])[0][2] == 'PINNED'),
     ]
     nfail = 0
     print('  [합성] shift=0.6 m, r90=%.3f -> corr=%.4f, d=%.3f, d/r90=%.3f -> %s'
