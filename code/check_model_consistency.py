@@ -135,7 +135,12 @@ def declared_divergences(path):
 
 # 좌굴 스크립트에 '있으면 안 되는' HF/LF 전용 것들 (역할 분리 검사)
 FORBIDDEN_IN_BUCKLE = [
-    "Step-ClampTension",
+    # [2026-10-07] "Step-ClampTension" 을 여기서 **제거**했다.
+    #   이유: 이제 buckle 도 HF 와 같은 3스텝 체인(GlobalTension -> ClampTension ->
+    #   Buckle)을 쓴다. 클램프 하중이 perturbation 스텝에만 있으면 base state 에
+    #   압축이 안 생겨서 클램프 위치가 좌굴모드를 바꾸지 못한다(실측 확인).
+    #   반면 모드 소스(run_abaqus_mode.py)에는 클램프가 없으므로 FORBIDDEN_IN_MODE 에는
+    #   그대로 남겨 둔다.
     "Step-Postbuckle",
     "Step-HighTension",
     "Step-Trigger",
@@ -313,8 +318,8 @@ def main():
     print()
     print("=" * 74)
     if bad or bad2 or bad3 or bad4 or bad5 or bad6:
-        print("RESULT: !!! 불일치 (HF↔buckle 정의 %d / buckle 역할 %d / 디렉터리 %d"
-              " / HF↔모드소스 정의 %d / 모드소스 역할 %d / buckle↔모드소스 %d)"
+        print("RESULT: !!! 불일치 (HF↔buckle 위반 %d / buckle 역할위반 %d / 디렉터리 위반 %d"
+              " / HF↔모드소스 위반 %d / 모드소스 역할위반 %d / buckle↔모드소스 위반 %d)"
               % (len(bad), len(bad2), len(bad3), len(bad4), len(bad5), len(bad6)))
         print("        모드 노드가 어긋나면 *IMPERFECTION 이 조용히 실패한다.")
         print("        한쪽을 고쳤으면 다른 쪽도 같이 고쳐라.")

@@ -8,10 +8,13 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
 모델 (run_abaqus_new.py 의 HF 모델과 같은 빌드 블록을 공유한다)
     삼각 막(BASE=20 m, HEIGHT=10 m, 두께 5e-6 m)
     + 꼭짓점 강체패치 3개 + 클램프 강체패치 2개 (위치 x_c).
-    케이블은 없다 — 논문 §3.2 의 좌굴 모델과 같은 방식으로, 케이블이 당기던
-    지점을 직접 prescribed 변위로 구속한다.
-    스텝: Step-GlobalTension(프리텐션) -> Step-Buckle(SUBSPACE, numEigen=100,
-    vectors=250). 좌굴 스텝의 perturbation 은 0.01 m (대조 스크립트와 동일).
+    케이블은 꼭짓점 3개에만 있고(논문 §3.2 의 좌굴 모델과 같은 방식), 하중은 케이블
+    끝단에 prescribed 변위로 준다. 클램프는 CLAMP_MODE 에 따라 달라진다(상수부 참조).
+    스텝 (HF 와 같은 체인):
+        Step-GlobalTension      꼭짓점 프리텐션 (DEAD)
+        Step-ClampTension       클램프 하중 (DEAD) — driven/cload 일 때만 생성
+        Step-Buckle             고유값 추출 (LIVE = 꼭짓점/클램프 perturbation 0.01 m)
+    창은 N_EIG_BUCKLE / BUCKLE_VECTORS 상수로 정한다(요청 수 <= 실제 subspace 차원).
 
 사용법
     abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
@@ -229,6 +232,20 @@ CLAMP_F0 = 1.0   # N — 클램프 집중하중 기준값. lambda 가 이 크기
 if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed', 'cload'):
     raise RuntimeError("CLAMP_MODE must be 'none'|'passive'|'driven'|'fixed'|'cload' (got %r)"
                        % (CLAMP_MODE,))
+
+# ---- 스텝 체인: 클램프에 하중이 걸리는가 ----
+#   HF(run_abaqus.py)는 3스텝이다: GlobalTension -> ClampTension -> Buckle.
+#   buckle 은 클램프 하중을 perturbation 스텝에만 두어 base state 에 압축을 만들지 못했다.
+#   클램프 하중이 있는 모드(driven/cload)만 ClampTension 스텝을 만든다.
+CLAMP_HAS_LOAD = CLAMP_MODE in ('driven', 'cload')
+PREV_BUCKLE_STEP = 'Step-ClampTension' if CLAMP_HAS_LOAD else 'Step-GlobalTension'
+
+# ---- base state 진단에 쓸 스텝 (base_state_probe 의 인자) ----
+#   [2026-10-07] 예전에는 'Step-GlobalTension' 으로 **고정**이라, 클램프 하중이 어느
+#   스텝에 있든 진단에 안 잡혔다(그래서 '클램프 효과 없음' 처럼 보였다).
+#   'auto' = 좌굴 스텝 바로 앞 스텝(= PREV_BUCKLE_STEP). 명시하려면 스텝 이름을 넣는다.
+BASE_STATE_STEP = 'auto'
+BASE_STATE_STEP_EFF = PREV_BUCKLE_STEP if BASE_STATE_STEP == 'auto' else BASE_STATE_STEP
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
@@ -464,17 +481,17 @@ def run_job_safely(job_name, model_name=None):
 
     # 진단 출력은 호출측에서 report_job() 한 번으로 끝낸다.
 
-# 잡 성공 판정 = 산출물 + 완주 문자열. 'ODB 존재'도 'Exit code 0'도 증거가 아니다(§2).
-    if (job.status == ABORTED or not os.path.exists(odb_file)
-            or not job_completed_ok(job_name)):
-        raise RuntimeError('Job %s 실패 (Status=%s). sys.exit 대신 예외로 올린다: '
-                           'CAE noGUI 러너에서 sys.exit 은 종료코드 0으로 보인다.'
-                           % (job_name, str(job.status)))
-
+    # 잡 성공 판정 = 산출물 + 완주 문자열. 'ODB 존재'도 'Exit code 0'도 증거가 아니다(§2).
+    # [2026-10-07] 예전에는 같은 조건을 두 번 검사해 두 번째 WARNING 이 **도달 불가**였다
+    #   (첫 검사가 먼저 raise 한다). 한 번만 검사하고 실패 이유를 메시지에 구분해 넣는다.
+    if job.status == ABORTED or not os.path.exists(odb_file):
+        raise RuntimeError('Job %s 실패 (Status=%s): ABORTED 이거나 .odb 가 없다. '
+                           'sys.exit 대신 예외로 올린다 — CAE noGUI 러너에서 sys.exit 은 '
+                           '종료코드 0으로 보인다.' % (job_name, str(job.status)))
     if not job_completed_ok(job_name):
-        print("!!! WARNING: %s — .sta/.msg 에 완주 문자열 없음 (%s) "
-              "(중도 중단 의심; odb 존재만으로는 판정 불가 — R-12)"
-              % (job_name, ' / '.join(_COMPLETION_STRINGS)))
+        raise RuntimeError('Job %s 실패 (Status=%s): .sta/.msg 에 완주 문자열(%s)이 없다 '
+                           '(중도 중단 의심; odb 존재만으로는 판정 불가 — R-12).'
+                           % (job_name, str(job.status), ' / '.join(_COMPLETION_STRINGS)))
     print("Job %s completed successfully (Status: %s)." % (job_name, str(job.status)))
     return True
 
@@ -515,7 +532,7 @@ def report_job(job_name):
     """
     out = ['===== job_completed_ok = %s =====' % job_completed_ok(job_name)]
 
-    msg_keys = ('CONVERGED', 'REQUESTED BY THE USER', 'CANNOT BE FOUND',
+    msg_keys = ('CONVERGED', 'REQUESTED BY THE USER', 'CANNOT BE FOUND', 'ERROR MESSAGES',
                 'REDUCED TO', 'NEGATIVE EIGENVALUES', 'HAS BEEN COMPLETED',
                 'HAS NOT BEEN COMPLETED', '***ERROR')
     # .log 는 '잡이 시작조차 못 한' 실패(라이선스 거부/입력 거부)에만 단서가 있다.
@@ -741,7 +758,30 @@ def build_model(disp):
         initialInc=0.0001, minInc=1e-8, maxNumInc=1000
     )
 
-    # ---- Step 2: Buckle — Trigger 스텝을 대체한다 ----
+    # ---- Step 2: ClampTension (클램프 하중 = DEAD) ----
+    #   [2026-10-07] HF 와 스텝 구조를 맞춘다. HF 는 3스텝이다:
+    #       Step-GlobalTension -> Step-ClampTension -> Step-Buckle
+    #   buckle 은 2스텝이라 클램프 하중이 **perturbation 스텝에만** 있었고, 그래서
+    #   base state 에 전혀 반영되지 않았다(실측: RF 비영 노드가 꼭짓점 케이블 3개뿐,
+    #   압축 면적 0.08 %, max|u3| = 0 인장지배 -> 클램프 위치가 좌굴모드를 못 바꿈).
+    #   *BUCKLE 의 BUCKLING LOAD ESTIMATE = ("DEAD") + lambda * ("LIVE") 이므로
+    #   클램프가 base state 를 만들려면 **별도 static 스텝의 하중**이어야 한다.
+    #   클램프 하중이 없는 모드(none/passive/fixed)에서는 스텝을 만들지 않는다.
+    if CLAMP_HAS_LOAD:
+        my_model.StaticStep(
+            name='Step-ClampTension',
+            previous='Step-GlobalTension',
+            nlgeom=ON,
+            stabilizationMagnitude=MODE_STABILIZATION,
+            stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
+            continueDampingFactors=False,
+            adaptiveDampingRatio=0.05,
+            initialInc=0.0001, minInc=1e-8, maxNumInc=1000
+        )
+        print("%s Step-ClampTension 생성 (클램프 하중 = DEAD). Buckle previous = %s"
+              % (TAG, PREV_BUCKLE_STEP))
+
+    # ---- Step 3: Buckle — Trigger 스텝을 대체한다 ----
     # 대조 스크립트(run_abaqus_cable.py)에서 완주한 설정을 그대로 사용:
     #   numEigen=100 (음수 모드 건너뛰기), SUBSPACE, vectors=250, maxIterations=5000
     if 'Step-Buckle' in my_model.steps:
@@ -754,7 +794,7 @@ def build_model(disp):
     #   출력 요청은 해석 결과를 바꾸지 않는다.
 
     # ---- 좌굴 스텝: 솔버는 코드 상수 하나로 교체 (SUBSPACE <-> LANCZOS) ----
-    _eig = dict(name='Step-Buckle', previous='Step-GlobalTension',
+    _eig = dict(name='Step-Buckle', previous=PREV_BUCKLE_STEP,
                 numEigen=N_EIG_BUCKLE, eigensolver=EIGENSOLVER_CONST)
     if BUCKLE_SOLVER == 'SUBSPACE':
         _eig.update(vectors=BUCKLE_VECTORS, maxIterations=BUCKLE_MAXITER)
@@ -876,11 +916,14 @@ def build_model(disp):
                                 region=end_cl, u1=0, u2=0)
         my_model.DisplacementBC(name='Disp_Clamp_CR', createStepName='Initial',
                                 region=end_cr, u1=0, u2=0)
+        # [2026-10-07] 클램프 구동을 GlobalTension 이 아니라 **ClampTension** 스텝에 건다.
+        #   GlobalTension 에 걸면 꼭짓점 프리텐션과 클램프 당김이 같은 스텝에 섞여
+        #   어느 쪽이 압축을 만들었는지 분리할 수 없다(HF 도 분리한다).
         my_model.boundaryConditions['Disp_Clamp_CL'].setValuesInStep(
-            stepName='Step-GlobalTension',
+            stepName='Step-ClampTension',
             u1=DIR_CL[0] * CLAMP_PULL, u2=DIR_CL[1] * CLAMP_PULL)
         my_model.boundaryConditions['Disp_Clamp_CR'].setValuesInStep(
-            stepName='Step-GlobalTension',
+            stepName='Step-ClampTension',
             u1=DIR_CR[0] * CLAMP_PULL, u2=DIR_CR[1] * CLAMP_PULL)
 
     elif CLAMP_MODE == 'cload':
@@ -889,11 +932,14 @@ def build_model(disp):
                                 region=a.sets['RP_CL_Set'], u3=0)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
                                 region=a.sets['RP_CR_Set'], u3=0)
-        # LIVE 하중은 Buckle 스텝에서만 준다(GlobalTension 은 DEAD = 꼭짓점 프리텐션).
-        my_model.ConcentratedForce(name='CF_Clamp_CL', createStepName='Step-Buckle',
+        # [2026-10-07] CLOAD 를 **Step-ClampTension** 에 건다. perturbation 스텝(Buckle)에
+        #   걸면 LIVE 로만 작용해 base state 에 압축을 만들지 못한다(실측으로 확인).
+        #   DEAD 로 두면 클램프가 base state 의 압축 분포를 만들고, x_c 가 바뀌면
+        #   그 분포가 바뀌어 전역 좌굴모드가 달라진다 — 이것이 원래 목표다.
+        my_model.ConcentratedForce(name='CF_Clamp_CL', createStepName='Step-ClampTension',
                                    region=a.sets['RP_CL_Set'],
                                    cf1=DIR_CL[0] * CLAMP_F0, cf2=DIR_CL[1] * CLAMP_F0, cf3=0.0)
-        my_model.ConcentratedForce(name='CF_Clamp_CR', createStepName='Step-Buckle',
+        my_model.ConcentratedForce(name='CF_Clamp_CR', createStepName='Step-ClampTension',
                                    region=a.sets['RP_CR_Set'],
                                    cf1=DIR_CR[0] * CLAMP_F0, cf2=DIR_CR[1] * CLAMP_F0, cf3=0.0)
 
@@ -990,9 +1036,10 @@ try:
     _probe = os.path.join(_HERE, 'base_state_probe.py')
     _odb = '%s.odb' % JOB_NAME
     if os.path.exists(_probe) and os.path.exists(_odb):
-        print("%s base-state probe: %s / Step-GlobalTension" % (TAG, _odb))
-        subprocess.call('abaqus python "%s" "%s" Step-GlobalTension'
-                        % (_probe, _odb), shell=True)
+        print("%s base-state probe: %s / %s (BASE_STATE_STEP=%s)"
+              % (TAG, _odb, BASE_STATE_STEP_EFF, BASE_STATE_STEP))
+        subprocess.call('abaqus python "%s" "%s" %s'
+                        % (_probe, _odb, BASE_STATE_STEP_EFF), shell=True)
     else:
         print("%s base-state probe skipped (probe=%s, odb=%s)"
               % (TAG, os.path.exists(_probe), os.path.exists(_odb)))
