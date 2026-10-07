@@ -1031,25 +1031,90 @@ except Exception:
 
 report_job(JOB_NAME)
 
-# base state 의 압축 정도를 lambda 판정과 함께 보기 위한 선택 단계
+# ============================================================================
+# 판정 재료 수집 — lambda 표 + base state 진단 + ledger 한 행.   (§18)
+#   규칙: "완주했는가" 와 "그 base state 가 우리가 주장하는 상태인가" 는 별개 질문이다.
+#   lambda 표가 나와도 base state 진단(압축 면적비 / max|u3| / RF 상위)을 함께 읽는다.
+# ============================================================================
+_M = {}
+_HAS_PBL = False
+try:
+    import parse_buckle_log as _pbl                  # 같은 폴더, 표준 라이브러리만 (DRY)
+    _HAS_PBL = True
+    _msgp = os.path.join(_RUN, '%s.msg' % JOB_NAME)
+    if os.path.exists(_msgp):
+        import io as _io1
+        with _io1.open(_msgp, encoding='utf-8', errors='replace') as _f:
+            _M = _pbl.parse(_f.read())
+        print("%s [DIAG] CONVERGED series %s / SYSTEM 음수 %s / subspace %s"
+              % (TAG, _M.get('conv'), _M.get('sysNeg'), _M.get('reduced_to')))
+except Exception as _e:
+    print("%s [DIAG] msg 파싱 실패(무시): %s" % (TAG, _e))
+
+_BASE = {'probe_ok': False}
 try:
     _probe = os.path.join(_HERE, 'base_state_probe.py')
-    _odb = '%s.odb' % JOB_NAME
+    _odb = os.path.join(_RUN, '%s.odb' % JOB_NAME)
     if os.path.exists(_probe) and os.path.exists(_odb):
-        print("%s base-state probe: %s / %s" % (TAG, _odb, BASE_STATE_STEP))
-        subprocess.call('abaqus python "%s" "%s" %s'
-                        % (_probe, _odb, BASE_STATE_STEP), shell=True)
+        print("%s [BASE] probe: %s / %s" % (TAG, _odb, BASE_STATE_STEP))
+        _out = subprocess.check_output('abaqus python "%s" "%s" %s'
+                                       % (_probe, _odb, BASE_STATE_STEP), shell=True)
+        if not isinstance(_out, str):
+            _out = _out.decode('utf-8', 'replace')
+        _keep = [l.strip() for l in _out.splitlines()
+                 if ('압축' in l or 'max|u3|' in l or 'CENTRE' in l or 'mean|u3|' in l)]
+        for _l in _keep[:12]:
+            print("      | %s" % _l[:170])
+        _BASE.update({'probe_ok': True, 'lines': _keep[:40]})
     else:
-        print("%s base-state probe skipped (probe=%s, odb=%s)"
+        print("%s [BASE] skip (probe=%s, odb=%s)"
               % (TAG, os.path.exists(_probe), os.path.exists(_odb)))
 except Exception as _e:
-    print("%s base-state probe failed (ignored): %s" % (TAG, _e))
+    print("%s [BASE] probe 실패(무시): %s" % (TAG, _e))
 
-_rel_fil = '..' + os.sep + RUN_DIR_NAME + os.sep + JOB_NAME
+# ledger: 런 1개 = 1행. 원인 판정은 '한 열만 다른 두 행' 에서만 한다(규칙 2).
+try:
+    import io as _io
+    import json as _js
+    import datetime as _dt
+    _row = {
+        'ts': _dt.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'case': CASE, 'x_c': x_c, 'DISP': DISP, 'CLAMP_DC': CLAMP_DC,
+        'DEAD_FRAC': DEAD_FRAC, 'CLAMP_DIR': CLAMP_DIR,
+        'CORNER_F0': CORNER_F0, 'CLAMP_F0': CLAMP_F0,
+        'clamp_load': CLAMP_LOAD, 'corner_dir': CORNER_DIR,
+        'window': [N_EIG_BUCKLE, BUCKLE_VECTORS], 'PERTURBATION': PERTURBATION,
+        'ELEM_TAG': ELEM_TAG, 'job': JOB_NAME,
+        'sysNeg': _M.get('sysNeg'), 'reduced_to': _M.get('reduced_to'),
+        'convMax': (max(_M['conv']) if _M.get('conv') else None),
+        'wallclock': _M.get('wall'), 'lambdas': [], 'base_probe_ok': _BASE['probe_ok'],
+    }
+    # lambda 는 **.dat 의 MODE NO / EIGENVALUE 표에서만** 읽는다(요청 수만큼 CONVERGED 한 런의
+    #   표가 스펙트럼이고, 실패 런의 ITERATION 목록은 레일리 몫 스냅샷이다).
+    #   파서는 parse_buckle_log.dat_lambdas() 에 있다(순수 함수 -> 로컬 단위검증 가능, DRY).
+    _datf = os.path.join(_RUN, '%s.dat' % JOB_NAME)
+    if os.path.exists(_datf) and _HAS_PBL:
+        _txt = _io.open(_datf, encoding='utf-8', errors='replace').read()
+        _row['lambdas'] = _pbl.dat_lambdas(_txt, limit=12)
+    _led = os.path.join(_RUN, 'buckle_ledger.jsonl')
+    with _io.open(_led, 'a', encoding='utf-8') as _f:
+        _f.write(_js.dumps(_row, ensure_ascii=False) + '\n')
+    print("%s [LEDGER] += %s   (lambda %d개: %s)"
+          % (TAG, _led, len(_row['lambdas']), _row['lambdas'][:5]))
+except Exception as _e:
+    print("%s [LEDGER] 기록 실패(무시): %s" % (TAG, _e))
+
 print("")
 print("=" * 78)
-print("%s PASS CRITERION: CONVERGED > 0 and the first eigenvalues positive." % TAG)
-print("%s eigen table: %s.dat" % (TAG, JOB_NAME))
-print("%s HF imperfection keyword for this run:" % TAG)
-print("     *IMPERFECTION, FILE=%s, STEP=2" % _rel_fil)
+print("%s PASS CRITERION (4조건, judge_run 참조):" % TAG)
+print("   C1 CONVERGED >= 1 그리고 양수 lambda >= 1")
+print("   C2 lambda 스프레드 >= SPREAD_MIN_PCT   (중복 근 배제)")
+print("   C3 모드가 면외 성분을 가짐 (u3 비율)   (면내 모드 배제)")
+print("   C4 |u3| 무게중심이 클램프 부착점 근처  (경계조건 아티팩트 배제)")
+print("%s eigen table : %s.dat" % (TAG, JOB_NAME))
+print("%s ledger      : %s%sbuckle_ledger.jsonl" % (TAG, RUN_DIR_NAME, os.sep))
+print("%s 모드 형상 판정: abaqus python buckle_mode_report.py %s.odb Step-Buckle"
+      % (TAG, JOB_NAME))
+print("%s HF 소비(주의): HF(run_abaqus.py)는 기본 IMPERFECTION_MODE='odb_direct' 로" % TAG)
+print("                 ..\\ClampFree_Buckle.odb 를 읽는다 — 이 잡을 쓰려면 MODE_SOURCE_ODB 교체.")
 print("=" * 78)

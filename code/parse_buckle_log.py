@@ -84,6 +84,38 @@ def parse(text):
     return d
 
 
+MODE_TABLE_HDR = re.compile(r'MODE\s+NO\s+.*EIGEN', re.I)
+
+
+def dat_lambdas(text, limit=12):
+    """`.dat` 의 MODE NO / EIGENVALUE 표에서 lambda 를 읽는다 (순수 함수 — 단위검증 가능).
+
+    왜 표에서만 읽는가: 실패 런의 `ITERATION n` 목록은 레일리 몫 스냅샷이지 스펙트럼이 아니다.
+    요청 수만큼 `CONVERGED` 한 런의 표만 lambda 로 인용할 수 있다. 표가 없으면 빈 리스트
+    (= 모드를 못 냈다)이고, 그것이 정상적인 '실패' 표현이다.
+    """
+    lines = text.splitlines()
+    hdr = [i for i, l in enumerate(lines) if MODE_TABLE_HDR.search(l)]
+    if not hdr:
+        return []
+    out = []
+    for l in lines[hdr[-1] + 1:]:
+        p = l.split()
+        if not p:
+            if out:
+                break
+            continue
+        if not (p[0].isdigit() and len(p) >= 2):
+            break
+        try:
+            out.append(float(p[-1]))
+        except ValueError:
+            break
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _window_hint(d):
     """창(window) 추천 — 두 조건의 교집합이다.
 
