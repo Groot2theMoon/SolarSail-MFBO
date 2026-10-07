@@ -268,6 +268,43 @@ def main():
         print("  %-5s buckle=%-6s mode=%-6s  %s"
               % ("OK" if (ib and ic) else "!!!", ib, ic, k[:58]))
 
+    # ------------------------------------------------------------------
+    # [2026-10-07] PATTERN_SIGN 은 '선언'만 보면 부족하다 — 실제로 곱해지는지 본다.
+    #   mode.py 는 PATTERN_SIGN * PERTURBATION * ... 로 섭동을 주는데, buckle 은
+    #   PATTERN_SIGN 을 선언만 하고 곱하지 않았다. 값이 1.0 일 때는 수치가 같아
+    #   드러나지 않지만, -1.0 등으로 바꾸면 두 스크립트가 조용히 갈라진다.
+    _pat_use_b = b.count(norm("PATTERN_SIGN * PERTURBATION"))
+    _pat_use_c = c.count(norm("PATTERN_SIGN * PERTURBATION"))
+    print()
+    print("--- PATTERN_SIGN 이 실제로 섭동에 곱해지는지 (선언만으로는 부족) ---")
+    for _nm, _n in (("run_abaqus_buckle.py", _pat_use_b), ("run_abaqus_mode.py", _pat_use_c)):
+        print("  %-4s %-22s PATTERN_SIGN * PERTURBATION  %d회" % ('OK' if _n else '!!!', _nm, _n))
+    if not _pat_use_b or not _pat_use_c:
+        bad6.append("PATTERN_SIGN 사용(PATTERN_SIGN * PERTURBATION)")
+        print("    -> 한쪽만 곱하면 PATTERN_SIGN != 1.0 에서 두 모델이 갈라진다.")
+
+    # ------------------------------------------------------------------
+    # [2026-10-07] LOAD_MODE 가 'cable' 이 아니면 위 buckle<->mode 계약은 범위 밖이다.
+    #   'cload' 라우트는 꼭짓점까지 집중하중으로 바꾼 **다른 모델**이다(케이블 0개).
+    #   mode.py 는 케이블 라우트만 구현하므로 '클램프만 다르다' 전제가 성립하지 않는다.
+    #   실패가 아니라 '비교 대상이 아님'이므로 경고만 찍고 위반으로 세지 않는다.
+    #   b 는 code_only() 로 공백이 정규화된 텍스트라 ^ 앵커가 안 맞는다 — 원본을 읽는다.
+    with open(BUCKLE, encoding='utf-8') as _f:
+        _raw_b = _f.read()
+    _lm = re.search(r"^LOAD_MODE\s*=\s*'([^']+)'", _raw_b, re.M)
+    _lm = _lm.group(1) if _lm else '(없음)'
+    _cf = re.search(r"^CORNER_F0\s*=\s*([0-9.eE+-]+)", _raw_b, re.M)
+    _cf = _cf.group(1) if _cf else '(없음)'
+    print()
+    print("--- 하중 방식 (buckle 단독 상수) ---")
+    print("  run_abaqus_buckle.py  LOAD_MODE = %s   CORNER_F0 = %s" % (_lm, _cf))
+    if _lm == 'cable':
+        print("  OK   LOAD_MODE='cable' — 위 buckle<->mode 정합 계약이 그대로 성립한다.")
+    else:
+        print("  WARN LOAD_MODE='%s' — buckle<->mode 정합 계약은 **적용 대상이 아니다**." % _lm)
+        print("       ('%s' 는 케이블을 만들지 않는 별도 하중 경로다. mode.py 와 비교 금지)"
+              % _lm)
+
     print("--- 좌굴 스크립트에 HF/LF 전용이 섞여 있지 않은지 (0 이어야 정상) ---")
     bad2 = []
     for k in FORBIDDEN_IN_BUCKLE:

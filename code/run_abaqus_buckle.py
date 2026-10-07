@@ -8,12 +8,21 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
 모델 (run_abaqus_new.py 의 HF 모델과 같은 빌드 블록을 공유한다)
     삼각 막(BASE=20 m, HEIGHT=10 m, 두께 5e-6 m)
     + 꼭짓점 강체패치 3개 + 클램프 강체패치 2개 (위치 x_c).
-    케이블은 꼭짓점 3개에만 있고(논문 §3.2 의 좌굴 모델과 같은 방식), 하중은 케이블
-    끝단에 prescribed 변위로 준다. 클램프는 CLAMP_MODE 에 따라 달라진다(상수부 참조).
     스텝 (2개 — 클램프를 별도 텐션 스텝으로 분리하지 않는다):
         Step-GlobalTension      꼭짓점 + 클램프 하중 (DEAD = base state)
         Step-Buckle             고유값 추출 (LIVE = perturbation 0.01 m)
     창은 N_EIG_BUCKLE / BUCKLE_VECTORS 상수로 정한다(요청 수 <= 실제 subspace 차원).
+
+하중 방식 (LOAD_MODE 상수 — 2026-10-07)
+    'cable' (기본)  꼭짓점 3개를 케이블(T3D2) + Tie 로 잇고 **끝단에 prescribed 변위**를 준다.
+                    클램프는 CLAMP_MODE(none|passive|fixed|driven|cload)에 따라 달라진다.
+                    mode.py 와의 정합 계약(클램프만 다르다)은 **이 라우트에서만** 성립한다.
+    'cload'         케이블을 **하나도 만들지 않는다**. 꼭짓점 3개 + 클램프 2개를 강체패치
+                    RP 에 **집중하중**으로 준다(CLAMP_MODE 는 무시된다). 하중 크기는
+                    CORNER_F0 / CLAMP_F0. RP 는 면외(u3)만 구속한다.
+                    => Truss 의 저강성/미구속 DOF 가 사라지고, base state 를 하중 크기로
+                       직접 제어할 수 있다(Galhofo 의 only-membrane 계열과 같은 취지).
+                    lambda 는 'DEAD 하중의 몇 배에서 좌굴하는가' 로 직접 읽힌다.
 
 사용법
     abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
@@ -23,6 +32,8 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
         clamp_excl_r_m 클램프 반경 내 노드를 면외 구속에서 제외 [m]. 기본 0.0.
     예)  abaqus cae noGUI=run_abaqus_buckle.py -- 0.5
          abaqus cae noGUI=run_abaqus_buckle.py -- 0.25 1.8e-5 9.0e-6
+    LOAD_MODE 는 CLI 가 아니라 **상수부에서 직접 수정한다**. 'cable'<->'cload' 를 바꾸면
+    job 이름 끝에 _cload 가 붙어 산출물이 서로 덮이지 않는다.
 
     추출 창(N_EIG_BUCKLE / BUCKLE_VECTORS)은 **상수부에서 직접 수정한다** (CLI 로 받지 않는다).
     ⚠️ N_EIG_BUCKLE 은 '실제 subspace 차원' 이하여야 한다. 실측(2026-10-07): vectors=500 을
@@ -34,7 +45,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     <job>.odb / .dat / .msg / .sta / .fil / .diag.txt
     job 이름은 인자+요소+클램프모드에서 자동 생성한다: Buckle_xc<NNN>_d<NNN>um_<elem>_<clamp>
       (예: Buckle_xc050_d0050um_s4r_driven) — 케이스가 바뀌어도 산출물이 서로 덮이지 않는다.
-    CLAMP_MODE 는 상단 상수: none | passive | driven | fixed | cload (클램프 존재/작동 분리).
+    CLAMP_MODE / LOAD_MODE / CORNER_F0 / CLAMP_F0 는 상단 상수.
     고유값 표는 .dat 의 MODE NO / EIGENVALUE 블록에 있고, 스크립트가 콘솔에도 덤프한다.
 
 HF 에서 모드를 쓸 때 — 경로 주의 (HF 잡의 작업 디렉터리는 code/aba 다)
@@ -231,6 +242,24 @@ CLAMP_F0 = 1.0   # N — 클램프 집중하중 기준값. lambda 가 이 크기
 if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed', 'cload'):
     raise RuntimeError("CLAMP_MODE must be 'none'|'passive'|'driven'|'fixed'|'cload' (got %r)"
                        % (CLAMP_MODE,))
+
+# ---- 하중 방식 (LOAD_MODE) ----
+#   [2026-10-07 사용자 결정] 클램프와 꼭짓점을 **같은 방식**으로 다룬다.
+#   'cable' : 현행. 꼭짓점을 케이블(T3D2)+Tie 로 잇고 끝단에 prescribed 변위를 준다.
+#   'cload' : 케이블을 **하나도 만들지 않는다**. 꼭짓점 3개 + 클램프 2개를 모두
+#             강체패치 RP 에 **집중하중**으로 준다. Galhofo 의 only-membrane 계열이고
+#             변수(요소 종류/길이/장력)가 가장 적다. CLAMP_MODE 는 무시된다.
+#   근거: 'cable' 에서 클램프만 CLOAD 로 바꾸는 혼합은 §(2026-10-07) 실측에서
+#         F0=0.01 -> 클램프가 무의미 / F0=1.0 -> 양수모드 0(좌굴후) 로 갈렸고
+#         0.1/0.3 도 수렴 실패했다. 하중 경로를 한 종류로 통일해 변수를 줄인다.
+LOAD_MODE = 'cable'
+if LOAD_MODE not in ('cable', 'cload'):
+    raise RuntimeError("LOAD_MODE must be 'cable' or 'cload' (got %r)" % (LOAD_MODE,))
+
+# ---- 꼭짓점 CLOAD 크기 [N] (LOAD_MODE='cload' 전용) ----
+#   실측 RF(꼭짓점 케이블 3개 반력, DISP_GLOBAL=1.8e-5): 0.03032 / 0.03032 / 0.02903 N
+#   => 약 0.03 N. 'cable' 라우트의 프리텐션과 같은 크기에서 출발한다.
+CORNER_F0 = 0.03
 
 # ---- 스텝 체인: GlobalTension 하나에 꼭짓점 + 클램프를 모두 넣는다 ----
 #   [2026-10-07 사용자 결정] 버클모드 추출에서는 클램프를 **별도 텐션 스텝으로 분리하지
@@ -678,9 +707,10 @@ def build_model(disp):
         p_c.generateMesh()
         return p_c
 
-    p_cable_top = create_cable_part('Cable_Top', LEN_TOP)
-    p_cable_bot = create_cable_part('Cable_Bot', LEN_BOT)
-    if CLAMP_MODE == 'driven':
+    if LOAD_MODE == 'cable':
+        p_cable_top = create_cable_part('Cable_Top', LEN_TOP)
+        p_cable_bot = create_cable_part('Cable_Bot', LEN_BOT)
+    if LOAD_MODE == 'cable' and CLAMP_MODE == 'driven':
         # HF 와 동일: 클램프 케이블 2개 (Kevlar T3D2, 1요소, 길이 0.5 m)
         #   cload 라우트는 케이블을 만들지 않는다(집중하중으로 대체, Galhofo 재현).
         p_cable_cl = create_cable_part('Cable_CL', CLAMP_CABLE_LEN)
@@ -705,17 +735,19 @@ def build_model(disp):
 
     # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5) — 동일
     #   CLAMP_MODE='none' 이면 패치를 아예 만들지 않는다 (논문 재현 기준선 P0).
-    if CLAMP_MODE == 'none':
+    if CLAMP_MODE == 'none' and LOAD_MODE != 'cload':
+        # 'cload' 라우트는 CLAMP_MODE 와 무관하게 클램프 패치가 필요하다(집중하중 대상).
         rp_cl_obj = rp_cr_obj = None
     else:
         rp_cl_obj, rp_cl_reg = create_rigid_patch(a, inst_memb, 'CL', V_CL, radius=0.2)
         rp_cr_obj, rp_cr_reg = create_rigid_patch(a, inst_memb, 'CR', V_CR, radius=0.2)
 
     # 케이블 연결: 정점은 위로, 두 아래 모서리는 각 케이블 축(28.6도) 방향 — mode.py 와 동일
-    start_c1, end_c1 = connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))
-    start_c2, end_c2 = connect_cable(a, 'Cable_Right', p_cable_bot, V2, (cos_val, -sin_val, 0.0))
-    start_c3, end_c3 = connect_cable(a, 'Cable_Left', p_cable_bot, V3, (-cos_val, -sin_val, 0.0))
-    if CLAMP_MODE == 'driven':
+    if LOAD_MODE == 'cable':
+        start_c1, end_c1 = connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))
+        start_c2, end_c2 = connect_cable(a, 'Cable_Right', p_cable_bot, V2, (cos_val, -sin_val, 0.0))
+        start_c3, end_c3 = connect_cable(a, 'Cable_Left', p_cable_bot, V3, (-cos_val, -sin_val, 0.0))
+    if LOAD_MODE == 'cable' and CLAMP_MODE == 'driven':
         # 케이블 축 = DIR_CL/DIR_CR (클램프 패치 중심에서 바깥으로). HF 와 같은 (-1,+1)/(+1,+1).
         start_cl, end_cl = connect_cable(a, 'Cable_CL', p_cable_cl, V_CL,
                                          (DIR_CL[0], DIR_CL[1], 0.0), cable_len=CLAMP_CABLE_LEN)
@@ -725,23 +757,34 @@ def build_model(disp):
     a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
     a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
     a.Set(name='RP_Left_Set', referencePoints=(a.referencePoints[rp3_obj.id],))
-    if CLAMP_MODE != 'none':
+    if CLAMP_MODE != 'none' or LOAD_MODE == 'cload':
         a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
         a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
-    # Tie (RP <-> 케이블 시작단) — mode.py 와 동일
-    my_model.Tie(name='Tie_Top', main=a.sets['RP_Top_Set'], secondary=start_c1,
-                 positionToleranceMethod=COMPUTED)
-    my_model.Tie(name='Tie_Right', main=a.sets['RP_Right_Set'], secondary=start_c2,
-                 positionToleranceMethod=COMPUTED)
-    my_model.Tie(name='Tie_Left', main=a.sets['RP_Left_Set'], secondary=start_c3,
-                 positionToleranceMethod=COMPUTED)
-    if CLAMP_MODE == 'driven':
+    # Tie (RP <-> 케이블 시작단) — mode.py 와 동일. cload 라우트에는 케이블이 없다.
+    if LOAD_MODE == 'cable':
+        my_model.Tie(name='Tie_Top', main=a.sets['RP_Top_Set'], secondary=start_c1,
+                     positionToleranceMethod=COMPUTED)
+        my_model.Tie(name='Tie_Right', main=a.sets['RP_Right_Set'], secondary=start_c2,
+                     positionToleranceMethod=COMPUTED)
+        my_model.Tie(name='Tie_Left', main=a.sets['RP_Left_Set'], secondary=start_c3,
+                     positionToleranceMethod=COMPUTED)
+    if LOAD_MODE == 'cable' and CLAMP_MODE == 'driven':
         # HF 와 동일: 클램프 패치 RP <-Tie- 케이블 시작단. RP 에는 BC 를 걸지 않는다(자유).
         my_model.Tie(name='Tie_CL', main=a.sets['RP_CL_Set'], secondary=start_cl,
                      positionToleranceMethod=COMPUTED)
         my_model.Tie(name='Tie_CR', main=a.sets['RP_CR_Set'], secondary=start_cr,
                      positionToleranceMethod=COMPUTED)
     a.regenerate()
+
+    # ---- 구동점 추상화 ----
+    #   'cable' : 케이블 끝단(end_c*)에 변위를 준다.
+    #   'cload' : 케이블이 없으므로 **강체패치 RP** 에 하중/구속을 직접 건다.
+    if LOAD_MODE == 'cable':
+        A1, A2, A3 = end_c1, end_c2, end_c3
+    else:
+        A1, A2, A3 = (a.sets['RP_Top_Set'], a.sets['RP_Right_Set'], a.sets['RP_Left_Set'])
+    print("%s LOAD_MODE=%s -> 구동점 %s" % (TAG, LOAD_MODE,
+          'CABLE ENDS' if LOAD_MODE == 'cable' else 'RIGID PATCH RPs'))
 
     # ---- Step 1: GlobalTension (프리텐션) — run_abaqus_new.py 와 동일 ----
     my_model.StaticStep(
@@ -801,39 +844,44 @@ def build_model(disp):
         region=inst_memb.sets['All'],
         u3=SET
     )
-    # Top 정점: 완전 고정 — mode.py 와 동일하게 케이블 끝단(end_c1)에 건다.
-    #   RP_Top_Set 은 Tie 로만 연결된다(mode.py 도 그렇다).
+    # Top 정점: 완전 고정. 'cable' 이면 케이블 끝단, 'cload' 면 강체패치 RP 에 건다.
     my_model.DisplacementBC(
         name='BC_Anchor_Top',
         createStepName='Initial',
-        region=end_c1,
+        region=A1,
         u1=SET, u2=SET, u3=SET, ur1=SET, ur2=SET, ur3=SET
     )
 
-    # Right/Left 정점: mode.py 와 동일하게 u3+회전만 고정하고, 구동은 케이블 끝단에 건다.
+    # Right/Left 정점: u3+회전만 고정하고, 구동은 A2/A3 에 건다.
     my_model.DisplacementBC(
-        name='BC_Right_Z', createStepName='Initial', region=end_c2,
+        name='BC_Right_Z', createStepName='Initial', region=A2,
         u3=SET, ur1=SET, ur2=SET, ur3=SET
     )
     my_model.DisplacementBC(
-        name='BC_Left_Z', createStepName='Initial', region=end_c3,
+        name='BC_Left_Z', createStepName='Initial', region=A3,
         u3=SET, ur1=SET, ur2=SET, ur3=SET
     )
     disp_a = disp
-    my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
-                            region=end_c2, u1=SET, u2=SET)
-    my_model.DisplacementBC(name='Disp_Control_Left', createStepName='Initial',
-                            region=end_c3, u1=SET, u2=SET)
-    my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
-        stepName='Step-GlobalTension',
-        u1=disp_a * cos_val,
-        u2=-disp_a * sin_val
-    )
-    my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
-        stepName='Step-GlobalTension',
-        u1=-disp_a * cos_val,
-        u2=-disp_a * sin_val
-    )
+    if LOAD_MODE == 'cable':
+        # 변위 구동 (케이블 끝단)
+        my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
+                                region=A2, u1=SET, u2=SET)
+        my_model.DisplacementBC(name='Disp_Control_Left', createStepName='Initial',
+                                region=A3, u1=SET, u2=SET)
+        my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
+            stepName='Step-GlobalTension',
+            u1=disp_a * cos_val,
+            u2=-disp_a * sin_val
+        )
+        my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
+            stepName='Step-GlobalTension',
+            u1=-disp_a * cos_val,
+            u2=-disp_a * sin_val
+        )
+    # 'cload' 라우트의 꼭짓점 하중은 아래 CLAMP_MODE 분기(LOAD_MODE=='cload')에서
+    #   일괄 생성한다. 여기서 또 만들면 같은 이름이 두 createStepName 으로 등록되어
+    #   나중 것이 0 으로 덮어쓴다(스텁 하네스로 적발: CF_Corner_* 가 Initial/GlobalTension
+    #   양쪽에 나타나 최종값이 0 이 됐다).
     # [paper3] 위 꼭짓점도 케이블 축(+y)으로 당긴다 — mode.py 와 동일.
     #   corner2(기본)에서는 BC_Anchor_Top 의 완전고정이 그대로 유지된다.
     if PRETENSION_MODE == 'paper3':
@@ -841,14 +889,48 @@ def build_model(disp):
             stepName='Step-GlobalTension',
             u1=0.0, u2=disp_a * DISP_TOP_OVER_CORNER
         )
+    _top_note = (' / 위 %.4e m' % (disp_a * DISP_TOP_OVER_CORNER)
+                 if PRETENSION_MODE == 'paper3' else ' (Top 완전고정)')
     print("%s 프리텐션 = %s : 아래 %.4e m%s"
-          % (TAG, PRETENSION_MODE, disp_a,
-             (' / 위 %.4e m' % (disp_a * DISP_TOP_OVER_CORNER)) if PRETENSION_MODE == 'paper3'
-
-             else ' (Top 완전고정)'))
+          % (TAG, PRETENSION_MODE, disp_a, _top_note))
     # ---- CLAMP_MODE 별 RP 처리 (5종 의미는 §11) ----
     _sq2 = 2.0 ** 0.5
-    if CLAMP_MODE == 'none':
+    if LOAD_MODE == 'cload':
+        # =====================================================================
+        # [2026-10-07] all-CLOAD 라우트 — 사용자 결정.
+        #   클램프와 꼭짓점을 **같은 방식**(집중하중)으로 다룬다. 케이블이 없으므로
+        #   Truss 의 저강성/미구속 DOF 가 사라지고, base state 를 하중 크기로 직접
+        #   제어할 수 있다. Galhofo 의 only-membrane 계열과 같은 취지다.
+        #
+        #   RP 구속: 면외(u3)만 막는다(passive 와 동일). in-plane 은 하중이 잡는다.
+        #     실측 근거: driven(케이블, RP 자유)은 subspace 500->45/151 로 붕괴했고
+        #     passive(u3=0)는 음수 48 / CONVERGED=4 로 성공했다.
+        #
+        #   하중: cf 를 Initial 에서 0 으로 만들고 setValuesInStep 으로 스텝별 값을 준다.
+        #     GlobalTension = DEAD(base state) / Buckle = LIVE(하중 패턴, lambda 기준).
+        #     => lambda 가 '프리텐션 + 클램프의 몇 배에서 좌굴하는가' 로 직접 읽힌다.
+        # =====================================================================
+        my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
+                                region=a.sets['RP_CL_Set'], u3=0)
+        my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
+                                region=a.sets['RP_CR_Set'], u3=0)
+        for _nm, _reg, _c1, _c2 in (('CF_Corner_Right', A2, CORNER_F0 * cos_val, -CORNER_F0 * sin_val),
+                                    ('CF_Corner_Left',  A3, -CORNER_F0 * cos_val, -CORNER_F0 * sin_val),
+                                    ('CF_Clamp_CL', a.sets['RP_CL_Set'], DIR_CL[0] * CLAMP_F0, DIR_CL[1] * CLAMP_F0),
+                                    ('CF_Clamp_CR', a.sets['RP_CR_Set'], DIR_CR[0] * CLAMP_F0, DIR_CR[1] * CLAMP_F0)):
+            my_model.ConcentratedForce(name=_nm, createStepName='Initial',
+                                       region=_reg, cf1=0.0, cf2=0.0, cf3=0.0)
+        #   [paper3] 이면 Top 도 CLOAD 로 당긴다(Top 완전고정 대신).
+        _cf_map = {'CF_Corner_Right': (CORNER_F0 * cos_val, -CORNER_F0 * sin_val),
+                   'CF_Corner_Left':  (-CORNER_F0 * cos_val, -CORNER_F0 * sin_val),
+                   'CF_Clamp_CL': (DIR_CL[0] * CLAMP_F0, DIR_CL[1] * CLAMP_F0),
+                   'CF_Clamp_CR': (DIR_CR[0] * CLAMP_F0, DIR_CR[1] * CLAMP_F0)}
+        for _nm, (_c1, _c2) in _cf_map.items():
+            my_model.concentratedForces[_nm].setValuesInStep(
+                stepName='Step-GlobalTension', cf1=_c1, cf2=_c2, cf3=0.0)
+        print("%s [cload] DEAD 하중: 꼭짓점 CORNER_F0=%.4g N, 클램프 CLAMP_F0=%.4g N, RP 는 u3 만 구속"
+              % (TAG, CORNER_F0, CLAMP_F0))
+    elif CLAMP_MODE == 'none':
         pass
     elif CLAMP_MODE == 'fixed':
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
@@ -920,7 +1002,7 @@ def build_model(disp):
 
     # ---- Buckle 스텝: 논문 (c) 3변 u3=0 유지 + 클램프 구간은 면외 구속에서 제외(§9) ----
     _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
-                   if CLAMP_MODE != 'none' else set())
+                   if (CLAMP_MODE != 'none' or LOAD_MODE == 'cload') else set())
     _keep_labels = aba_grid_mesh.boundary_node_labels(
         inst_memb, base=BASE, height=HEIGHT, exclude_labels=_excl_edges)
     print("%s All_Edges_NoClamp 후보: 경계 노드 %d개 (클램프 반경 %.3g m 내 %d개 제외, 전체 막 노드 %d개)"
@@ -937,20 +1019,32 @@ def build_model(disp):
     )
 
     # ---- Buckle 스텝의 perturbation 하중 (검증된 대조 스크립트와 동일한 크기) ----
-    my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
-        stepName='Step-Buckle',
-        u1=PERTURBATION * cos_val,
-        u2=-PERTURBATION * sin_val
-    )
-    my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
-        stepName='Step-Buckle',
-        u1=-PERTURBATION * cos_val,
-        u2=-PERTURBATION * sin_val
-    )
+    #   [2026-10-07 결함수정] PATTERN_SIGN 을 여기에도 곱한다. mode.py 는 곱하는데
+    #   buckle 은 빠져 있어, PATTERN_SIGN 이 1.0 을 벗어나면 두 스크립트가 조용히
+    #   갈라졌다(검사기는 상수값만 비교하고 '사용 여부'는 보지 않는다).
+    if LOAD_MODE == 'cable':
+        #   [함정] 'cload' 라우트에는 이 두 BC 가 없다(하중이 CLOAD 로 대체됐다).
+        #   가드 없이 두면 KeyError 로 모델 생성 자체가 죽는다(스텁 하네스로 적발).
+        _ns = PATTERN_SIGN * PERTURBATION
+        my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
+            stepName='Step-Buckle', u1=_ns * cos_val, u2=-_ns * sin_val)
+        my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
+            stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
+
+    # [2026-10-07] all-CLOAD 라우트의 LIVE 하중 — Buckle 스텝에서 같은 CLOAD 를
+    #   PATTERN_SIGN 배로 다시 준다. 그러면 lambda 가 'DEAD 하중의 몇 배에서 좌굴' 로
+    #   직접 읽힌다(*BUCKLE: BUCKLING LOAD = DEAD + lambda x LIVE).
+    if LOAD_MODE == 'cload':
+        for _nm, (_c1, _c2) in _cf_map.items():
+            my_model.concentratedForces[_nm].setValuesInStep(
+                stepName='Step-Buckle',
+                cf1=PATTERN_SIGN * _c1, cf2=PATTERN_SIGN * _c2, cf3=0.0)
+        print("%s [cload] LIVE 하중: 위 4개 CLOAD x PATTERN_SIGN=%.3g (Buckle 스텝)"
+              % (TAG, PATTERN_SIGN))
 
     # 클램프 섭동 (driven 모드만): A-route 의 CLAMP_PERT = PERTURBATION*d_c 와 동일.
     #   클램프도 구동점이면 좌굴 스텝에서 같은 방식으로 섭동을 줘야 K_delta 가 일관된다.
-    if CLAMP_MODE == 'driven':
+    if LOAD_MODE == 'cable' and CLAMP_MODE == 'driven':
         my_model.boundaryConditions['Disp_Clamp_CL'].setValuesInStep(
             stepName='Step-Buckle',
             u1=DIR_CL[0] * CLAMP_PERT, u2=DIR_CL[1] * CLAMP_PERT)
@@ -966,11 +1060,12 @@ ELEM_TAG = 's4'
 #   d_c_eff 도 이름에 넣는다 — CLAMP_PULL 을 CLI 로 바꿔 d_c 스윕을 하면 DISP 만으로는
 #   이름이 겹쳐 run_job_safely 가 직전 증거를 지운다(§11).
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
-JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s%s' % (int(round(x_c * 100.0)),
+_load_tag = '' if LOAD_MODE == 'cable' else '_%s' % LOAD_MODE
+JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s%s%s' % (int(round(x_c * 100.0)),
                                                       int(round(DISP * 1.0e6)),
                                                       int(round(CLAMP_DC_EFF * 100.0)),
-                                                      ELEM_TAG, CLAMP_MODE, CLAMP_DIR,
-                                                      _excl_tag)
+                                                      ELEM_TAG, CLAMP_MODE, CLAMP_DIR, _excl_tag,
+                                                      _load_tag)
 
 print("")
 print("=" * 78)
