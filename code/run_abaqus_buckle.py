@@ -319,8 +319,12 @@ PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 ->
 #   FOUND (INSTABILITIES IN THE BASE STATE) 로 죽는다. 클램프를 끄면(none) 같은
 #   조건에서 CONVERGED=4 다 — 즉 창이 아니라 음수 개수가 문제다.
 #   그래서 창을 넓혀(D) 음수 48 개를 넘겨 본다. 실패 비용이 40 초라 판정이 빠르다.
-N_EIG_BUCKLE = 10      # 추출 요청 고유값 수  [2026-10-07] 100 -> 200 (래더 L4)
-BUCKLE_VECTORS = 20    # subspace 기저 벡터 수  [2026-10-07] 250 -> 500 (래더 L4)
+#   창을 정하는 규칙은 이제 두 조건의 **교집합**이다(parse_buckle_log._window_hint 가 같은 판정을 찍는다):
+#     (a) N_EIG_BUCKLE > base state 의 SYSTEM 음수 고유값 개수
+#     (b) N_EIG_BUCKLE <= 실제 subspace 차원 ("REDUCED TO n" 의 n)
+#   (a)는 음수 모드 뒤에 양수 모드가 들어오게 하는 조건, (b)는 원리적 상한이다.
+N_EIG_BUCKLE = 10      # 추출 요청 고유값 수  [2026-10-07 이력] 100 -> 200 -> (REDUCED TO 14) -> 10
+BUCKLE_VECTORS = 20    # subspace 기저 벡터 수  [2026-10-07 이력] 250 -> 500 -> (REDUCED TO 14) -> 20
 #   ⚠️ 실측 반증(2026-10-07, cload 라우트): 요청 500 -> "VECTORS IN SUBSPACE IS REDUCED TO 14".
 #      즉 실제 기저는 14 차원인데 200 개를 요청했다 -> ITERATION 마다 수렴 수가 출렁이고
 #      (4,5,2,4,4,2) 결국 ***ERROR: THE EIGENVALUES CANNOT BE FOUND.
@@ -641,7 +645,8 @@ def report_job(job_name):
         print('      | %s' % ln[:170], flush=True)
     print('%s diag saved: %s (%d lines)' % (TAG, dst, len(out)), flush=True)
     return dst
-    return dst
+
+
 def create_rigid_patch(a, inst_memb, name, coord, radius):
     """
     지정된 좌표 기준 radius 내의 노드들을 묶어 강체운동을 하도록 Tie 설정
