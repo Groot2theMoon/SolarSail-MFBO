@@ -283,7 +283,23 @@ class Model(Obj):
         self.boundaryConditions[name] = BC(name, self._log, kw.pop('createStepName', None), **kw)
         return self.boundaryConditions[name]
 
+    def _reject_initial_load(self, kind, name, kw):
+        """[법칙] Abaqus 는 **하중**을 Initial 스텝에 만들 수 없다.
+
+        ValueError: The specified step either does not exist or is the Initial step.
+        BC 는 Initial 에 만들어도 된다 — 그래서 이 검사는 하중 생성기에만 건다.
+        (2026-10-07 실측: clamp_lf 배선이 Initial 에 CF 를 만들어 모델 생성이 죽었는데,
+         관대한 목이 통과시켜 Abaqus 왕복 1회를 잃었다. 그래서 목에 법칙을 넣는다 —
+         스텁 하네스의 존재 이유가 바로 이런 '라이선스 없이 잡히는 실수' 이다.)
+        """
+        if kw.get('createStepName') == 'Initial':
+            raise ValueError(
+                "[harness] %s %r 을 Initial 스텝에 만들 수 없습니다 (Abaqus: 'The specified "
+                "step either does not exist or is the Initial step'). DEAD 값을 만들 때 주고 "
+                "Step-Buckle 에서 setValuesInStep 으로 LIVE 를 주세요." % (kind, name))
+
     def ConcentratedForce(self, name=None, **kw):
+        self._reject_initial_load('ConcentratedForce', name, kw)
         self.concentratedForces[name] = BC(name, self._log, kw.pop('createStepName', None), **kw)
         return self.concentratedForces[name]
 

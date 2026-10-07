@@ -987,8 +987,12 @@ def build_model(disp):
         #   하중 세트 P = 꼭짓점 + 클램프. DEAD = DEAD_FRAC x P, LIVE = (1-DEAD_FRAC) x P.
         #   BUCKLING LOAD = DEAD + lambda*LIVE 이므로 **lambda = 1 이 운용점**이다.
         #   RP 구속: 면외(u3)만 막는다. in-plane 은 하중이 잡는다.
-        #   [함정] 같은 이름을 두 createStepName 으로 만들면 나중 것이 0 으로 덮어쓴다
-        #          => Initial 에 0 으로 한 번만 만들고 setValuesInStep 으로만 바꾼다.
+        #   [함정 1] **하중은 Initial 스텝에 만들 수 없다** — Abaqus 가
+        #     "ValueError: The specified step either does not exist or is the Initial step"
+        #     로 모델 생성을 죽인다(2026-10-07 실측; BC 는 Initial 에 가능해서 더 헷갈린다).
+        #     => 만들 때 DEAD 값을 주고, LIVE 만 setValuesInStep 으로 바꾼다.
+        #   [함정 2] 같은 이름을 두 createStepName 으로 만들면 나중 것이 0 으로 덮어쓴다
+        #     (스텁 하네스로 적발) => 이름당 **한 번만** 만든다.
         # =====================================================================
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
                                 region=a.sets['RP_CL_Set'], u3=0)
@@ -998,15 +1002,14 @@ def build_model(disp):
               ('CF_Corner_Left',  A3, -CORNER_F0 * cos_val, -CORNER_F0 * sin_val),
               ('CF_Clamp_CL', a.sets['RP_CL_Set'], DIR_CL[0] * CLAMP_F0, DIR_CL[1] * CLAMP_F0),
               ('CF_Clamp_CR', a.sets['RP_CR_Set'], DIR_CR[0] * CLAMP_F0, DIR_CR[1] * CLAMP_F0))
+        # DEAD = DEAD_FRAC x P — 0 을 생략하지 않고 **만들 때 명시**한다(함정 1).
         for _nm, _reg, _c1, _c2 in _P:
-            my_model.ConcentratedForce(name=_nm, createStepName='Initial',
-                                       region=_reg, cf1=0.0, cf2=0.0, cf3=0.0)
-        # DEAD = DEAD_FRAC x P  (0 을 생략하지 않고 **명시**한다)
-        for _nm, _reg, _c1, _c2 in _P:
-            my_model.concentratedForces[_nm].setValuesInStep(
-                stepName='Step-GlobalTension',
-                cf1=DEAD_FRAC * _c1, cf2=DEAD_FRAC * _c2, cf3=0.0)
-        # [함정 2] LIVE 는 Buckle 스텝에 정의해야 lambda 에 들어간다.
+            my_model.ConcentratedForce(name=_nm, createStepName='Step-GlobalTension',
+                                       region=_reg,
+                                       cf1=DEAD_FRAC * _c1, cf2=DEAD_FRAC * _c2, cf3=0.0)
+        # LIVE = (1-DEAD_FRAC) x P — Buckle 스텝에 있다가 lambda 에 곱해진다(§18.2 회계).
+        #   setValuesInStep 은 그 스텝의 값을 **대체**하므로, lambda=1 에서
+        #   총하중 = DEAD(base state) + LIVE = P = 운용점이 된다.
         for _nm, _reg, _c1, _c2 in _P:
             my_model.concentratedForces[_nm].setValuesInStep(
                 stepName='Step-Buckle',
@@ -1014,7 +1017,7 @@ def build_model(disp):
                 cf2=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _c2, cf3=0.0)
         print("%s [clamp_lf] P = corner(%.4g N) + clamp(%.4g N) : 비율 clamp/corner=%.3g"
               % (TAG, CORNER_F0, CLAMP_F0, CLAMP_F0 / CORNER_F0))
-        print("%s [clamp_lf] DEAD_FRAC=%.4g -> DEAD=%.4g x P (GlobalTension) / "
+        print("%s [clamp_lf] DEAD_FRAC=%.4g -> DEAD=%.4g x P (만들 때, GlobalTension) / "
               "LIVE=%.4g x P x PATTERN_SIGN(%+.2g) (Buckle)  => lambda=1 이 운용점"
               % (TAG, DEAD_FRAC, DEAD_FRAC, 1.0 - DEAD_FRAC, PATTERN_SIGN))
     elif HAS_CLAMPS:
