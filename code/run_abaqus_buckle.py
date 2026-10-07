@@ -130,6 +130,7 @@ if PRETENSION_MODE not in ('corner2', 'paper3'):
 DISP_TOP_OVER_CORNER = 1.4142135623   # paper3 전용
 
 CLAMP_EXCL_R = 0.0   # m — 0.0 이면 제외 노드가 없어 All_Edges_NoClamp == All_Edges 다.
+#   [2026-10-07] CLI 4번째 인자로 덮어쓸 수 있다(d_c 스윕과 함께 클램프 구간 면외 자유를 본다).
 #   [2026-10-06 철회] 0.2 로 두면 클램프 부착 구간의 경계 노드가 면외 자유로워져 base state 가
 #   불안정해진다(실측: lambda 전부 음수, CONVERGED 0, 스프레드 0.406 %). 이전에 CONVERGED=100
 #   이었던 설정과 같게 0.0 으로 되돌린다. 근거와 실측은 §9.
@@ -288,7 +289,7 @@ def parse_args(argv):
             stop = t
             break
     nums.reverse()
-    if not (1 <= len(nums) <= 3):
+    if not (1 <= len(nums) <= 4):
         raise RuntimeError(
             'Expected 1 to 3 trailing numeric arguments (<x_c> [disp_m] [clamp_pull_m]), got %r '
             '(first non-numeric token from the end: %r).\n'
@@ -296,10 +297,11 @@ def parse_args(argv):
             % (nums, stop))
     return (nums[0],
             (nums[1] if len(nums) > 1 else None),
-            (nums[2] if len(nums) > 2 else None))
+            (nums[2] if len(nums) > 2 else None),
+            (nums[3] if len(nums) > 3 else None))
 
 
-x_c, _disp_arg, _clamp_arg = parse_args(sys.argv)
+x_c, _disp_arg, _clamp_arg, _excl_arg = parse_args(sys.argv)
 DISP = DISP_GLOBAL if _disp_arg is None else _disp_arg
 # 클램프 법선 당김 — 기본은 코너 당김과 같은 비율(A-route 의 d_c), CLI 3번째 인자로 직접 지정 가능.
 #   예: -- 0.5 0 5e-5  -> 코너 미구동 + 클램프만 5e-5 m (클램프 단독 구동 진단)
@@ -307,6 +309,10 @@ CLAMP_PULL = (DISP * CLAMP_DC if _clamp_arg is None else _clamp_arg)
 # [2026-10-07 수정] CLAMP_PERT 를 CLAMP_DC 가 아니라 **실제 CLAMP_PULL** 에 비례시킨다.
 #   CLI 3번째 인자로 CLAMP_PULL 을 직접 주면 예전 코드는 섭동만 CLAMP_DC(0.5) 기준으로
 #   남아 하중과 섭동이 어긋났다(d_c 스윕이 조용히 오염된다).
+if _excl_arg is not None:
+    CLAMP_EXCL_R = _excl_arg
+    if CLAMP_EXCL_R < 0.0:
+        raise RuntimeError('CLAMP_EXCL_R=%r < 0' % (CLAMP_EXCL_R,))
 CLAMP_DC_EFF = CLAMP_PULL / DISP if DISP > 0.0 else 0.0
 CLAMP_PERT = PERTURBATION * CLAMP_DC_EFF   # 좌굴 스텝 클램프 섭동 [m]
 
@@ -352,7 +358,8 @@ if CLAMP_DIR == 'balanced':
           % (TAG, DISP * CLAMP_DC, CLAMP_PULL, CLAMP_PULL / DISP))
 
 print("%s x_c=%g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
-print("%s d_c_eff=%.4f (CLAMP_PULL=%.4e, CLAMP_PERT=%.4e)" % (TAG, CLAMP_DC_EFF, CLAMP_PULL, CLAMP_PERT))
+print("%s d_c_eff=%.4f (CLAMP_PULL=%.4e, CLAMP_PERT=%.4e)  CLAMP_EXCL_R=%.4f m"
+      % (TAG, CLAMP_DC_EFF, CLAMP_PULL, CLAMP_PERT, CLAMP_EXCL_R))
 print("%s CLAMP_DIR=%s -> DIR_CL=%s DIR_CR=%s  (y성분 합=%+.3e m)"
       % (TAG, CLAMP_DIR, DIR_CL, DIR_CR, CLAMP_PULL * (DIR_CL[1] + DIR_CR[1])))
 if CLAMP_MODE == 'driven':
@@ -790,12 +797,29 @@ def build_model(disp):
                                 region=a.sets['RP_CR_Set'], u3=0)
     elif CLAMP_MODE == 'driven':
         # [2026-10-07] 클램프 = 케이블 경유 구동 (HF 와 동일 구조).
-        #   패치 RP(RP_CL_Set) 에는 **BC 를 걸지 않는다** — 완전 자유(6 DOF).
-        #   구동은 케이블 끝단(end_cl/end_cr)에만 건다. 케이블은 축력만 전달하므로
+        #   구동은 케이블 끝단(end_cl/end_cr)에 건다. 케이블은 축력만 전달하므로
         #   패치가 스스로 힘평형 위치로 가고, 강제 변위의 과구속(음수 1256)이 사라진다.
+        #
+        #   [2026-10-07 2차] **RP_CL_Set 에도 u3=0 을 건다.**
+        #     실측: RP 에 BC 를 하나도 안 걸면 subspace 가 500 -> 45 로 붕괴(91 % 선형의존)하고
+        #     lambda1 ~ 9e-08 이 d_c 와 무관하게 남아 CONVERGED=0 이 된다.
+        #       d_c=0.5 : SYSTEM 888 / DIFFERENTIAL 27462 / 500->151 / lambda1 3.79e-08
+        #       d_c=0.25: SYSTEM 494 / DIFFERENTIAL 27761 / 500->45  / lambda1 9.14e-08
+        #     DIFFERENTIAL 이 d_c 를 절반으로 줄여도 불변 -> 원인은 당김 크기가 아니다.
+        #     Canditate 는 RP 의 저강성 모드다: Cable_CL 은 T3D2 Truss 라 축방향 강성만 주고,
+        #     Tie 는 위치 공차만 정할 뿐 회전을 구속하지 않는다.
+        #     HF(run_abaqus.py)는 이 구조로도 완주하는데, 그건 *Static 이라 stabilization 이
+        #     저강성 모드를 흡수하기 때문이다. *BUCKLE(고유해석)에서는 치명적이다.
+        #     그리고 passive 는 RP 에 u3=0 만 걸고 성공했다(음수 48, CONVERGED=4).
+        #     => passive 의 RP 구속과 driven 의 케이블 구동을 합친다. 면외만 막고
+        #        in-plane 은 케이블이 잡게 두므로 과구속은 생기지 않는다.
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                                region=end_cl, u3=0)
+                                region=a.sets['RP_CL_Set'], u3=0)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
+                                region=a.sets['RP_CR_Set'], u3=0)
+        my_model.DisplacementBC(name='BC_ClampEnd_CL', createStepName='Initial',
+                                region=end_cl, u3=0)
+        my_model.DisplacementBC(name='BC_ClampEnd_CR', createStepName='Initial',
                                 region=end_cr, u3=0)
         my_model.DisplacementBC(name='Disp_Clamp_CL', createStepName='Initial',
                                 region=end_cl, u1=0, u2=0)
@@ -855,10 +879,12 @@ def build_model(disp):
 ELEM_TAG = 's4'
 #   d_c_eff 도 이름에 넣는다 — CLAMP_PULL 을 CLI 로 바꿔 d_c 스윕을 하면 DISP 만으로는
 #   이름이 겹쳐 run_job_safely 가 직전 증거를 지운다(§11).
-JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s' % (int(round(x_c * 100.0)),
-                                                     int(round(DISP * 1.0e6)),
-                                                     int(round(CLAMP_DC_EFF * 100.0)),
-                                                     ELEM_TAG, CLAMP_MODE, CLAMP_DIR)
+_excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
+JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s%s' % (int(round(x_c * 100.0)),
+                                                      int(round(DISP * 1.0e6)),
+                                                      int(round(CLAMP_DC_EFF * 100.0)),
+                                                      ELEM_TAG, CLAMP_MODE, CLAMP_DIR,
+                                                      _excl_tag)
 
 print("")
 print("=" * 78)
