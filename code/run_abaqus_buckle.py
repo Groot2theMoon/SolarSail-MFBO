@@ -15,20 +15,24 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
 
 사용법
     abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
-                                              [neig=<N>] [vec=<M>]
+                                              [neig] [vec]
         x_c            클램프 위치 파라미터. 0.5 -> 좌(5,5) / 우(15,5)
-        disp_m         GlobalTension 코너 당김 [m]. 생략하면 DISP_GLOBAL.
+        disp_m         GlobalTension 코너 당김 [m]. 생략하면 DISP_GLOBAL (1.8e-5).
         clamp_pull_m   클램프 당김 [m]. 생략하면 disp_m * CLAMP_DC.
         clamp_excl_r_m 클램프 반경 내 노드를 면외 구속에서 제외 [m]. 기본 0.0.
-        neig=<N>       N_EIG_BUCKLE 덮어쓰기 (추출 요청 고유값 수)
-        vec=<M>        BUCKLE_VECTORS 덮어쓰기 (subspace 기저 벡터 수)
+        neig           N_EIG_BUCKLE (추출 요청 고유값 수). 정수.
+        vec            BUCKLE_VECTORS (subspace 기저 벡터 수). 정수.
     예)  abaqus cae noGUI=run_abaqus_buckle.py -- 0.5
          abaqus cae noGUI=run_abaqus_buckle.py -- 0.25 1.8e-5 9.0e-6
-         abaqus cae noGUI=run_abaqus_buckle.py -- 0.25 neig=10 vec=20
+         abaqus cae noGUI=run_abaqus_buckle.py -- 0.25 1.8e-5 9.0e-6 0.0 10 20
 
     ⚠️ neig 는 '실제 subspace 차원' 이하여야 한다. 실측(2026-10-07): vec=500 을 요청해도
        'VECTORS IN SUBSPACE IS REDUCED TO 14' 가 찍히면 200 개는 원리적으로 못 찾는다.
        창을 키우는 대신 neig/vec 를 줄이는 쪽이 맞다.
+
+    ⚠️ neig/vec 는 **위치 인자**로 주는 것을 기본으로 한다. (Windows 런처가 `key=value` 의
+       `=` 를 소비해 값만 도착한 사고가 있었다 -> `-- 0.25 10 20` 이 disp_m=10 m 로 해석됨.)
+       백업으로 `neig=<N>` / `vec=<M>` 형식도 받는다. disp_m 에는 1 mm 상한 가드가 있다.
 
 산출물 (code/buckle/)
     <job>.odb / .dat / .msg / .sta / .fil / .diag.txt
@@ -348,20 +352,37 @@ def parse_args(argv):
             stop = t
             break
     nums.reverse()
-    if not (1 <= len(nums) <= 4):
+    if not (1 <= len(nums) <= 6):
         raise RuntimeError(
-            'Expected 1 to 4 trailing numeric arguments '
-            '(<x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]), got %r '
+            'Expected 1 to 6 trailing numeric arguments '
+            '(<x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] [neig] [vec]), got %r '
             '(first non-numeric token from the end: %r).\n'
             'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] '
-            '[clamp_excl_r_m] [neig=<N>] [vec=<M>]'
+            '[clamp_excl_r_m] [neig] [vec]'
             % (nums, stop))
+    # [2026-10-07] neig/vec 는 **위치 인자**로도 받는다(5번째, 6번째).
+    #   사고: Windows 런처를 지나며 `neig=10 vec=20` 의 `=` 가 소비되어 값 `10`, `20` 만
+    #   도착했고, 파서는 그것을 disp_m=10 m / clamp_pull_m=20 m 로 받아 **조용히 다른 모델**
+    #   (잡 이름 Buckle_xc025_d10000000um_dc200_...)을 만들었다. `=` 에 의존하지 않는다.
+    _kvn = kv.get('neig')
+    _kvv = kv.get('vec')
+    if len(nums) > 4:
+        _kvn = nums[4]
+    if len(nums) > 5:
+        _kvv = nums[5]
+    for _nm, _val in (('neig', _kvn), ('vec', _kvv)):
+        if _val is None:
+            continue
+        if abs(_val - round(_val)) > 1e-9:
+            raise RuntimeError('%s=%r must be an integer' % (_nm, _val))
+        if _val < 1:
+            raise RuntimeError('%s=%r < 1' % (_nm, _val))
     return (nums[0],
             (nums[1] if len(nums) > 1 else None),
             (nums[2] if len(nums) > 2 else None),
             (nums[3] if len(nums) > 3 else None),
-            kv.get('neig'),
-            kv.get('vec'))
+            (int(round(_kvn)) if _kvn is not None else None),
+            (int(round(_kvv)) if _kvv is not None else None))
 
 
 x_c, _disp_arg, _clamp_arg, _excl_arg, _neig_arg, _vec_arg = parse_args(sys.argv)
@@ -390,6 +411,17 @@ if not (0.03 <= x_c <= 0.95):
           "the clamp patch may overlap a vertex patch (ledger M-8)." % (TAG, x_c))
 if DISP < 0.0:
     raise RuntimeError('disp_m must be >= 0 (got %r).' % (DISP,))
+# [2026-10-07] 상한 가드. DISP 는 이 모델의 크기(20 m)에 비해 작아야 한다.
+#   정상 운용점은 DISP_GLOBAL = 1.8e-05 m (18 um), 논문 좌굴모델도 모서리 5e-4 m / 정점 1e-3 m 다.
+#   실사고: 런처가 `neig=10` 의 `=` 를 소비해 값 `10` 이 disp_m 으로 들어왔고, 10 m 당김으로
+#   잡이 돌았다(잡 이름 d10000000um). 오류가 아니라 **엉뚱한 해석**이라 눈치채기 어렵다.
+DISP_MAX = 1.0e-3   # m
+if DISP > DISP_MAX:
+    raise RuntimeError(
+        'disp_m=%r m is above the sanity cap DISP_MAX=%r m. '
+        'This model is 20 m x 10 m with a 5e-6 m membrane; the operating point is 1.8e-05 m. '
+        'Check the argument order: <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] [neig] [vec]'
+        % (DISP, DISP_MAX))
 if DISP == 0.0:
     # 코너를 구동하지 않는다 = 클램프 단독 구동 케이스 (진단용).
     # Initial 단계의 Disp_Control_Right/Left(u1=u2=0) 값이 그대로 유지된다.
