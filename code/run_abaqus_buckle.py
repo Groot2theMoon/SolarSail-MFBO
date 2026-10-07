@@ -420,14 +420,16 @@ def report_job(job_name):
     if len(out) == 1:
         out.append('(no .msg/.dat found — the job died before writing them)')
 
-    for ln in out:
-        print('      | %s' % ln[:170])
-
+    # 파일을 **먼저** 쓴다. 콘솔 출력은 예외로 프로세스가 죽으면 버퍼가 flush 되지 않고
+    #   사라진다 — 그러면 사용자에게 남는 것이 없다(Status=None 사례에서 실제로 겪었다).
     dst = os.path.join(_RUN, '%s.diag.txt' % job_name)
     import io as _io
     with _io.open(dst, 'w', encoding='utf-8', errors='replace') as f:
         f.write('\n'.join(out) + '\n')
-    print('%s diag saved: %s (%d lines)' % (TAG, dst, len(out)))
+    for ln in out:
+        print('      | %s' % ln[:170], flush=True)
+    print('%s diag saved: %s (%d lines)' % (TAG, dst, len(out)), flush=True)
+    return dst
     return dst
 def create_rigid_patch(a, inst_memb, name, coord, radius):
     """
@@ -768,13 +770,19 @@ except Exception:
     for _fn in (JOB_NAME + ".log", JOB_NAME + ".msg", JOB_NAME + ".dat"):
         _p = os.path.join(os.getcwd(), _fn)
         if os.path.exists(_p):
-            print("%s [실패진단] %s (%d bytes)" % (TAG, _fn, os.path.getsize(_p)))
+            print("%s [실패진단] %s (%d bytes)" % (TAG, _fn, os.path.getsize(_p)), flush=True)
         else:
-            print("%s [실패진단] %s 없음 — 잡이 시작조차 못 했다" % (TAG, _fn))
+            print("%s [실패진단] %s 없음 — 잡이 시작조차 못 했다" % (TAG, _fn), flush=True)
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+    _diag_dst = os.path.join(_RUN, "%s.diag.txt" % JOB_NAME)
+    print("%s [실패진단] report_job 호출 -> %s" % (TAG, _diag_dst), flush=True)
     try:
         report_job(JOB_NAME)
     except Exception as _re:
-        print("%s report_job 실패(무시): %s" % (TAG, _re))
+        print("%s report_job 실패(무시): %s" % (TAG, _re), flush=True)
     raise
 
 report_job(JOB_NAME)
