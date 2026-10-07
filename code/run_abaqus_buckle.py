@@ -309,9 +309,18 @@ CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거�
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
 #   [mode 정합] mode.py 와 HF 는 0.01 을 쓴다. buckle 만 1e-4 였다.
+#   ⚠️ CASE='paper_s1' 에는 이 값을 쓰지 않는다 — 아래 PAPER_S1_LIVE_M 참조
+#      (논문 자신의 좌굴 스텝 크기에서만 lambda 비교가 성립한다).
 #   [2026-10-06 이력] 1e-4 에서 CONVERGED=100, 0.01 에서 CONVERGED=0 이었던 관측은
 #   클램프가 있는 상태에서 얻은 것이다. 이제 나머지 조건을 mode.py 와 맞췄으므로
 #   0.01 로 두고 다시 판정한다 — 클램프만 다른 상태에서 비교하려면 이 값도 같아야 한다.
+
+# ---- 논문 baseline 좌굴 스텝 크기 (CASE='paper_s1' 전용) ----
+PAPER_S1_LIVE_M = 0.10   # m — Galhofo 2022 의 좌굴 스텝은 꼭짓점 변위를 0.10 m 까지 올린다.
+#   lambda 는 LIVE 크기에 반비례하므로, **논문 자신의 크기**에서만 논문의 lambda
+#   (대역 3.18e-4)와 직접 비교가 성립한다. PERTURBATION(0.01, mode.py 와의 SHARED 계약)과
+#   분리해 둔 이유: 계약 항목을 케이스별로 바꾸면 HF<->buckle<->mode 게이트가 깨진다.
+#   [주의] paper_s1 의 LIVE 는 **prescribed 변위**(꼭짓점 3개)이지 CLOAD 가 아니다.
 # ---- 추출 창 (래더 L4) ----
 #   규칙(mode.py L26): '요청 고유값 수 > base state 의 음수 고유값 수' 여야 양수
 #   좌굴모드가 subspace 창에 들어온다. 그런데 클램프(passive)를 켜면 음수 고유값이
@@ -882,8 +891,8 @@ def build_model(disp):
         u3=SET, ur1=SET, ur2=SET, ur3=SET
     )
     disp_a = disp
-    if HAS_CABLES:
-        # 변위 구동 (케이블 끝단)
+    if HAS_CABLES or CORNER_DIR == 'paper45':
+        # 변위 구동: 'cable' 은 케이블 끝단, 'paper45' 는 꼭짓점 강체패치 RP (논문 레시피).
         my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
                                 region=A2, u1=SET, u2=SET)
         my_model.DisplacementBC(name='Disp_Control_Left', createStepName='Initial',
@@ -992,6 +1001,20 @@ def build_model(disp):
             stepName='Step-Buckle', u1=_ns * cos_val, u2=-_ns * sin_val)
         my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
             stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
+    if CORNER_DIR == 'paper45':
+        # 논문 baseline 은 **논문 자신의 좌굴 스텝 크기**로 올린다 — lambda 가 LIVE 크기에
+        #   반비례하므로 그 크기에서만 논문의 3.18e-4 와 직접 비교가 성립한다. 꼭짓점 3개 전부.
+        #   (CORNER_DIR=='paper45' 와 HAS_CABLES 는 CASE 로 상호배타 — _require_constant.)
+        _ns = PATTERN_SIGN * PAPER_S1_LIVE_M
+        my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
+            stepName='Step-Buckle', u1=_ns * cos_val, u2=-_ns * sin_val)
+        my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
+            stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
+        my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
+            stepName='Step-Buckle', u1=0.0, u2=_ns * DISP_TOP_OVER_CORNER)
+        print("%s [paper_s1] 꼭짓점 3개 prescribed 구동: DEAD=%.4e m (Top x%.4g) / "
+              "LIVE=%.4e m — 논문 좌굴 스텝 크기"
+              % (TAG, disp_a, DISP_TOP_OVER_CORNER, PAPER_S1_LIVE_M))
 
     return model_name
 

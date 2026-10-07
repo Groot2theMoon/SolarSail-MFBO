@@ -273,15 +273,40 @@ def main():
     #   mode.py 는 PATTERN_SIGN * PERTURBATION * ... 로 섭동을 주는데, buckle 은
     #   PATTERN_SIGN 을 선언만 하고 곱하지 않았다. 값이 1.0 일 때는 수치가 같아
     #   드러나지 않지만, -1.0 등으로 바꾸면 두 스크립트가 조용히 갈라진다.
-    _pat_use_b = b.count(norm("PATTERN_SIGN * PERTURBATION"))
-    _pat_use_c = c.count(norm("PATTERN_SIGN * PERTURBATION"))
+    #   [2026-10-07 보강] 케이스마다 LIVE 크기가 다르다(paper_s1 은 논문 크기를 쓴다).
+    #   리터럴 1종만 보면 **정당한 케이스 추가를 위반으로 잡는다**(실측: paper45 분기를 넣자
+    #   이 규칙이 위반 1건을 냈다). 그래서 서명된 크기 목록을 허용하고, 대신
+    #   **서명 없이 크기를 대입하는 줄**이 있으면 위반으로 센다(느슨해지는 게 아니라 촘촘해진다).
+    _SIGNED_MAGS = ("PERTURBATION", "PAPER_S1_LIVE_M")
+    _pat_use_b = sum(1 for s in _SIGNED_MAGS if norm("PATTERN_SIGN * " + s) in b)
+    _pat_use_c = 1 if norm("PATTERN_SIGN * PERTURBATION") in c else 0
+    with open(BUCKLE, encoding='utf-8') as _f:
+        _rawb_sig = _f.read()
+    _unsigned = []
+    for _ln in _rawb_sig.splitlines():
+        _code = _ln.split('#')[0]
+        if '=' not in _code:
+            continue
+        # 규칙의 범위를 좁힌다: **크기를 그대로 별칭에 넣는 줄**(name = PERTURBATION)만 잡는다.
+        #   `CLAMP_PERT = PERTURBATION * CLAMP_DC_EFF` 처럼 '크기 x 계수' 로 중간값을 만드는 줄은
+        #   정당하다(PATTERN_SIGN 은 그 중간값을 쓰는 자리에서 곱해진다) — 실측으로 이 오탐 2건을 봤다.
+        _rhs = _code.split('=', 1)[1].strip()
+        if _rhs in _SIGNED_MAGS and 'PATTERN_SIGN' not in _code:
+            _unsigned.append(_code.strip())
     print()
     print("--- PATTERN_SIGN 이 실제로 섭동에 곱해지는지 (선언만으로는 부족) ---")
-    for _nm, _n in (("run_abaqus_buckle.py", _pat_use_b), ("run_abaqus_mode.py", _pat_use_c)):
-        print("  %-4s %-22s PATTERN_SIGN * PERTURBATION  %d회" % ('OK' if _n else '!!!', _nm, _n))
+    print("  %-4s %-22s %s" % ('OK' if _pat_use_b else '!!!', 'run_abaqus_buckle.py',
+                               '%d/%d종 서명 사용 %s'
+                               % (_pat_use_b, len(_SIGNED_MAGS), _SIGNED_MAGS)))
+    print("  %-4s %-22s %s" % ('OK' if _pat_use_c else '!!!', 'run_abaqus_mode.py',
+                               '%d/1종 서명 사용 (PATTERN_SIGN * PERTURBATION)' % _pat_use_c))
+    for _u in _unsigned:
+        print("  !!!  서명 없는 LIVE 크기 대입: %s" % _u)
     if not _pat_use_b or not _pat_use_c:
         bad6.append("PATTERN_SIGN 사용(PATTERN_SIGN * PERTURBATION)")
         print("    -> 한쪽만 곱하면 PATTERN_SIGN != 1.0 에서 두 모델이 갈라진다.")
+    if _unsigned:
+        bad6.append("서명 없는 LIVE 크기 대입 %d줄" % len(_unsigned))
 
     # ------------------------------------------------------------------
     # [2026-10-07] 케이스 계약 — '클램프만 다르다'는 정합은 케이블 라우트 + 클램프 구속만인
