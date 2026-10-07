@@ -14,12 +14,21 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     vectors=250). 좌굴 스텝의 perturbation 은 0.01 m (대조 스크립트와 동일).
 
 사용법
-    abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m]
-        x_c     클램프 위치 파라미터. 0.5 -> 좌(5,5) / 우(15,5)
-        disp_m  GlobalTension 코너 당김 [m]. 생략하면 기본 5e-5 m.
-                (논문 좌굴 모델의 값: 모서리 5e-4 m, 정점 1e-3 m)
+    abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
+                                              [neig=<N>] [vec=<M>]
+        x_c            클램프 위치 파라미터. 0.5 -> 좌(5,5) / 우(15,5)
+        disp_m         GlobalTension 코너 당김 [m]. 생략하면 DISP_GLOBAL.
+        clamp_pull_m   클램프 당김 [m]. 생략하면 disp_m * CLAMP_DC.
+        clamp_excl_r_m 클램프 반경 내 노드를 면외 구속에서 제외 [m]. 기본 0.0.
+        neig=<N>       N_EIG_BUCKLE 덮어쓰기 (추출 요청 고유값 수)
+        vec=<M>        BUCKLE_VECTORS 덮어쓰기 (subspace 기저 벡터 수)
     예)  abaqus cae noGUI=run_abaqus_buckle.py -- 0.5
-         abaqus cae noGUI=run_abaqus_buckle.py -- 0.5 1e-3
+         abaqus cae noGUI=run_abaqus_buckle.py -- 0.25 1.8e-5 9.0e-6
+         abaqus cae noGUI=run_abaqus_buckle.py -- 0.25 neig=10 vec=20
+
+    ⚠️ neig 는 '실제 subspace 차원' 이하여야 한다. 실측(2026-10-07): vec=500 을 요청해도
+       'VECTORS IN SUBSPACE IS REDUCED TO 14' 가 찍히면 200 개는 원리적으로 못 찾는다.
+       창을 키우는 대신 neig/vec 를 줄이는 쪽이 맞다.
 
 산출물 (code/buckle/)
     <job>.odb / .dat / .msg / .sta / .fil / .diag.txt
@@ -234,6 +243,12 @@ PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 ->
 #   그래서 창을 넓혀(D) 음수 48 개를 넘겨 본다. 실패 비용이 40 초라 판정이 빠르다.
 N_EIG_BUCKLE = 200      # 추출 요청 고유값 수  [2026-10-07] 100 -> 200 (래더 L4)
 BUCKLE_VECTORS = 500    # subspace 기저 벡터 수  [2026-10-07] 250 -> 500 (래더 L4)
+#   ⚠️ 실측 반증(2026-10-07, cload 라우트): 요청 500 -> "VECTORS IN SUBSPACE IS REDUCED TO 14".
+#      즉 실제 기저는 14 차원인데 200 개를 요청했다 -> ITERATION 마다 수렴 수가 출렁이고
+#      (4,5,2,4,4,2) 결국 ***ERROR: THE EIGENVALUES CANNOT BE FOUND.
+#      "N_EIG <= 실제 subspace 차원" 이 조건이다. 창을 키우는 것은 역효과다.
+#      => `neig=<N> vec=<M>` 로 작게 주는 시험을 즉시 돌릴 수 있게 CLI 를 열어 둔다.
+#         예: -- 0.25 neig=10 vec=20      (우리에게 필요한 것은 양수 모드 몇 개뿐)
 BUCKLE_MAXITER = 5000
 BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
 BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
@@ -296,6 +311,28 @@ def parse_args(argv):
             'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] '
             '(e.g. -- 0.5 1e-3)' % (legacy[0],))
 
+    # key=value 토큰을 먼저 걷어낸다(위치 숫자와 섞이지 않게).
+    #   지원 키: neig=<N_EIG_BUCKLE>, vec=<BUCKLE_VECTORS>
+    #   [2026-10-07] subspace 기저가 요청 수보다 작아지면(실측 500 요청 -> 14 로 축소)
+    #   원리적으로 못 찾는다. 창을 키우는 대신 줄이는 시험을 빠르게 돌리기 위한 통로다.
+    kv, rest = {}, []
+    for t in toks:
+        low = t.strip().lower()
+        if '=' in low and not low.startswith('-') and not low.startswith('nogui='):
+            k, _, v = low.partition('=')
+            if k in ('neig', 'vec'):
+                try:
+                    kv[k] = int(float(v))
+                except ValueError:
+                    raise RuntimeError('bad %s=%r (integer expected)' % (k, v))
+                continue
+        rest.append(t)
+    toks = rest
+    if kv.get('neig') is not None and kv['neig'] < 1:
+        raise RuntimeError('neig=%r < 1' % (kv['neig'],))
+    if kv.get('vec') is not None and kv['vec'] < 1:
+        raise RuntimeError('vec=%r < 1' % (kv['vec'],))
+
     nums, stop = [], None
     for t in reversed(toks):
         if _is_launcher_token(t):
@@ -308,17 +345,21 @@ def parse_args(argv):
     nums.reverse()
     if not (1 <= len(nums) <= 4):
         raise RuntimeError(
-            'Expected 1 to 3 trailing numeric arguments (<x_c> [disp_m] [clamp_pull_m]), got %r '
+            'Expected 1 to 4 trailing numeric arguments '
+            '(<x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]), got %r '
             '(first non-numeric token from the end: %r).\n'
-            'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m]'
+            'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] '
+            '[clamp_excl_r_m] [neig=<N>] [vec=<M>]'
             % (nums, stop))
     return (nums[0],
             (nums[1] if len(nums) > 1 else None),
             (nums[2] if len(nums) > 2 else None),
-            (nums[3] if len(nums) > 3 else None))
+            (nums[3] if len(nums) > 3 else None),
+            kv.get('neig'),
+            kv.get('vec'))
 
 
-x_c, _disp_arg, _clamp_arg, _excl_arg = parse_args(sys.argv)
+x_c, _disp_arg, _clamp_arg, _excl_arg, _neig_arg, _vec_arg = parse_args(sys.argv)
 DISP = DISP_GLOBAL if _disp_arg is None else _disp_arg
 # 클램프 법선 당김 — 기본은 코너 당김과 같은 비율(A-route 의 d_c), CLI 3번째 인자로 직접 지정 가능.
 #   예: -- 0.5 0 5e-5  -> 코너 미구동 + 클램프만 5e-5 m (클램프 단독 구동 진단)
@@ -326,6 +367,10 @@ CLAMP_PULL = (DISP * CLAMP_DC if _clamp_arg is None else _clamp_arg)
 # [2026-10-07 수정] CLAMP_PERT 를 CLAMP_DC 가 아니라 **실제 CLAMP_PULL** 에 비례시킨다.
 #   CLI 3번째 인자로 CLAMP_PULL 을 직접 주면 예전 코드는 섭동만 CLAMP_DC(0.5) 기준으로
 #   남아 하중과 섭동이 어긋났다(d_c 스윕이 조용히 오염된다).
+if _neig_arg is not None:
+    N_EIG_BUCKLE = _neig_arg
+if _vec_arg is not None:
+    BUCKLE_VECTORS = _vec_arg
 if _excl_arg is not None:
     CLAMP_EXCL_R = _excl_arg
     if CLAMP_EXCL_R < 0.0:
@@ -912,11 +957,13 @@ ELEM_TAG = 's4'
 #   d_c_eff 도 이름에 넣는다 — CLAMP_PULL 을 CLI 로 바꿔 d_c 스윕을 하면 DISP 만으로는
 #   이름이 겹쳐 run_job_safely 가 직전 증거를 지운다(§11).
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
+_eig_tag = ('' if (N_EIG_BUCKLE == 200 and BUCKLE_VECTORS == 500)
+            else '_n%dv%d' % (N_EIG_BUCKLE, BUCKLE_VECTORS))
 JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s%s' % (int(round(x_c * 100.0)),
                                                       int(round(DISP * 1.0e6)),
                                                       int(round(CLAMP_DC_EFF * 100.0)),
                                                       ELEM_TAG, CLAMP_MODE, CLAMP_DIR,
-                                                      _excl_tag)
+                                                      _excl_tag + _eig_tag)
 
 print("")
 print("=" * 78)
