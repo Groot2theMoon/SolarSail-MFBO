@@ -320,7 +320,7 @@ MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 크기 [m] (케이블 런·HF 와 동일)
 PATTERN_SIGN = 1.0                           # 좌굴 '하중 패턴'의 부호: 1.0 = 바깥으로 더 당김 (오라클과 동일)
                                              # PATTERN_SIGN 은 바꾸지 않는다 — λ 부호를 정하는 것은 패턴이 아니라 base state 크기다(§8).
-N_EIG_BUCKLE = 200                           # [2026-10-07] 100 -> 200 (buckle 정합)
+N_EIG_BUCKLE = 10                           # [2026-10-07] 100 -> 200 (buckle 정합)
 #   근거: buckle 은 클램프가 있으면 100/250 에서 ***ERROR: THE EIGENVALUES CANNOT BE
 #   FOUND (INSTABILITIES IN THE BASE STATE) 로 죽고, 200/500 에서 CONVERGED=4 로 성공했다.
 #   실측: passive 와 none 의 lambda 는 상대차 6e-6(수치 잡음)으로 동일 -> 창만 문제였다.
@@ -333,7 +333,7 @@ N_EIG_BUCKLE = 200                           # [2026-10-07] 100 -> 200 (buckle �
                                              #   (12,086)에서 얻은 값이라 잘못된 진단이었다.
                                              #   => 메쉬를 먼저 고정하고, [DIAG] 의 음수 개수를 보고
                                              #      그보다 큰 값을 고른다(과거 성공값 100).
-BUCKLE_VECTORS = 500                         # [2026-10-05 복귀] 40 -> 250. 기저 벡터는 요청 수와
+BUCKLE_VECTORS = 20                         # [2026-10-05 복귀] 40 -> 250. 기저 벡터는 요청 수와
                                              #   함께 움직인다(과거 성공 조합 100/250).
 N_MODES = 4                                  # HF 에 주입할 모드 수(= ODB 모드 프레임에서 뽑는 개수)
 PATCH_RADIUS = 0.2                           # 꼭짓점 강체패치 반경 [m] — HF 와 동일값(0.2)으로 복원.

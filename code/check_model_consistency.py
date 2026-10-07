@@ -109,8 +109,10 @@ SHARED_BUCKLE_MODE = [
     "CABLE_AREA = np.pi * (CABLE_RADIUS**2)",
     "LEN_TOP = 0.280",
     "LEN_BOT = 0.689",
-    "N_EIG_BUCKLE = 200",
-    "BUCKLE_VECTORS = 500",
+    #   [2026-10-07] 200/500 -> 10/20. 실측: vectors=500 을 요청해도 subspace 가 14 로
+    #   줄어들어 200 개는 원리적으로 못 찾는다. 요청 수 <= 실제 subspace 차원이 조건이다.
+    "N_EIG_BUCKLE = 10",
+    "BUCKLE_VECTORS = 20",
 ]
 
 DECLARABLE = [
