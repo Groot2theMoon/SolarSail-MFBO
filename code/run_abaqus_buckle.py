@@ -150,7 +150,15 @@ DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용�
 # ---- 클램프 처리 모드 (CLAMP_MODE) ----
 #   A-route(run_abaqus.py)의 클램프 '존재'(패치+케이블 Tie, u3=0)와 '작동'(법선 방향
 #   CLAMP_PULL 당김)을, C-route 는 케이블 없이 RP 직접 구속/구동으로 재현한다. 4종은 §11.
-CLAMP_MODE = 'passive'
+# ---- 클램프 처리 모드 (CLAMP_MODE) ----
+#   [2026-10-07] 'passive' -> 'driven'.
+#   근거: HF(run_abaqus.py)는 클램프에 케이블(cable_CL/CR)을 붙여 d_c 비율로 **당긴다**
+#   (Disp_Control_CL/CR, CLAMP_PULL = DISP_GLOBAL*d_c, 좌굴 스텝에 CLAMP_PERT =
+#   PERTURBATION*d_c). buckle 의 'driven' 분기가 같은 패턴을 케이블 없이 RP 직접 구동으로
+#   재현하므로 HF 와 하중 경로가 정합한다. 'passive' 는 구속만 하고 당기지 않아 어긋난다.
+#   그리고 클램프 위치 x_c 와 당김 비율 d_c 가 MFBO 설계변수이므로, 클램프가 실제로
+#   당겨지는 상태에서 모드를 뽑아야 그 설계변수의 효과가 모드에 반영된다.
+CLAMP_MODE = 'driven'
 CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c, A-route 와 동일)
 # 오타로 조용히 다른 케이스가 되는 것을 막는다 (값 검증은 메쉬 생성 전에).
 if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):

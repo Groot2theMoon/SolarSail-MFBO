@@ -109,6 +109,8 @@ SHARED_BUCKLE_MODE = [
     "CABLE_AREA = np.pi * (CABLE_RADIUS**2)",
     "LEN_TOP = 0.280",
     "LEN_BOT = 0.689",
+    "N_EIG_BUCKLE = 200",
+    "BUCKLE_VECTORS = 500",
 ]
 
 DECLARABLE = [
