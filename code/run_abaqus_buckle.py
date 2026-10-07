@@ -114,6 +114,21 @@ ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 
+# ---- 케이블 (mode.py / HF 와 동일) ----
+CABLE_RADIUS = 5.0e-4 # m
+CABLE_AREA = np.pi * (CABLE_RADIUS**2)
+LEN_TOP = 0.280 # m
+LEN_BOT = 0.689 # m
+
+# ---- 프리텐션 모드 (mode.py 와 동일하게 맞춘다) ----
+#   'corner2' = Top 정점 완전고정 + 아래 두 꼭짓점만 당김. mode.py 가 4개 전역 모드를 낸 설정.
+#   'paper3'  = 꼭짓점 3개를 모두 당김(논문 좌굴모델). mode.py 실측: 양수 2개/0개.
+#   이것이 mode.py 와의 마지막 비(非)클램프 차이였다 — buckle 은 3꼭짓점 구동이었다.
+PRETENSION_MODE = 'corner2'
+if PRETENSION_MODE not in ('corner2', 'paper3'):
+    raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
+DISP_TOP_OVER_CORNER = 1.4142135623   # paper3 전용
+
 CLAMP_EXCL_R = 0.0   # m — 0.0 이면 제외 노드가 없어 All_Edges_NoClamp == All_Edges 다.
 #   [2026-10-06 철회] 0.2 로 두면 클램프 부착 구간의 경계 노드가 면외 자유로워져 base state 가
 #   불안정해진다(실측: lambda 전부 음수, CONVERGED 0, 스프레드 0.406 %). 이전에 CONVERGED=100
@@ -127,9 +142,10 @@ V3 = (0.0, 0.0, 0.0)         # Left
 def clamp_coord_L(x): return (10-10*x, 10-10*x, 0)
 def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 
-# ---- 프리텐션 기본값 (CLI 두 번째 인자로 덮어쓴다) ----
-PRETENSION_SCALE = 10.0
-DISP_GLOBAL = 0.000005 * PRETENSION_SCALE    # 기본 코너 당김 5e-5 m
+# ---- 프리텐션 (CLI 두 번째 인자로 덮어쓴다) ----
+#   [mode 정합] mode.py 는 1.8e-5 m 를 쓴다. buckle 은 5e-5(=5e-6*10) 였다.
+#   이 차이가 클램프와 교란되어 '클램프가 원인'인지 판별할 수 없었다.
+DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점
 
 # ---- 클램프 처리 모드 (CLAMP_MODE) ----
 #   A-route(run_abaqus.py)의 클램프 '존재'(패치+케이블 Tie, u3=0)와 '작동'(법선 방향
@@ -142,13 +158,11 @@ if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
                        % (CLAMP_MODE,))
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
-PERTURBATION = 1e-4  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
-#   [2026-10-06] 0.01 로 올렸다가 되돌렸다. 실측: 0.01 이면 CONVERGED=0 이고
-#   lambda 가 전부 음수(-5.16e-03 대역, 스프레드 0.16 %), 1e-4 이면 CONVERGED=100 이다.
-#   => 'lambda 는 PERTURBATION 으로 스케일되어 사라진다'(§8b)는 **선형 K_delta 전제**에서만
-#      성립한다. nlgeom 에서 0.01 m(막 두께 5 um, 크기 20 m)는 거시 변위라 증분 응력 상태가
-#      달라지고 고유문제가 오염된다. 이 스크립트는 1e-4 를 유지한다 — mode/HF 는 0.01 로
-#      성공하지만 그쪽은 클램프가 없어 base state 가 다르다.
+PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
+#   [mode 정합] mode.py 와 HF 는 0.01 을 쓴다. buckle 만 1e-4 였다.
+#   [2026-10-06 이력] 1e-4 에서 CONVERGED=100, 0.01 에서 CONVERGED=0 이었던 관측은
+#   클램프가 있는 상태에서 얻은 것이다. 이제 나머지 조건을 mode.py 와 맞췄으므로
+#   0.01 로 두고 다시 판정한다 — 클램프만 다른 상태에서 비교하려면 이 값도 같아야 한다.
 N_EIG_BUCKLE = 100      # 추출 요청 고유값 수
 BUCKLE_VECTORS = 250    # subspace 기저 벡터 수 (요청 수의 2.5배)
 BUCKLE_MAXITER = 5000
@@ -164,7 +178,10 @@ if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
                        % (BUCKLE_SOLVER,))
 EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
 
-SIGMA0 = 500.0          # 초기응력 [Pa] — 수렴 보조 (run_abaqus_new.py 와 동일)
+MODE_STABILIZATION = 0.0005   # GlobalTension 안정화 계수. [mode 정합] mode.py 와 동일.
+PATTERN_SIGN = 1.0            # 좌굴 '하중 패턴' 부호: 1.0 = 바깥으로 더 당김 (mode.py 동일)
+
+SIGMA0 = 700.0          # 초기응력 [Pa] — 수렴 보조. [mode 정합] mode.py=700 (buckle 은 500 이었다)
 
 
 # 인자 — 한 번에 한 케이스만(x_c [disp_m]). 스윕 없음.
@@ -430,6 +447,34 @@ def create_rigid_patch(a, inst_memb, name, coord, radius):
 
 
 
+def connect_cable(a, name, part, sail_corner, vector_dir, radius=1e-4):
+    """케이블 인스턴스를 꼭짓점에 붙이고 (시작단, 끝단) 노드 영역을 돌려준다.
+
+    mode.py 와 같은 정의. 케이블은 'RP <-> 구동 끝단' 사이의 하중 전달 로드이므로,
+    이것을 빼고 RP 를 직접 구동하면 하중 경로가 같다고 볼 수 없다 — 그래서 복원한다.
+    """
+    inst_name = 'Inst_' + name
+    inst = a.Instance(name=inst_name, part=part, dependent=ON)
+    target_vec = np.array(vector_dir)
+    target_vec = target_vec / np.linalg.norm(target_vec)
+    rot_angle_deg = np.degrees(np.arctan2(target_vec[1], target_vec[0]))
+    a.rotate(instanceList=(inst_name,), axisPoint=(0, 0, 0), axisDirection=(0, 0, 1),
+             angle=rot_angle_deg)
+    a.translate(instanceList=(inst_name,), vector=sail_corner)
+    node_start = inst.nodes.getByBoundingSphere(center=sail_corner, radius=radius)
+    if len(node_start) == 0:
+        print("%s Warning: Node not found by sphere, trying closest for %s" % (TAG, name))
+        node_start = inst.nodes.getClosest(coordinates=sail_corner)
+    region_start = regionToolset.Region(nodes=node_start)
+    cable_len = LEN_TOP if 'Top' in name else LEN_BOT
+    end_coord = (sail_corner[0] + target_vec[0] * cable_len,
+                 sail_corner[1] + target_vec[1] * cable_len, 0.0)
+    node_end = inst.nodes.getByBoundingSphere(center=end_coord, radius=radius)
+    region_end = regionToolset.Region(nodes=node_end)
+    return region_start, region_end
+
+
+
 def build_model(disp):
     """run_abaqus_new.py 의 모델 생성을 '케이블만 제외' 하고 재현한다."""
     global my_model
@@ -444,7 +489,10 @@ def build_model(disp):
     mat.Elastic(table=((2.5e9, 0.34),))
     my_model.HomogeneousShellSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)   # [2026-10-04] 막 실험 철회로 셸 섹션 복귀
 
-    # [제외] 케이블 재질(Kevlar) / TrussSection — 케이블이 없으므로 만들지 않는다.
+    # 케이블 재질 (Kevlar) — mode.py 와 동일. 클램프와 무관하게 케이블 경로를 복원한다.
+    mat_cable = my_model.Material(name='Kevlar')
+    mat_cable.Elastic(table=((62.0e9, 0.36),))
+    my_model.TrussSection(name='Section-Cable', material='Kevlar', area=CABLE_AREA)
 
     # 파트 생성: 멤브레인 — 동일
     s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
@@ -455,7 +503,19 @@ def build_model(disp):
     p.BaseShell(sketch=s)
     p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
-    # [제외] create_cable_part(...) 5개 — 케이블 part 자체를 만들지 않는다.
+    def create_cable_part(name, length):
+        """mode.py 와 동일한 케이블 1요소 파트 (T3D2)."""
+        p_c = my_model.Part(name=name, dimensionality=THREE_D, type=DEFORMABLE_BODY)
+        p_c.WirePolyLine(points=((0.0, 0.0, 0.0), (length, 0.0, 0.0)), mergeType=IMPRINT, meshable=ON)
+        p_c.SectionAssignment(region=p_c.Set(edges=p_c.edges, name='Wire'), sectionName='Section-Cable')
+        p_c.seedPart(size=length)  # 요소 1개
+        elemTypeTruss = ElemType(elemCode=T3D2, elemLibrary=STANDARD)
+        p_c.setElementType(regions=(p_c.edges,), elemTypes=(elemTypeTruss,))
+        p_c.generateMesh()
+        return p_c
+
+    p_cable_top = create_cable_part('Cable_Top', LEN_TOP)
+    p_cable_bot = create_cable_part('Cable_Bot', LEN_BOT)
 
     a = my_model.rootAssembly
     a.DatumCsysByDefault(CARTESIAN)
@@ -482,9 +542,10 @@ def build_model(disp):
         rp_cl_obj, rp_cl_reg = create_rigid_patch(a, inst_memb, 'CL', V_CL, radius=0.2)
         rp_cr_obj, rp_cr_reg = create_rigid_patch(a, inst_memb, 'CR', V_CR, radius=0.2)
 
-    # [제외] connect_cable(...) 5개 — 케이블 배치/부착 없음.
-    # 케이블 버전에서 케이블은 'RP <-> 구동 끝단' 사이의 하중 전달 로드였다.
-    # 따라서 케이블을 뺀 뒤에는 RP 를 직접 구동/구속하면 하중 경로가 동일하다.
+    # 케이블 연결: 정점은 위로, 두 아래 모서리는 각 케이블 축(28.6도) 방향 — mode.py 와 동일
+    start_c1, end_c1 = connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))
+    start_c2, end_c2 = connect_cable(a, 'Cable_Right', p_cable_bot, V2, (cos_val, -sin_val, 0.0))
+    start_c3, end_c3 = connect_cable(a, 'Cable_Left', p_cable_bot, V3, (-cos_val, -sin_val, 0.0))
 
     a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
     a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
@@ -492,6 +553,13 @@ def build_model(disp):
     if CLAMP_MODE != 'none':
         a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
         a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
+    # Tie (RP <-> 케이블 시작단) — mode.py 와 동일
+    my_model.Tie(name='Tie_Top', main=a.sets['RP_Top_Set'], secondary=start_c1,
+                 positionToleranceMethod=COMPUTED)
+    my_model.Tie(name='Tie_Right', main=a.sets['RP_Right_Set'], secondary=start_c2,
+                 positionToleranceMethod=COMPUTED)
+    my_model.Tie(name='Tie_Left', main=a.sets['RP_Left_Set'], secondary=start_c3,
+                 positionToleranceMethod=COMPUTED)
     a.regenerate()
 
     # ---- Step 1: GlobalTension (프리텐션) — run_abaqus_new.py 와 동일 ----
@@ -499,8 +567,10 @@ def build_model(disp):
         name='Step-GlobalTension',
         previous='Initial',
         nlgeom=ON,
-        stabilizationMagnitude=0.0002,      # Galhofo Reference
+        stabilizationMagnitude=MODE_STABILIZATION,   # mode.py 와 동일 (0.0005)
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
+        continueDampingFactors=False,
+        adaptiveDampingRatio=0.05,
         initialInc=0.0001, minInc=1e-8, maxNumInc=1000
     )
 
@@ -545,26 +615,33 @@ def build_model(disp):
     # 시작 시 전체 면 z 고정 (평탄) — 동일
     my_model.DisplacementBC(
         name='BC_Stabilize_Z',
-        createStepName='Initial',
+        createStepName='Step-GlobalTension',   # [mode 정합] mode.py 와 동일 (buckle 은 Initial 이었다)
         region=inst_memb.sets['All'],
         u3=SET
     )
-
-    # Top 정점: 고정 (케이블 버전의 BC_Anchor(end_c1: u1,u2,u3=0) 대응)
+    # Top 정점: 완전 고정 — mode.py 와 동일하게 케이블 끝단(end_c1)에 건다.
+    #   RP_Top_Set 은 Tie 로만 연결된다(mode.py 도 그렇다).
     my_model.DisplacementBC(
         name='BC_Anchor_Top',
         createStepName='Initial',
-        region=a.sets['RP_Top_Set'],
-        u1=0, u2=0, u3=0
+        region=end_c1,
+        u1=SET, u2=SET, u3=SET, ur1=SET, ur2=SET, ur3=SET
     )
 
-    # Right/Left 정점: GlobalTension 에서 α*DISP_GLOBAL 만큼 당긴다.
-    #   케이블 버전의 Disp_Control_Right/Left 와 동일한 방향/크기.
+    # Right/Left 정점: mode.py 와 동일하게 u3+회전만 고정하고, 구동은 케이블 끝단에 건다.
+    my_model.DisplacementBC(
+        name='BC_Right_Z', createStepName='Initial', region=end_c2,
+        u3=SET, ur1=SET, ur2=SET, ur3=SET
+    )
+    my_model.DisplacementBC(
+        name='BC_Left_Z', createStepName='Initial', region=end_c3,
+        u3=SET, ur1=SET, ur2=SET, ur3=SET
+    )
     disp_a = disp
     my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
-                            region=a.sets['RP_Right_Set'], u1=0, u2=0)
+                            region=end_c2, u1=SET, u2=SET)
     my_model.DisplacementBC(name='Disp_Control_Left', createStepName='Initial',
-                            region=a.sets['RP_Left_Set'], u1=0, u2=0)
+                            region=end_c3, u1=SET, u2=SET)
     my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
         stepName='Step-GlobalTension',
         u1=disp_a * cos_val,
@@ -575,7 +652,18 @@ def build_model(disp):
         u1=-disp_a * cos_val,
         u2=-disp_a * sin_val
     )
+    # [paper3] 위 꼭짓점도 케이블 축(+y)으로 당긴다 — mode.py 와 동일.
+    #   corner2(기본)에서는 BC_Anchor_Top 의 완전고정이 그대로 유지된다.
+    if PRETENSION_MODE == 'paper3':
+        my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
+            stepName='Step-GlobalTension',
+            u1=0.0, u2=disp_a * DISP_TOP_OVER_CORNER
+        )
+    print("%s 프리텐션 = %s : 아래 %.4e m%s"
+          % (TAG, PRETENSION_MODE, disp_a,
+             (' / 위 %.4e m' % (disp_a * DISP_TOP_OVER_CORNER)) if PRETENSION_MODE == 'paper3'
 
+             else ' (Top 완전고정)'))
     # ---- CLAMP_MODE 별 RP 처리 (4종 의미는 §11) ----
     _sq2 = 2.0 ** 0.5
     if CLAMP_MODE == 'none':

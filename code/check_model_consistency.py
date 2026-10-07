@@ -72,17 +72,14 @@ SHARED = [
     "u1=ON, u2=ON, u3=ON, ur1=ON, ur2=ON, ur3=ON",
     "u3=SET",
     # ---- 프리텐션 정의 (좌굴의 alpha 가 곱해지는 기준값) ----
-    "PRETENSION_SCALE = 10.0",
     # [2026-09-28] DISP_GLOBAL 은 여기서 검사하지 않는다: 운용점은 **의도적으로 분기**한 값이다
     #   (HF 165 um = 논문 정합 / 모드 소스 1.8e-5 = 클램프-프리 안정 영역). 대신
     #   check_operating_point() 가 두 값을 직접 읽어 배율을 로그로 남긴다.
     "angle_deg = 28.6",
     # ---- 스텝 GlobalTension (좌굴의 base state 를 만드는 스텝) ----
     "initialInc=0.0001, minInc=1e-8, maxNumInc=1000",
-    "stabilizationMagnitude=0.0002,",
     # ---- 초기응력 ----
     "sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0,",
-    "SIGMA0 = 500.0",
 ]
 
 # 모드 소스(run_abaqus_mode.py)는 클램프가 없는 모델이므로 clamp_coord_* 정의만 제외한다.
@@ -93,13 +90,31 @@ SHARED_MODE = [s for s in SHARED if 'clamp_coord' not in s]
 #   이유: 모드 소스는 좌굴모드를 얻기 위해 base state 를 안정 영역에 둘 필요가 있다(사용자 튜닝).
 #   메쉬/형상/요소/재료(SHARED 의 앞부분)는 절대 달라지면 안 된다 — 노드 라벨 매핑이 깨진다.
 #   선언은 모드 소스 안의 `# CHECKER-DIVERGENCE: <이름,...>` 주석으로만 인정한다(논문 공개 의무).
+# ============================================================================
+# 좌굴 스크립트 <-> 모드 소스 (계약, 2026-10-06)
+# ============================================================================
+#   왜: buckle 이 실패한 원인을 '클램프'라고 단정할 수 없었다. 클램프 외에
+#   DISP/SIGMA0/PERTURBATION/안정화/프리텐션모드/케이블 이 전부 달랐기 때문이다.
+#   그래서 buckle 을 mode.py(ClampFree_Buckle)에 맞추고 클램프만 차이로 남겼다.
+#   => 이 목록이 그 계약이다. 여기가 깨지면 '클램프만 다르다'는 전제가 무너진다.
+SHARED_BUCKLE_MODE = [
+    "DISP_GLOBAL = 1.8e-5",
+    "SIGMA0 = 700.0",
+    "PERTURBATION = 0.01",
+    "MODE_STABILIZATION = 0.0005",
+    "PRETENSION_MODE = 'corner2'",
+    "DISP_TOP_OVER_CORNER = 1.4142135623",
+    "PATTERN_SIGN = 1.0",
+    "CABLE_RADIUS = 5.0e-4",
+    "CABLE_AREA = np.pi * (CABLE_RADIUS**2)",
+    "LEN_TOP = 0.280",
+    "LEN_BOT = 0.689",
+]
+
 DECLARABLE = [
-    "PRETENSION_SCALE = 10.0",
     # [2026-09-28] DISP_GLOBAL 은 여기서 검사하지 않는다: 운용점은 **의도적으로 분기**한 값이다
     #   (HF 165 um = 논문 정합 / 모드 소스 1.8e-5 = 클램프-프리 안정 영역). 대신
     #   check_operating_point() 가 두 값을 직접 읽어 배율을 로그로 남긴다.
-    "SIGMA0 = 500.0",
-    "stabilizationMagnitude=0.0002,",
 ]
 
 
@@ -233,6 +248,18 @@ def main():
                      and any(dn in norm(k) for dn in declared)]))
 
     print()
+    print()
+    print("--- 좌굴 스크립트(run_abaqus_buckle.py) <-> 모드 소스(run_abaqus_mode.py) ---")
+    print("    클램프만 다른 상태로 비교하려면 이 값들이 같아야 한다(2026-10-06 계약).")
+    bad6 = []
+    for k in SHARED_BUCKLE_MODE:
+        nk = norm(k)
+        ib, ic = nk in b, nk in c
+        if not (ib and ic):
+            bad6.append(k)
+        print("  %-5s buckle=%-6s mode=%-6s  %s"
+              % ("OK" if (ib and ic) else "!!!", ib, ic, k[:58]))
+
     print("--- 좌굴 스크립트에 HF/LF 전용이 섞여 있지 않은지 (0 이어야 정상) ---")
     bad2 = []
     for k in FORBIDDEN_IN_BUCKLE:
@@ -283,15 +310,15 @@ def main():
 
     print()
     print("=" * 74)
-    if bad or bad2 or bad3 or bad4 or bad5:
+    if bad or bad2 or bad3 or bad4 or bad5 or bad6:
         print("RESULT: !!! 불일치 (HF↔buckle 정의 %d / buckle 역할 %d / 디렉터리 %d"
-              " / HF↔모드소스 정의 %d / 모드소스 역할 %d)"
-              % (len(bad), len(bad2), len(bad3), len(bad4), len(bad5)))
+              " / HF↔모드소스 정의 %d / 모드소스 역할 %d / buckle↔모드소스 %d)"
+              % (len(bad), len(bad2), len(bad3), len(bad4), len(bad5), len(bad6)))
         print("        모드 노드가 어긋나면 *IMPERFECTION 이 조용히 실패한다.")
         print("        한쪽을 고쳤으면 다른 쪽도 같이 고쳐라.")
         return 1
-    print("RESULT: PASS — HF↔buckle %d 항목 / HF↔모드소스 %d 항목 일치, 역할 분리 위반 0건"
-          % (len(SHARED), len(SHARED_MODE)))
+    print("RESULT: PASS — HF↔buckle %d / HF↔모드소스 %d / buckle↔모드소스 %d 항목 일치, "
+          "역할 분리 위반 0건" % (len(SHARED), len(SHARED_MODE), len(SHARED_BUCKLE_MODE)))
     print("=" * 74)
     return 0
 
