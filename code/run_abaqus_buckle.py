@@ -179,7 +179,7 @@ CORNER_ANGLE_DEG = 28.6
 #         리터럴 문자열을 비교하므로 값을 dict 로 감추면 게이트가 깨진다. CASE 는 배선만
 #         고르고, 요구되는 상수 조합은 아래에서 **런타임 검증**한다(조용한 오답 금지).
 # ============================================================================
-CASE = 'control_none'   # 'seed' | 'control_none' | 'clamp_lf' | 'paper_s1'
+CASE = 'clamp_lf'   # 'seed' | 'control_none' | 'clamp_lf' | 'paper_s1'
 
 _CASE_TABLE = {
     #  케이스          케이블  클램프패치  클램프하중      코너각
