@@ -277,7 +277,13 @@ CLAMP_F0 = 1.0   # N — (구 CLOAD 라우트의 값) **현행 clamp_lf 는 변�
 CORNER_F0 = 0.03
 
 # ---- DEAD/LIVE 배분 (CASE='clamp_lf') ----
-DEAD_FRAC = 0.018   # [-] 프리텐션 단계가 운용 하중 세트 P 의 어느 비율까지 올리는가.
+DEAD_FRAC = 0.9   # [-] 프리텐션 단계가 운용 하중 세트 P 의 어느 비율까지 올리는가.
+#   [2026-10-07 정정 — 수렴 실패의 실제 원인] 예전 값 0.018 은 기저 상태를 운용의 **1.8 %**
+#     (3.24e-07 m)로 두어 막이 사실상 무응력이었다 -> 횡강성이 SIGMA0 뿐이라 고유값 스펙트럼이
+#     퇴화하고 추출이 수렴하지 않았다(창 10/20·150/300 모두 실패, §19.4).
+#     대조군(seed/control_none)은 기저가 운용점(1.8e-5 m)이라 **수렴했다**.
+#     0.9 = 기저를 운용의 90 % (1.62e-5 m = 주름 개시의 약 83 %)에 둔다 — 응력이 살아 있고
+#     개시보다 앞이다. lambda=1 ⇔ 운용점 정규화는 그대로 유지된다(DEAD+LIVE = P).
 #   BUCKLING LOAD = DEAD + lambda*LIVE 이고 DEAD = DEAD_FRAC x P, LIVE = (1-DEAD_FRAC) x P 이므로
 #   **lambda = 1 이면 적용 하중 = 정확히 P = 운용점**이다 (lambda > 1 = 좌굴 전 = 설계 여유).
 #   기준점은 HF 의 실제 램프 비율: DISP_GLOBAL / GLOBAL_FINAL = 1.8e-5 / 1.0e-3.
@@ -332,11 +338,11 @@ PAPER_S1_LIVE_M = 0.10   # m — Galhofo 2022 의 좌굴 스텝은 꼭짓점 변
 #     (a) N_EIG_BUCKLE > base state 의 SYSTEM 음수 고유값 개수
 #     (b) N_EIG_BUCKLE <= 실제 subspace 차원 ("REDUCED TO n" 의 n)
 #   (a)는 음수 모드 뒤에 양수 모드가 들어오게 하는 조건, (b)는 원리적 상한이다.
-N_EIG_BUCKLE = 150      # 추출 요청 고유값 수  (mode.py 와 같은 값이어야 한다 — 계약)
-#   [2026-10-07 이력] 100 -> 200 -> (REDUCED TO 14) -> 10 -> **150**
-#     마지막 상향 근거(실측): CASE='clamp_lf' 의 base state 가 SYSTEM 음수 **126개**를 가져
-#     요청 10개로는 양수 모드가 창에 들어오지 못했다(CONVERGED=0, §19.2).
-#     조건은 **요청 수 > 음수 개수**, 상한은 실제 subspace 차원("REDUCED TO n")이다.
+N_EIG_BUCKLE = 4        # 추출 요청 고유값 수 (mode.py 와 같은 값이어야 한다 — 계약)
+#   [2026-10-07 이력] 100 -> 200 -> (REDUCED TO 14) -> 10 -> 150 -> **4**
+#     근거(실측 §19.5): 대조군(seed/control_none)이 **요청 4 / 기저 250** 으로 수렴했다.
+#     요청을 키우면(10, 150) 오히려 수렴하지 않았다 — 필요한 것은 모드 몇 개뿐이고,
+#     부분공간을 크게 유지하는 편이 퇴화 스펙트럼에서 유리하다. 기저 250 = 천장 272 아래.
 BUCKLE_VECTORS = 250    # subspace 기저 벡터 수. 실측 천장: 300 을 요청하면
 #   "REDUCED TO 272 DUE TO LINEAR DEPENDENCY" 로 깎인다(2026-10-07 clamp_lf 런). 250 이면 안 깎인다.
 #   ⚠️ 실측 반증(2026-10-07, cload 라우트): 요청 500 -> "VECTORS IN SUBSPACE IS REDUCED TO 14".
