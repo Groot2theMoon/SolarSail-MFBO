@@ -169,7 +169,7 @@ DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용�
 #                 실측: 반복이 돌고 수렴 고유값 4~5개가 나온다(2026-10-07).
 #   클램프 위치 x_c 와 당김 비율 d_c 가 MFBO 설계변수이므로, 클램프가 실제로 당겨지는
 #   상태(또는 등가 하중 상태)에서 모드를 뽑아야 그 설계변수의 효과가 모드에 반영된다.
-CLAMP_MODE = 'driven'
+CLAMP_MODE = 'cload'
 CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c, A-route 와 동일)
 
 # ---- 클램프 당김 **방향** (driven 과 cload 가 함께 쓴다) ----
@@ -260,8 +260,8 @@ PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 ->
 #   FOUND (INSTABILITIES IN THE BASE STATE) 로 죽는다. 클램프를 끄면(none) 같은
 #   조건에서 CONVERGED=4 다 — 즉 창이 아니라 음수 개수가 문제다.
 #   그래서 창을 넓혀(D) 음수 48 개를 넘겨 본다. 실패 비용이 40 초라 판정이 빠르다.
-N_EIG_BUCKLE = 200      # 추출 요청 고유값 수  [2026-10-07] 100 -> 200 (래더 L4)
-BUCKLE_VECTORS = 500    # subspace 기저 벡터 수  [2026-10-07] 250 -> 500 (래더 L4)
+N_EIG_BUCKLE = 10      # 추출 요청 고유값 수  [2026-10-07] 100 -> 200 (래더 L4)
+BUCKLE_VECTORS = 20    # subspace 기저 벡터 수  [2026-10-07] 250 -> 500 (래더 L4)
 #   ⚠️ 실측 반증(2026-10-07, cload 라우트): 요청 500 -> "VECTORS IN SUBSPACE IS REDUCED TO 14".
 #      즉 실제 기저는 14 차원인데 200 개를 요청했다 -> ITERATION 마다 수렴 수가 출렁이고
 #      (4,5,2,4,4,2) 결국 ***ERROR: THE EIGENVALUES CANNOT BE FOUND.
