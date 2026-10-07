@@ -1003,15 +1003,20 @@ def build_model(disp):
               ('CF_Clamp_CL', a.sets['RP_CL_Set'], DIR_CL[0] * CLAMP_F0, DIR_CL[1] * CLAMP_F0),
               ('CF_Clamp_CR', a.sets['RP_CR_Set'], DIR_CR[0] * CLAMP_F0, DIR_CR[1] * CLAMP_F0))
         # DEAD = DEAD_FRAC x P — 0 을 생략하지 않고 **만들 때 명시**한다(함정 1).
+        #   [함정 3] 하중 **저장소 이름을 쓰지 않는다**. Abaqus 에 `model.concentratedForces`
+        #     라는 저장소는 없다(집중하중은 `model.loads` 에 들어간다). 실측 2026-10-07:
+        #     AttributeError: 'Model' object has no attribute 'concentratedForces'.
+        #     => 이름으로 조회하지 않고 ConcentratedForce() 가 **돌려준 객체를 그대로 잡아** 쓴다.
+        _cfs = []
         for _nm, _reg, _c1, _c2 in _P:
-            my_model.ConcentratedForce(name=_nm, createStepName='Step-GlobalTension',
-                                       region=_reg,
-                                       cf1=DEAD_FRAC * _c1, cf2=DEAD_FRAC * _c2, cf3=0.0)
+            _cfs.append(my_model.ConcentratedForce(
+                name=_nm, createStepName='Step-GlobalTension', region=_reg,
+                cf1=DEAD_FRAC * _c1, cf2=DEAD_FRAC * _c2, cf3=0.0))
         # LIVE = (1-DEAD_FRAC) x P — Buckle 스텝에 있다가 lambda 에 곱해진다(§18.2 회계).
         #   setValuesInStep 은 그 스텝의 값을 **대체**하므로, lambda=1 에서
         #   총하중 = DEAD(base state) + LIVE = P = 운용점이 된다.
-        for _nm, _reg, _c1, _c2 in _P:
-            my_model.concentratedForces[_nm].setValuesInStep(
+        for _cf, (_nm, _reg, _c1, _c2) in zip(_cfs, _P):
+            _cf.setValuesInStep(
                 stepName='Step-Buckle',
                 cf1=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _c1,
                 cf2=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _c2, cf3=0.0)

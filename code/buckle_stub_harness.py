@@ -177,6 +177,9 @@ class Step(Obj):
     pass
 
 
+_STEP_NAMES = set()   # Model 이 만든 스텝 이름 — setValuesInStep 의 오타 검사용
+
+
 class BC(Obj):
     """경계조건/집중하중 목 — 스텝별 값 이력을 남긴다(0 덮어쓰기 사고를 잡기 위해)."""
 
@@ -186,6 +189,11 @@ class BC(Obj):
         object.__setattr__(self, 'history', [{'step': created_in, 'values': dict(kw)}])
 
     def setValuesInStep(self, stepName=None, **kw):
+        # [법칙 4] 없는 스텝에 값을 넣으면 Abaqus 는 조용히 무시하거나 예외를 낸다.
+        #   오타(Step-Bucle 등)를 로컬에서 잡는다.
+        if stepName not in (None, 'Initial') and _STEP_NAMES and stepName not in _STEP_NAMES:
+            raise ValueError("[harness] 스텝 %r 이 없습니다 (만들어진 스텝: %s). 오타를 확인하세요."
+                             % (stepName, ', '.join(sorted(_STEP_NAMES))))
         self._log.add(self._name, 'setValuesInStep', (), dict(kw, stepName=stepName))
         self.history.append({'step': stepName, 'values': dict(kw)})
 
@@ -259,9 +267,35 @@ class Model(Obj):
         Obj.__init__(self, name, log)
         object.__setattr__(self, 'steps', {})
         object.__setattr__(self, 'boundaryConditions', {})
-        object.__setattr__(self, 'concentratedForces', {})
+        object.__setattr__(self, 'loads', {})
         object.__setattr__(self, 'parts', {})
         object.__setattr__(self, 'rootAssembly', Assembly('%s.assembly' % name, log))
+
+    # [법칙 3] Model 은 **Abaqus 가 실제로 가진 이름만** 통과시킨다.
+    #   관대한 목(무엇이든 자식 Obj 를 돌려주는 __getattr__)이 아래 두 실수를 조용히 통과시켰고,
+    #   그 대가로 Abaqus 런 2회를 왕복했다(2026-10-07):
+    #     1) my_model.ConcentratedForce(createStepName='Initial')  <- 하중은 Initial 에 못 만든다
+    #     2) my_model.concentratedForces[...]                      <- 그런 저장소가 없다(loads 다)
+    #   1)은 하중 생성기의 검사로, 2)는 이 엄격 모드로 로컬에서 잡힌다.
+    _API = frozenset((
+        # 생성기 — Model 의 method (Abaqus Scripting Reference)
+        'DisplacementBC', 'VelocityBC', 'AccelerationBC', 'ConcentratedForce', 'Moment',
+        'Pressure', 'BodyForce', 'Gravity', 'Tie', 'Coupling', 'Part', 'Material',
+        'TrussSection', 'HomogeneousShellSection', 'Stress', 'Temperature', 'StaticStep',
+        'BuckleStep', 'FrequencyStep', 'FieldOutputRequest', 'ConstrainedSketch',
+        # 저장소 — Model 의 repository. 집중하중은 'loads' 이지 'concentratedForces' 가 아니다.
+        'boundaryConditions', 'loads', 'steps', 'parts', 'sets', 'materials', 'sections',
+        'interactions', 'constraints', 'fields', 'predefinedFields', 'amplitudes',
+        'profiles', 'skins', 'initialConditions', 'rootAssembly', 'assembly',
+    ))
+
+    def __getattr__(self, k):
+        if k not in Model._API:
+            raise AttributeError(
+                "[harness] Model 에 %r 이 없습니다 — Abaqus API 이름이 맞는지 확인하세요. "
+                "(집중하중 저장소는 'loads' 이고 'concentratedForces' 는 없습니다. "
+                "하중은 Initial 스텝에 만들 수 없습니다.)" % k)
+        return Obj.__getattr__(self, k)
 
     def Part(self, name=None, dimensionality=None, type=None):
         self._log.add(self._name, 'Part', (), {'name': name})
@@ -271,11 +305,13 @@ class Model(Obj):
 
     def StaticStep(self, name=None, **kw):
         self._log.add(self._name, 'StaticStep', (), dict(kw, name=name))
+        _STEP_NAMES.add(name)
         self.steps[name] = Step('%s.steps[%s]' % (self._name, name), self._log, **kw)
         return self.steps[name]
 
     def BuckleStep(self, name=None, **kw):
         self._log.add(self._name, 'BuckleStep', (), dict(kw, name=name))
+        _STEP_NAMES.add(name)
         self.steps[name] = Step('%s.steps[%s]' % (self._name, name), self._log, **kw)
         return self.steps[name]
 
@@ -300,8 +336,8 @@ class Model(Obj):
 
     def ConcentratedForce(self, name=None, **kw):
         self._reject_initial_load('ConcentratedForce', name, kw)
-        self.concentratedForces[name] = BC(name, self._log, kw.pop('createStepName', None), **kw)
-        return self.concentratedForces[name]
+        self.loads[name] = BC(name, self._log, kw.pop('createStepName', None), **kw)
+        return self.loads[name]
 
 
 class Mdb(Obj):
@@ -474,6 +510,7 @@ def main(argv):
     if not callable(build_model):
         sys.stderr.write('FAIL build_model 을 찾지 못했습니다\n')
         return 5
+    _STEP_NAMES.clear()
     try:
         model_name = build_model(g['DISP'])
     except Exception as e:
@@ -498,7 +535,7 @@ def _report(g, log):
         for h in bc.history:
             print('  BC    %-20s %-20s %s'
                   % (name, h['step'], dict((k, _brief(v)) for k, v in h['values'].items())))
-    for name, cf in sorted(g['mdb'].models[g['MODEL_PREFIX']].concentratedForces.items()):
+    for name, cf in sorted(g['mdb'].models[g['MODEL_PREFIX']].loads.items()):
         for h in cf.history:
             print('  CLOAD %-20s %-20s %s'
                   % (name, h['step'], dict((k, _brief(v)) for k, v in h['values'].items())))
