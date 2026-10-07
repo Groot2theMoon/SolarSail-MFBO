@@ -40,11 +40,13 @@ CUT_MARKER = 'print("=" * 78)'          # 실행 블록의 시작(소스에 두 
 
 # 케이스가 요구하는 상수 — run_abaqus_buckle.py 의 _require_constant 와 같은 계약을 여기서도 만족시킨다.
 # (하네스가 하나를 빠뜨리면 스크립트 자신의 계약 검사가 예외를 올려 드러난다)
+# ⚠️ 값은 **파이썬 리터럴 그대로** 쓴다(문자열은 따옴표 포함) — 치환이 값을 그대로 끼워 넣는다.
+#    실측: 따옴표를 빼면 `PRETENSION_MODE = corner2` 가 되어 NameError 로 죽는다.
 CASE_CONSTANTS = {
-    'seed':         {'PRETENSION_MODE': 'corner2', 'CORNER_ANGLE_DEG': '28.6'},
-    'control_none': {'PRETENSION_MODE': 'corner2', 'CORNER_ANGLE_DEG': '28.6'},
-    'clamp_lf':     {'PRETENSION_MODE': 'corner2', 'CORNER_ANGLE_DEG': '28.6'},
-    'paper_s1':     {'PRETENSION_MODE': 'paper3',  'CORNER_ANGLE_DEG': '45.0'},
+    'seed':         {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    'control_none': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    'clamp_lf':     {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    'paper_s1':     {'PRETENSION_MODE': "'paper3'",  'CORNER_ANGLE_DEG': '45.0'},
 }
 
 # ---------------------------------------------------------------------------
@@ -478,10 +480,12 @@ def _report(g, log):
     print('[배선] 경계조건 / 집중하중  (스텝별 값 이력)')
     for name, bc in sorted(g['mdb'].models[g['MODEL_PREFIX']].boundaryConditions.items()):
         for h in bc.history:
-            print('  BC   %-22s %-22s %s' % (name, h['step'], h['values']))
+            print('  BC    %-20s %-20s %s'
+                  % (name, h['step'], dict((k, _brief(v)) for k, v in h['values'].items())))
     for name, cf in sorted(g['mdb'].models[g['MODEL_PREFIX']].concentratedForces.items()):
         for h in cf.history:
-            print('  CLOAD %-22s %-22s %s' % (name, h['step'], h['values']))
+            print('  CLOAD %-20s %-20s %s'
+                  % (name, h['step'], dict((k, _brief(v)) for k, v in h['values'].items())))
     print('[배선] 스텝 정의 순서: %s'
           % ' -> '.join('%s(%s)' % (r['kwargs'].get('name'), r['call'])
                         for r in log.rows if r['call'] in ('StaticStep', 'BuckleStep')))
