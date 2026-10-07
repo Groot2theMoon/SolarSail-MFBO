@@ -25,7 +25,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     <job>.odb / .dat / .msg / .sta / .fil / .diag.txt
     job 이름은 인자+요소+클램프모드에서 자동 생성한다: Buckle_xc<NNN>_d<NNN>um_<elem>_<clamp>
       (예: Buckle_xc050_d0050um_s4r_driven) — 케이스가 바뀌어도 산출물이 서로 덮이지 않는다.
-    CLAMP_MODE 는 상단 상수: none | passive | driven | fixed (클램프 존재/작동 분리).
+    CLAMP_MODE 는 상단 상수: none | passive | driven | fixed | cload (클램프 존재/작동 분리).
     고유값 표는 .dat 의 MODE NO / EIGENVALUE 블록에 있고, 스크립트가 콘솔에도 덤프한다.
 
 HF 에서 모드를 쓸 때 — 경로 주의 (HF 잡의 작업 디렉터리는 code/aba 다)
@@ -197,9 +197,26 @@ if CLAMP_DIR not in ('normal', 'balanced', 'inward'):
 #       RP_CL 에는 BC 가 없고(완전 자유), 구동은 end_cl 에 건다 -> 힘평형이 물리적으로 자동.
 #   driven 을 이 구조로 바꾼다. CLAMP_CABLE_LEN 은 HF 와 같은 0.5 m.
 CLAMP_CABLE_LEN = 0.5   # m (HF 의 CLAMP_CABLE_LEN 과 동일)
+
+# ---- CLOAD 라우트 (CLAMP_MODE='cload') ----
+#   [2026-10-07] 사용자 제안: 클램프를 케이블로 구동하는 대신 **집중하중**으로 준다.
+#   근거 1 — 진단: 실측에서 passive(클램프 하중 없음 + u3=0)는 48/성공인데
+#     driven(클램프 케이블 추가)은 d_c=0.5/0.25 모두 SYSTEM 888, DIFFERENTIAL 27461~27761,
+#     lambda1 ~ 4e-08 로 **d_c 와 무관하게** 같은 값이 나온다. RP 에 u3=0 을 더해도 변하지 않았다.
+#     그리고 mode.py 는 꼭짓점 케이블 3개로 성공한다 -> 꼭짓점 케이블은 검증됐고
+#     변수는 **클램프 케이블(Cable_CL/Cable_CR + Tie_CL/Tie_CR)** 하나만 남는다.
+#   근거 2 — Galhofo 2022 재현: 이 논문은 '케이블 없는 only membrane' 에서 좌굴모드를 뽑아
+#     케이블 포함 모델에 임퍼펙션으로 주입했다(2-모델 레시피). 모드 추출에는 케이블이 필요 없다.
+#   근거 3 — *BUCKLE 의 본질: BUCKLING LOAD ESTIMATE = ("DEAD" LOADS) + lambda * ("LIVE" LOADS).
+#     즉 **Buckle 스텝의 LIVE 하중 크기는 lambda 에 흡수된다.** 따라서 클램프 하중은
+#     임의의 기준값 CLAMP_F0 로 주면 되고, 나온 lambda 가 곧 '클램프 하중 계수' 다.
+#     이 lambda 가 x_c/d_c 에 따라 변하는 것이 MFBO 목적함수의 재료가 된다.
+#   구성: GlobalTension(꼭짓점)은 **그대로** 둔다(검증된 경로, base state 보존).
+#         클램프는 passive 처럼 RP 면외만 구속하고, Step-Buckle 에서 CLOAD 로 LIVE 를 준다.
+CLAMP_F0 = 1.0   # N — 클램프 집중하중 기준값. lambda 가 이 크기에 반비례하므로 단위값을 쓴다.
 # 오타로 조용히 다른 케이스가 되는 것을 막는다 (값 검증은 메쉬 생성 전에).
-if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
-    raise RuntimeError("CLAMP_MODE must be 'none'|'passive'|'driven'|'fixed' (got %r)"
+if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed', 'cload'):
+    raise RuntimeError("CLAMP_MODE must be 'none'|'passive'|'driven'|'fixed'|'cload' (got %r)"
                        % (CLAMP_MODE,))
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
@@ -618,6 +635,7 @@ def build_model(disp):
     p_cable_bot = create_cable_part('Cable_Bot', LEN_BOT)
     if CLAMP_MODE == 'driven':
         # HF 와 동일: 클램프 케이블 2개 (Kevlar T3D2, 1요소, 길이 0.5 m)
+        #   cload 라우트는 케이블을 만들지 않는다(집중하중으로 대체, Galhofo 재현).
         p_cable_cl = create_cable_part('Cable_CL', CLAMP_CABLE_LEN)
         p_cable_cr = create_cable_part('Cable_CR', CLAMP_CABLE_LEN)
 
@@ -780,7 +798,7 @@ def build_model(disp):
              (' / 위 %.4e m' % (disp_a * DISP_TOP_OVER_CORNER)) if PRETENSION_MODE == 'paper3'
 
              else ' (Top 완전고정)'))
-    # ---- CLAMP_MODE 별 RP 처리 (4종 의미는 §11) ----
+    # ---- CLAMP_MODE 별 RP 처리 (5종 의미는 §11) ----
     _sq2 = 2.0 ** 0.5
     if CLAMP_MODE == 'none':
         pass
@@ -806,7 +824,7 @@ def build_model(disp):
         #       d_c=0.5 : SYSTEM 888 / DIFFERENTIAL 27462 / 500->151 / lambda1 3.79e-08
         #       d_c=0.25: SYSTEM 494 / DIFFERENTIAL 27761 / 500->45  / lambda1 9.14e-08
         #     DIFFERENTIAL 이 d_c 를 절반으로 줄여도 불변 -> 원인은 당김 크기가 아니다.
-        #     Canditate 는 RP 의 저강성 모드다: Cable_CL 은 T3D2 Truss 라 축방향 강성만 주고,
+        #     Candidate 는 RP 의 저강성 모드다: Cable_CL 은 T3D2 Truss 라 축방향 강성만 주고,
         #     Tie 는 위치 공차만 정할 뿐 회전을 구속하지 않는다.
         #     HF(run_abaqus.py)는 이 구조로도 완주하는데, 그건 *Static 이라 stabilization 이
         #     저강성 모드를 흡수하기 때문이다. *BUCKLE(고유해석)에서는 치명적이다.
@@ -831,6 +849,20 @@ def build_model(disp):
         my_model.boundaryConditions['Disp_Clamp_CR'].setValuesInStep(
             stepName='Step-GlobalTension',
             u1=DIR_CR[0] * CLAMP_PULL, u2=DIR_CR[1] * CLAMP_PULL)
+
+    elif CLAMP_MODE == 'cload':
+        # 케이블 없이 클램프를 집중하중으로 구동한다. RP 는 passive 와 동일하게 면외만 구속.
+        my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
+                                region=a.sets['RP_CL_Set'], u3=0)
+        my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
+                                region=a.sets['RP_CR_Set'], u3=0)
+        # LIVE 하중은 Buckle 스텝에서만 준다(GlobalTension 은 DEAD = 꼭짓점 프리텐션).
+        my_model.ConcentratedForce(name='CF_Clamp_CL', createStepName='Step-Buckle',
+                                   region=a.sets['RP_CL_Set'],
+                                   cf1=DIR_CL[0] * CLAMP_F0, cf2=DIR_CL[1] * CLAMP_F0, cf3=0.0)
+        my_model.ConcentratedForce(name='CF_Clamp_CR', createStepName='Step-Buckle',
+                                   region=a.sets['RP_CR_Set'],
+                                   cf1=DIR_CR[0] * CLAMP_F0, cf2=DIR_CR[1] * CLAMP_F0, cf3=0.0)
 
     # ---- Buckle 스텝: 논문 (c) 3변 u3=0 유지 + 클램프 구간은 면외 구속에서 제외(§9) ----
     _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
