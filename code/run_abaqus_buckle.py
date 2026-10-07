@@ -297,6 +297,15 @@ DEAD_FRAC = 0.018   # [-] 프리텐션 단계가 운용 하중 세트 P 의 어�
 #   클램프 하중이 GlobalTension 에 있으므로 이 스텝을 보면 클램프 기여가 진단에 잡힌다.
 BASE_STATE_STEP = 'Step-GlobalTension'
 
+# ---- 판정 임계값 (계획 §4: 3번 런 결과 뒤에 확정한다 — 지금은 잠정값) ----
+SPREAD_MIN_PCT = 2.0   # lambda 스프레드 하한(중복 근 배제).
+#   실측 대조: 클램프-프리 성공 런 26.9~31.3% (구별되는 모드) /
+#              클램프 포함 국소 중복 근 0.28% (사실상 같은 값 100개).
+#   2.0 은 그 사이의 잠정값이고, 3번 런의 실측 분포를 보고 확정한다.
+U3_FRAC_MIN = 0.10     # 모드의 면외 비율 하한(면내 모드 배제). O(1) vs O(1e-16).
+#   buckle_mode_report.U3_FRAC_MIN 과 같은 값이어야 한다(형상 도구와 게이트가 같은 기준).
+CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거리 안이면 '압축영역 분포' 로 본다.
+
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
 #   [mode 정합] mode.py 와 HF 는 0.01 을 쓴다. buckle 만 1e-4 였다.
@@ -1072,6 +1081,67 @@ try:
 except Exception as _e:
     print("%s [BASE] probe 실패(무시): %s" % (TAG, _e))
 
+# ---------------------------------------------------------------------------
+# 모드 형상 판정 (C3/C4) + 4조건 게이트.   (§18)
+#   왜 형상인가: 임퍼펙션은 z 섭동이므로 면내 모드(u3~0)는 아무것도 주입하지 못하고,
+#   사선변에 붙은 경계조건 아티팩트는 클램프 물리가 아니라 틀린 초기결함이 된다.
+#   판정 산술은 buckle_mode_report.py 의 순수 함수를 쓴다(같은 저장소, DRY — 로컬 단위검증됨).
+# ---------------------------------------------------------------------------
+def judge_run(conv_max, lams, modes_ok, c3, c4, spread_min=SPREAD_MIN_PCT,
+              u3_min=U3_FRAC_MIN, zone_r=CLAMP_ZONE_R):
+    """4조건의 (이름, 통과, 실측근거) 목록을 돌려준다. 각 조건의 근거를 함께 찍기 위해서다."""
+    res = []
+    _pos = [v for v in (lams or []) if v > 0.0]
+    res.append(('C1 수렴/양수lambda',
+                bool(conv_max) and len(_pos) >= 1,
+                'CONVERGED=%s, 양수 lambda %d개' % (conv_max, len(_pos))))
+    if len(_pos) >= 2:
+        _mn, _mx = min(_pos), max(_pos)
+        _mean = sum(_pos) / float(len(_pos))
+        _sp = 100.0 * (_mx - _mn) / abs(_mean) if _mean else 0.0
+        res.append(('C2 스프레드', _sp >= spread_min,
+                    '%.3f%% (하한 %.1f%%)' % (_sp, spread_min)))
+    else:
+        res.append(('C2 스프레드', False, '양수 lambda 가 2개 미만'))
+    res.append(('C3 면외 성분', bool(c3 is not None and c3 >= u3_min),
+                'u3_frac=%s (하한 %.2g)'
+                % (('%.3g' % c3) if c3 is not None else '-', u3_min)))
+    res.append(('C4 압축영역 분포', bool(c4 is not None and c4 <= zone_r),
+                '클램프까지 %s m (상한 %.2g m)'
+                % (('%.3f' % c4) if c4 is not None else '-', zone_r)))
+    return res
+
+
+_MET, _VD, _RES = [], {'c3': None, 'c4': None, 'modes_ok': []}, []
+try:
+    import buckle_mode_report as _bmr                 # _HERE 는 sys.path 에 있다
+    _datp = os.path.join(_RUN, '%s.dat' % JOB_NAME)
+    _nodes, _disps, _lams, _msgs = _bmr.read_odb_modes(
+        os.path.join(_RUN, '%s.odb' % JOB_NAME), 'Step-Buckle',
+        n_modes=max(1, min(8, N_EIG_BUCKLE)), instance=INSTANCE_NAME,
+        dat_hint=_datp if os.path.exists(_datp) else None)
+    for _m in _msgs:
+        print("%s [MODE] %s" % (TAG, _m))
+    for _d in _disps:
+        _m3 = max([abs(v[2]) for v in _d.values()] or [0.0])
+        if _m3 > 0:
+            _d = dict((k, (v[0] / _m3, v[1] / _m3, v[2] / _m3)) for k, v in _d.items())
+        _MET.append(_bmr.mode_metrics(_nodes, _d))
+    _ok, _drop = _bmr.judge_modes(_MET)
+    _VD['modes_ok'] = _ok
+    for _i, _why in _drop:
+        print("%s [MODE] 버림 M%-3d %s" % (TAG, _i, _why))
+    if _ok:
+        _mi = min(_ok) - 1
+        _mm = _MET[_mi]
+        _VD['c3'] = _mm['u3_frac']
+        _VD['c4'] = min(((_mm['cx'] - V_CL[0]) ** 2 + (_mm['cy'] - V_CL[1]) ** 2) ** 0.5,
+                        ((_mm['cx'] - V_CR[0]) ** 2 + (_mm['cy'] - V_CR[1]) ** 2) ** 0.5)
+        print("%s [MODE] 후보 M%d : u3_frac=%.3g centroid=(%.3f,%.3f) rw=%.3f 클램프까지 %.3f m"
+              % (TAG, _mi + 1, _mm['u3_frac'], _mm['cx'], _mm['cy'], _mm['rw'], _VD['c4']))
+except Exception as _e:
+    print("%s [MODE] 형상 판정 불가(무시): %s" % (TAG, _e))
+
 # ledger: 런 1개 = 1행. 원인 판정은 '한 열만 다른 두 행' 에서만 한다(규칙 2).
 try:
     import io as _io
@@ -1096,6 +1166,13 @@ try:
     if os.path.exists(_datf) and _HAS_PBL:
         _txt = _io.open(_datf, encoding='utf-8', errors='replace').read()
         _row['lambdas'] = _pbl.dat_lambdas(_txt, limit=12)
+    _RES = judge_run(_row['convMax'], _row['lambdas'], _VD.get('modes_ok'),
+                     _VD.get('c3'), _VD.get('c4'))
+    _row['verdict'] = {
+        'pass': all(_ok for _, _ok, _ in _RES),
+        'c3_u3_frac': _VD.get('c3'), 'c4_dist_m': _VD.get('c4'),
+        'modes_ok': _VD.get('modes_ok'),
+    }
     _led = os.path.join(_RUN, 'buckle_ledger.jsonl')
     with _io.open(_led, 'a', encoding='utf-8') as _f:
         _f.write(_js.dumps(_row, ensure_ascii=False) + '\n')
@@ -1106,7 +1183,12 @@ except Exception as _e:
 
 print("")
 print("=" * 78)
-print("%s PASS CRITERION (4조건, judge_run 참조):" % TAG)
+for _n, _ok, _why in _RES:
+    print("%s [JUDGE] %-4s %-18s %s" % (TAG, 'PASS' if _ok else 'FAIL', _n, _why))
+print("%s [JUDGE] 종합: %s   (조건이 비어 있으면 앞의 [DIAG]/[MODE] 줄의 실패 이유를 보라)"
+      % (TAG, 'PASS' if (_RES and all(_ok for _, _ok, _ in _RES)) else 'FAIL'))
+print("")
+print("%s PASS CRITERION (4조건, 위 [JUDGE] 가 실측값과 함께 판정한다):" % TAG)
 print("   C1 CONVERGED >= 1 그리고 양수 lambda >= 1")
 print("   C2 lambda 스프레드 >= SPREAD_MIN_PCT   (중복 근 배제)")
 print("   C3 모드가 면외 성분을 가짐 (u3 비율)   (면내 모드 배제)")
