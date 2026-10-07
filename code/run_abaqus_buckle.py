@@ -157,21 +157,21 @@ def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 #   이 차이가 클램프와 교란되어 '클램프가 원인'인지 판별할 수 없었다.
 DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점
 
-# ---- 클램프 처리 모드 (CLAMP_MODE) ----
-#   A-route(run_abaqus.py)의 클램프 '존재'(패치+케이블 Tie, u3=0)와 '작동'(법선 방향
-#   CLAMP_PULL 당김)을, C-route 는 케이블 없이 RP 직접 구속/구동으로 재현한다. 4종은 §11.
-# ---- 클램프 처리 모드 (CLAMP_MODE) ----
-#   [2026-10-07] 'passive' -> 'driven'.
-#   근거: HF(run_abaqus.py)는 클램프에 케이블(cable_CL/CR)을 붙여 d_c 비율로 **당긴다**
-#   (Disp_Control_CL/CR, CLAMP_PULL = DISP_GLOBAL*d_c, 좌굴 스텝에 CLAMP_PERT =
-#   PERTURBATION*d_c). buckle 의 'driven' 분기가 같은 패턴을 케이블 없이 RP 직접 구동으로
-#   재현하므로 HF 와 하중 경로가 정합한다. 'passive' 는 구속만 하고 당기지 않아 어긋난다.
-#   그리고 클램프 위치 x_c 와 당김 비율 d_c 가 MFBO 설계변수이므로, 클램프가 실제로
-#   당겨지는 상태에서 모드를 뽑아야 그 설계변수의 효과가 모드에 반영된다.
+# ---- 클램프 처리 모드 (CLAMP_MODE) : 5종 (none | passive | driven | fixed | cload) ----
+#   클램프를 '모델에 넣는가' 와 '하중을 어떻게 주는가' 를 분리한 스위치다.
+#       none    : 클램프 패치 자체를 만들지 않는다(논문 재현 기준선).
+#       passive : 패치 RP 의 면외(u3)만 막는다. in-plane 자유, 하중 없음.  실측 48 / CONVERGED=4.
+#       fixed   : 패치 RP 를 u1=u2=u3=0 으로 완전 고정. 하중 없음.
+#       driven  : RP 에 u3=0 만 걸고, 하중은 **케이블 경유**로 준다(HF 와 같은 경로).
+#                 RP_CL <-Tie- start_cl -Cable_CL- end_cl(구동).  실측 888 / CONVERGED=0.
+#       cload   : 케이블 없이 RP 에 Step-Buckle 의 CLOAD 로 LIVE 를 준다(Galhofo 재현).
+#                 실측: 반복이 돌고 수렴 고유값 4~5개가 나온다(2026-10-07).
+#   클램프 위치 x_c 와 당김 비율 d_c 가 MFBO 설계변수이므로, 클램프가 실제로 당겨지는
+#   상태(또는 등가 하중 상태)에서 모드를 뽑아야 그 설계변수의 효과가 모드에 반영된다.
 CLAMP_MODE = 'driven'
 CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c, A-route 와 동일)
 
-# ---- 클램프 당김 **방향** (driven 전용) ----
+# ---- 클램프 당김 **방향** (driven 과 cload 가 함께 쓴다) ----
 #   교수님 지적(2026-10-07): 클램프 없이 케이블만 쓸 때는 각 케이블에 걸리는 변위가
 #   힘평형을 이루도록 각도를 맞췄다. 클램프가 있는 모델도 마찬가지로 맞춰야 base state 가
 #   안정하고 선형 모드를 찾을 수 있다.
@@ -203,8 +203,12 @@ if CLAMP_DIR not in ('normal', 'balanced', 'inward'):
 #   NEGATIVE EIGENVALUES, subspace 500 -> 123 붕괴, CONVERGED=0.
 #   HF(run_abaqus.py)는 클램프에 케이블(Cable_CL/CR)을 붙여 **축력만** 전달한다:
 #       RP_CL(Coupling) <-Tie- start_cl -Cable_CL- end_cl(구동점)
-#       RP_CL 에는 BC 가 없고(완전 자유), 구동은 end_cl 에 건다 -> 힘평형이 물리적으로 자동.
+#       구동은 end_cl 에 건다 -> RP 가 스스로 힘평형 위치로 가고 강제변위의 과구속이 사라진다.
 #   driven 을 이 구조로 바꾼다. CLAMP_CABLE_LEN 은 HF 와 같은 0.5 m.
+#   ⚠️ [2026-10-07 2차] 그렇다고 RP_CL_Set 을 **완전 자유**로 두면 안 된다. u3=0 은 걸어야 한다.
+#      실측: RP 에 BC 를 하나도 안 걸면 subspace 가 500 -> 45~95 로 붕괴하고 CONVERGED=0 이다.
+#      HF 가 같은 구조로도 완주하는 것은 *Static 의 stabilization 이 저강성 모드를 흡수하기
+#      때문이고, *BUCKLE(고유해석)에서는 치명적이다.
 CLAMP_CABLE_LEN = 0.5   # m (HF 의 CLAMP_CABLE_LEN 과 동일)
 
 # ---- CLOAD 라우트 (CLAMP_MODE='cload') ----
@@ -291,7 +295,8 @@ def _is_launcher_token(tok):
 
 
 def parse_args(argv):
-    """맨 뒤의 숫자 1~2개를 <x_c> [disp_m] 로 읽는다.
+    """맨 뒤의 숫자 1~4개를 <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] 로 읽고,
+    `neig=<N>` / `vec=<M>` key=value 토큰은 따로 걷어 6-튜플로 함께 돌려준다.
 
     조용한 치환 금지: 개수가 맞지 않거나 숫자가 아닌 토큰을 만나면 추측하지 않고
     사용법과 argv 전문을 찍고 예외로 끝낸다.
