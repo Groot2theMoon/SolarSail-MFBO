@@ -284,26 +284,50 @@ def main():
         print("    -> 한쪽만 곱하면 PATTERN_SIGN != 1.0 에서 두 모델이 갈라진다.")
 
     # ------------------------------------------------------------------
-    # [2026-10-07] LOAD_MODE 가 'cable' 이 아니면 위 buckle<->mode 계약은 범위 밖이다.
-    #   'cload' 라우트는 꼭짓점까지 집중하중으로 바꾼 **다른 모델**이다(케이블 0개).
-    #   mode.py 는 케이블 라우트만 구현하므로 '클램프만 다르다' 전제가 성립하지 않는다.
-    #   실패가 아니라 '비교 대상이 아님'이므로 경고만 찍고 위반으로 세지 않는다.
+    # [2026-10-07] 케이스 계약 — '클램프만 다르다'는 정합은 케이블 라우트 + 클램프 구속만인
+    #   CASE='seed' / 'control_none' 에서만 성립한다. 'clamp_lf' 는 케이블을 만들지 않는
+    #   별도 하중 경로(전부 집중하중)이고, 'paper_s1' 은 논문 baseline 재현용이다.
+    #   둘 다 실패가 아니라 '비교 대상이 아님'이므로 경고만 찍고 위반으로 세지 않는다.
     #   b 는 code_only() 로 공백이 정규화된 텍스트라 ^ 앵커가 안 맞는다 — 원본을 읽는다.
     with open(BUCKLE, encoding='utf-8') as _f:
         _raw_b = _f.read()
-    _lm = re.search(r"^LOAD_MODE\s*=\s*'([^']+)'", _raw_b, re.M)
-    _lm = _lm.group(1) if _lm else '(없음)'
-    _cf = re.search(r"^CORNER_F0\s*=\s*([0-9.eE+-]+)", _raw_b, re.M)
-    _cf = _cf.group(1) if _cf else '(없음)'
+
+    def _bconst(pat, default='(없음)'):
+        _m = re.search(pat, _raw_b, re.M)
+        return _m.group(1) if _m else default
+
+    bad7 = []
+    _case = _bconst(r"^CASE\s*=\s*'([^']+)'")
+    _cang = _bconst(r"^CORNER_ANGLE_DEG\s*=\s*([0-9.eE+-]+)")
+    _dfr = _bconst(r"^DEAD_FRAC\s*=\s*([0-9.eE+-]+)")
+    _cf0 = _bconst(r"^CORNER_F0\s*=\s*([0-9.eE+-]+)")
     print()
-    print("--- 하중 방식 (buckle 단독 상수) ---")
-    print("  run_abaqus_buckle.py  LOAD_MODE = %s   CORNER_F0 = %s" % (_lm, _cf))
-    if _lm == 'cable':
-        print("  OK   LOAD_MODE='cable' — 위 buckle<->mode 정합 계약이 그대로 성립한다.")
+    print("--- 하중 케이스 (buckle 단독 상수) ---")
+    print("  run_abaqus_buckle.py  CASE = %s   CORNER_ANGLE_DEG = %s   DEAD_FRAC = %s   CORNER_F0 = %s"
+          % (_case, _cang, _dfr, _cf0))
+    _CABLE_CASES = ('seed', 'control_none')
+    _KNOWN_CASES = _CABLE_CASES + ('clamp_lf', 'paper_s1')
+    if _case == '(없음)':
+        # [2026-10-07] 여기서 **실패**시킨다. 경고만 찍으면 CASE 줄을 주석 처리한 옛 사본이
+        #   PASS 로 통과한다(규칙 18: 문자열 존재 검사는 주석 처리된 쌍둥이에 만족한다).
+        bad7.append('CASE 를 읽지 못함(구버전 사본이거나 주석 처리됨)')
+        print("  !!!  CASE 를 읽지 못했습니다 — buckle<->mode 계약의 적용 범위를 판정할 수 없다.")
+    elif _case not in _KNOWN_CASES:
+        bad7.append('알 수 없는 CASE=%s' % _case)
+        print("  !!!  CASE='%s' 는 알려진 케이스가 아니다(%s)."
+              % (_case, '|'.join(_KNOWN_CASES)))
+    elif _case in _CABLE_CASES:
+        print("  OK   CASE='%s' — 위 buckle<->mode 정합 계약이 그대로 성립한다." % _case)
+    elif _case == 'clamp_lf':
+        print("  WARN CASE='clamp_lf' — 케이블 0개(전부 집중하중). buckle<->mode 계약은 적용 대상이 아니다.")
+        print("       판정은 모드 형상(면외 비율 / 압축영역 분포 / x_c 이동)으로 한다.")
+        if _dfr == '(없음)':
+            bad7.append('clamp_lf 인데 DEAD_FRAC 를 읽지 못함')
+            print("  !!!  DEAD_FRAC 를 읽지 못했습니다 — clamp_lf 는 DEAD/LIVE 배분이 필수다.")
     else:
-        print("  WARN LOAD_MODE='%s' — buckle<->mode 정합 계약은 **적용 대상이 아니다**." % _lm)
-        print("       ('%s' 는 케이블을 만들지 않는 별도 하중 경로다. mode.py 와 비교 금지)"
-              % _lm)
+        print("  WARN CASE='paper_s1' — 논문 baseline 재현용. 정합 계약 대상 아님.")
+        if _cang == '(없음)':
+            bad7.append('paper_s1 인데 CORNER_ANGLE_DEG 를 읽지 못함')
 
     print("--- 좌굴 스크립트에 HF/LF 전용이 섞여 있지 않은지 (0 이어야 정상) ---")
     bad2 = []
@@ -355,10 +379,11 @@ def main():
 
     print()
     print("=" * 74)
-    if bad or bad2 or bad3 or bad4 or bad5 or bad6:
+    if bad or bad2 or bad3 or bad4 or bad5 or bad6 or bad7:
         print("RESULT: !!! 불일치 (HF↔buckle 위반 %d / buckle 역할위반 %d / 디렉터리 위반 %d"
-              " / HF↔모드소스 위반 %d / 모드소스 역할위반 %d / buckle↔모드소스 위반 %d)"
-              % (len(bad), len(bad2), len(bad3), len(bad4), len(bad5), len(bad6)))
+              " / HF↔모드소스 위반 %d / 모드소스 역할위반 %d / buckle↔모드소스 위반 %d"
+              " / CASE 계약 위반 %d)"
+              % (len(bad), len(bad2), len(bad3), len(bad4), len(bad5), len(bad6), len(bad7)))
         print("        모드 노드가 어긋나면 *IMPERFECTION 이 조용히 실패한다.")
         print("        한쪽을 고쳤으면 다른 쪽도 같이 고쳐라.")
         return 1
