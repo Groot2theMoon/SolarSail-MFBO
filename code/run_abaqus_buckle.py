@@ -382,6 +382,17 @@ def report_job(job_name):
     msg_keys = ('CONVERGED', 'REQUESTED BY THE USER', 'CANNOT BE FOUND',
                 'REDUCED TO', 'NEGATIVE EIGENVALUES', 'HAS BEEN COMPLETED',
                 'HAS NOT BEEN COMPLETED', '***ERROR')
+    # .log 는 '잡이 시작조차 못 한' 실패(라이선스 거부/입력 거부)에만 단서가 있다.
+    _logfn = '%s.log' % job_name
+    if os.path.exists(_logfn):
+        out.append('===== %s (tail 20) =====' % _logfn)
+        try:
+            with open(_logfn, 'r', errors='replace') as _lf:
+                for _l2 in _lf.read().splitlines()[-20:]:
+                    out.append('      | ' + _l2[:150])
+        except Exception as _le:
+            out.append('      | (읽기 실패: %s)' % _le)
+
     fn = '%s.msg' % job_name
     if os.path.exists(fn):
         with open(fn, 'r', errors='replace') as f:
@@ -752,6 +763,18 @@ try:
 except Exception:
     print("%s BUILD/RUN FAILED — traceback:" % TAG)
     print(traceback.format_exc())
+    # 실패해도 진단을 찍는다. 원인은 .msg/.dat/.log 에만 있고, 여기서 안 찍으면
+    #   사용자에게는 traceback 한 줄만 남아 아무것도 판정할 수 없다.
+    for _fn in (JOB_NAME + ".log", JOB_NAME + ".msg", JOB_NAME + ".dat"):
+        _p = os.path.join(os.getcwd(), _fn)
+        if os.path.exists(_p):
+            print("%s [실패진단] %s (%d bytes)" % (TAG, _fn, os.path.getsize(_p)))
+        else:
+            print("%s [실패진단] %s 없음 — 잡이 시작조차 못 했다" % (TAG, _fn))
+    try:
+        report_job(JOB_NAME)
+    except Exception as _re:
+        print("%s report_job 실패(무시): %s" % (TAG, _re))
     raise
 
 report_job(JOB_NAME)
