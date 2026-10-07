@@ -160,6 +160,31 @@ DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용�
 #   당겨지는 상태에서 모드를 뽑아야 그 설계변수의 효과가 모드에 반영된다.
 CLAMP_MODE = 'driven'
 CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c, A-route 와 동일)
+
+# ---- 클램프 당김 **방향** (driven 전용) ----
+#   교수님 지적(2026-10-07): 클램프 없이 케이블만 쓸 때는 각 케이블에 걸리는 변위가
+#   힘평형을 이루도록 각도를 맞췄다. 클램프가 있는 모델도 마찬가지로 맞춰야 base state 가
+#   안정하고 선형 모드를 찾을 수 있다.
+#   실측한 현재 불평형 (DISP=1.8e-5, d_c=0.5):
+#       꼭짓점 2개 y합 = -1.723e-05 m (아래로)      <- u2=-DISP*sin(28.6)
+#       클램프  2개 y합 = +1.273e-05 m (위로)        <- u2=+CLAMP_PULL/√2  (normal)
+#     => 두 하중계가 **반대 방향**이다. Top 완전고정이 순합(-4.5e-06 m)을 반력으로
+#        흡수하지만, 막 내부는 '위로 잡아당겨진' 면내 응력 상태가 된다.
+#   세 후보 (실측 계산):
+#       'normal'   : CL=(-1,+1)/√2, CR=(+1,+1)/√2 , d_c=0.5 그대로
+#                    클램프 y합 +1.273e-05 m / 꼭짓점 y합 -1.723e-05 m
+#                    -> 남는 -4.505e-06 m 를 Top 완전고정이 반력으로 흡수.
+#                    **HF 와 동일한 실제 부품 형상**이다(기본값).
+#       'balanced' : 'normal' 방향 그대로, **크기만** 힘평형으로 자동 조정한다.
+#                    목표: 클램프 y합 + 꼭짓점 y합 = 0  =>  Top 반력 = 0
+#                    필요 CLAMP_PULL = DISP*sin(28.6)/DIR_y  =>  d_c_eff = √2*sin(28.6) = 0.677
+#                    교수님이 말한 '케이블이 거는 힘의 합 = 0' 에 가장 부합한다.
+#       'inward'   : CL=(+1,0), CR=(-1,0)  -> y 성분 0
+#                    y 불평형은 없애지만 사선변 중점을 **안쪽으로 눌러** 면내 압축을 키운다
+#                    => 좌굴 하중을 낮춰 오히려 더 불안정해질 수 있다. 케이블 장력(인장)과 어긋난다.
+CLAMP_DIR = 'normal'
+if CLAMP_DIR not in ('normal', 'balanced', 'inward'):
+    raise RuntimeError("CLAMP_DIR must be 'normal'|'balanced'|'inward' (got %r)" % (CLAMP_DIR,))
 # 오타로 조용히 다른 케이스가 되는 것을 막는다 (값 검증은 메쉬 생성 전에).
 if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed'):
     raise RuntimeError("CLAMP_MODE must be 'none'|'passive'|'driven'|'fixed' (got %r)"
@@ -289,17 +314,36 @@ print("%s CLAMP_MODE=%s d_c=%.3g -> CLAMP_PULL=%.4e m (buckle pert %.3e m)"
 V_CL = clamp_coord_L(x_c)
 V_CR = clamp_coord_R(x_c)
 
-print("%s x_c=%g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
-print("%s corner pull DISP=%.4e m (= alpha %.4g x 5e-5 m)  perturbation=%.3e m"
-      % (TAG, DISP, DISP / 5.0e-5, PERTURBATION))
-print("%s buckle step: solver=%s numEigen=%d vectors=%d"
-      % (TAG, BUCKLE_SOLVER, N_EIG_BUCKLE, BUCKLE_VECTORS))
-
 # 하중 각도 (28.6도) — 케이블 방향과 동일하게 유지 (하중 경로 동일화)
 angle_deg = 28.6
 angle_rad = np.deg2rad(angle_deg)
 cos_val = float(np.cos(angle_rad))
 sin_val = float(np.sin(angle_rad))
+
+# 클램프 당김 단위벡터 (DIR_CL = 좌측 클램프, DIR_CR = 우측 클램프)
+_s2 = 2.0 ** 0.5
+if CLAMP_DIR == 'inward':
+    DIR_CL, DIR_CR = (+1.0, 0.0), (-1.0, 0.0)   # 사선변 안쪽 수평 -> y 성분 0
+else:
+    DIR_CL, DIR_CR = (-1.0 / _s2, +1.0 / _s2), (+1.0 / _s2, +1.0 / _s2)
+
+# 'balanced': 클램프 y합 + 꼭짓점 y합 = 0 이 되도록 크기를 맞춘다 (Top 반력 0).
+#   꼭짓점 y합 = -2*DISP*sin(theta)  이므로  2*CLAMP_PULL*DIR_y = 2*DISP*sin(theta).
+if CLAMP_DIR == 'balanced':
+    _theta = np.deg2rad(angle_deg)
+    CLAMP_PULL = DISP * np.sin(_theta) / DIR_CL[1]
+    CLAMP_PERT = PERTURBATION * np.sin(_theta) / DIR_CL[1]
+    print("%s [balanced] CLAMP_PULL %.4e -> %.4e m (d_c_eff=%.4f)"
+          % (TAG, DISP * CLAMP_DC, CLAMP_PULL, CLAMP_PULL / DISP))
+
+print("%s x_c=%g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
+print("%s CLAMP_DIR=%s -> DIR_CL=%s DIR_CR=%s  (y성분 합=%+.3e m)"
+      % (TAG, CLAMP_DIR, DIR_CL, DIR_CR, CLAMP_PULL * (DIR_CL[1] + DIR_CR[1])))
+print("%s corner pull DISP=%.4e m (= alpha %.4g x 5e-5 m)  perturbation=%.3e m"
+      % (TAG, DISP, DISP / 5.0e-5, PERTURBATION))
+print("%s buckle step: solver=%s numEigen=%d vectors=%d"
+      % (TAG, BUCKLE_SOLVER, N_EIG_BUCKLE, BUCKLE_VECTORS))
+
 
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
                   'dat', 'res', 'abq', 'ipm', 'mdl', 'stt', 'cid')
@@ -714,10 +758,10 @@ def build_model(disp):
                                     region=a.sets['RP_CR_Set'], u1=0, u2=0)
             my_model.boundaryConditions['Disp_Clamp_CL'].setValuesInStep(
                 stepName='Step-GlobalTension',
-                u1=-CLAMP_PULL/_sq2, u2=+CLAMP_PULL/_sq2)
+                u1=DIR_CL[0] * CLAMP_PULL, u2=DIR_CL[1] * CLAMP_PULL)
             my_model.boundaryConditions['Disp_Clamp_CR'].setValuesInStep(
                 stepName='Step-GlobalTension',
-                u1=+CLAMP_PULL/_sq2, u2=+CLAMP_PULL/_sq2)
+                u1=DIR_CR[0] * CLAMP_PULL, u2=DIR_CR[1] * CLAMP_PULL)
 
     # ---- Buckle 스텝: 논문 (c) 3변 u3=0 유지 + 클램프 구간은 면외 구속에서 제외(§9) ----
     _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
@@ -754,19 +798,19 @@ def build_model(disp):
     if CLAMP_MODE == 'driven':
         my_model.boundaryConditions['Disp_Clamp_CL'].setValuesInStep(
             stepName='Step-Buckle',
-            u1=-CLAMP_PERT/_sq2, u2=+CLAMP_PERT/_sq2)
+            u1=DIR_CL[0] * CLAMP_PERT, u2=DIR_CL[1] * CLAMP_PERT)
         my_model.boundaryConditions['Disp_Clamp_CR'].setValuesInStep(
             stepName='Step-Buckle',
-            u1=+CLAMP_PERT/_sq2, u2=+CLAMP_PERT/_sq2)
+            u1=DIR_CR[0] * CLAMP_PERT, u2=DIR_CR[1] * CLAMP_PERT)
 
     return model_name
 
 # job 이름에 요소 태그 + 클램프 모드를 넣는다. 같은 이름이면 run_job_safely 가 stale
 #   산출물을 지워 직전 증거가 사라진다(§11).
 ELEM_TAG = 's4'
-JOB_NAME = 'Buckle_xc%03d_d%03dum_%s_%s' % (int(round(x_c * 100.0)),
-                                            int(round(DISP * 1.0e6)),
-                                            ELEM_TAG, CLAMP_MODE)
+JOB_NAME = 'Buckle_xc%03d_d%03dum_%s_%s_%s' % (int(round(x_c * 100.0)),
+                                               int(round(DISP * 1.0e6)),
+                                               ELEM_TAG, CLAMP_MODE, CLAMP_DIR)
 
 print("")
 print("=" * 78)
