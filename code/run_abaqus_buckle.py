@@ -337,7 +337,8 @@ N_EIG_BUCKLE = 150      # 추출 요청 고유값 수  (mode.py 와 같은 값�
 #     마지막 상향 근거(실측): CASE='clamp_lf' 의 base state 가 SYSTEM 음수 **126개**를 가져
 #     요청 10개로는 양수 모드가 창에 들어오지 못했다(CONVERGED=0, §19.2).
 #     조건은 **요청 수 > 음수 개수**, 상한은 실제 subspace 차원("REDUCED TO n")이다.
-BUCKLE_VECTORS = 300    # subspace 기저 벡터 수 = 요청 수의 2배(관례 유지). 같은 이력.
+BUCKLE_VECTORS = 250    # subspace 기저 벡터 수. 실측 천장: 300 을 요청하면
+#   "REDUCED TO 272 DUE TO LINEAR DEPENDENCY" 로 깎인다(2026-10-07 clamp_lf 런). 250 이면 안 깎인다.
 #   ⚠️ 실측 반증(2026-10-07, cload 라우트): 요청 500 -> "VECTORS IN SUBSPACE IS REDUCED TO 14".
 #      즉 실제 기저는 14 차원인데 200 개를 요청했다 -> ITERATION 마다 수렴 수가 출렁이고
 #      (4,5,2,4,4,2) 결국 ***ERROR: THE EIGENVALUES CANNOT BE FOUND.
