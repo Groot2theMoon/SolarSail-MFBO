@@ -1,0 +1,428 @@
+{
+ "case": "passive",
+ "x_c": 0.5,
+ "build_model_ok": true,
+ "creates": [
+  {
+   "obj": "SailModel_Buckle.Part(Membrane)",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "faces": "<obj faces>",
+    "name": "All"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.Part(Cable_Top)",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "edges": "<obj edges>",
+    "name": "Wire"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.Part(Cable_Bot)",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "edges": "<obj edges>",
+    "name": "Wire"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "Top_RP_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f115d0>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "Top_Nodes",
+    "nodes": "<__main__.Node object at 0x7a8fe1121f00>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle",
+   "call": "Coupling",
+   "args": [],
+   "kwargs": {
+    "name": "Top_Coupling",
+    "controlPoint": "<obj Set(Top_RP_Set)>",
+    "surface": "<obj Set(Top_Nodes)>",
+    "influenceRadius": "WHOLE_SURFACE",
+    "couplingType": "DISTRIBUTING",
+    "weightingMethod": "UNIFORM",
+    "u1": "ON",
+    "u2": "ON",
+    "u3": "ON",
+    "ur1": "ON",
+    "ur2": "ON",
+    "ur3": "ON"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "Right_RP_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f11bd0>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "Right_Nodes",
+    "nodes": "<__main__.Node object at 0x7a8fe11303d0>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle",
+   "call": "Coupling",
+   "args": [],
+   "kwargs": {
+    "name": "Right_Coupling",
+    "controlPoint": "<obj Set(Right_RP_Set)>",
+    "surface": "<obj Set(Right_Nodes)>",
+    "influenceRadius": "WHOLE_SURFACE",
+    "couplingType": "DISTRIBUTING",
+    "weightingMethod": "UNIFORM",
+    "u1": "ON",
+    "u2": "ON",
+    "u3": "ON",
+    "ur1": "ON",
+    "ur2": "ON",
+    "ur3": "ON"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "Left_RP_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f12110>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "Left_Nodes",
+    "nodes": "<__main__.Node object at 0x7a8fe1130c10>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle",
+   "call": "Coupling",
+   "args": [],
+   "kwargs": {
+    "name": "Left_Coupling",
+    "controlPoint": "<obj Set(Left_RP_Set)>",
+    "surface": "<obj Set(Left_Nodes)>",
+    "influenceRadius": "WHOLE_SURFACE",
+    "couplingType": "DISTRIBUTING",
+    "weightingMethod": "UNIFORM",
+    "u1": "ON",
+    "u2": "ON",
+    "u3": "ON",
+    "ur1": "ON",
+    "ur2": "ON",
+    "ur3": "ON"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "CL_RP_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f12650>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "CL_Nodes",
+    "nodes": "<__main__.Node object at 0x7a8fe11281f0>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle",
+   "call": "Coupling",
+   "args": [],
+   "kwargs": {
+    "name": "CL_Coupling",
+    "controlPoint": "<obj Set(CL_RP_Set)>",
+    "surface": "<obj Set(CL_Nodes)>",
+    "influenceRadius": "WHOLE_SURFACE",
+    "couplingType": "DISTRIBUTING",
+    "weightingMethod": "UNIFORM",
+    "u1": "ON",
+    "u2": "ON",
+    "u3": "ON",
+    "ur1": "ON",
+    "ur2": "ON",
+    "ur3": "ON"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "CR_RP_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f12b90>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "CR_Nodes",
+    "nodes": "<__main__.Node object at 0x7a8fe11239a0>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle",
+   "call": "Coupling",
+   "args": [],
+   "kwargs": {
+    "name": "CR_Coupling",
+    "controlPoint": "<obj Set(CR_RP_Set)>",
+    "surface": "<obj Set(CR_Nodes)>",
+    "influenceRadius": "WHOLE_SURFACE",
+    "couplingType": "DISTRIBUTING",
+    "weightingMethod": "UNIFORM",
+    "u1": "ON",
+    "u2": "ON",
+    "u3": "ON",
+    "ur1": "ON",
+    "ur2": "ON",
+    "ur3": "ON"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "RP_Top_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f115d0>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "RP_Right_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f11bd0>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "RP_Left_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f12110>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "RP_CL_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f12650>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "RP_CR_Set",
+    "referencePoints": "<__main__.Obj object at 0x7a8fe0f12b90>"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle",
+   "call": "Tie",
+   "args": [],
+   "kwargs": {
+    "name": "Tie_Top",
+    "main": "<obj Set(RP_Top_Set)>",
+    "secondary": "<obj region>",
+    "positionToleranceMethod": "COMPUTED"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle",
+   "call": "Tie",
+   "args": [],
+   "kwargs": {
+    "name": "Tie_Right",
+    "main": "<obj Set(RP_Right_Set)>",
+    "secondary": "<obj region>",
+    "positionToleranceMethod": "COMPUTED"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle",
+   "call": "Tie",
+   "args": [],
+   "kwargs": {
+    "name": "Tie_Left",
+    "main": "<obj Set(RP_Left_Set)>",
+    "secondary": "<obj region>",
+    "positionToleranceMethod": "COMPUTED"
+   }
+  },
+  {
+   "obj": "model",
+   "call": "CREATE",
+   "args": [
+    "BC_Stabilize_Z"
+   ],
+   "kwargs": {
+    "region": "<obj sets[All]>",
+    "u3": "SET",
+    "createStepName": "Step-GlobalTension"
+   }
+  },
+  {
+   "obj": "model",
+   "call": "CREATE",
+   "args": [
+    "BC_Anchor_Top"
+   ],
+   "kwargs": {
+    "region": "<obj region>",
+    "u1": "SET",
+    "u2": "SET",
+    "u3": "SET",
+    "ur1": "SET",
+    "ur2": "SET",
+    "ur3": "SET",
+    "createStepName": "Initial"
+   }
+  },
+  {
+   "obj": "model",
+   "call": "CREATE",
+   "args": [
+    "BC_Right_Z"
+   ],
+   "kwargs": {
+    "region": "<obj region>",
+    "u3": "SET",
+    "ur1": "SET",
+    "ur2": "SET",
+    "ur3": "SET",
+    "createStepName": "Initial"
+   }
+  },
+  {
+   "obj": "model",
+   "call": "CREATE",
+   "args": [
+    "BC_Left_Z"
+   ],
+   "kwargs": {
+    "region": "<obj region>",
+    "u3": "SET",
+    "ur1": "SET",
+    "ur2": "SET",
+    "ur3": "SET",
+    "createStepName": "Initial"
+   }
+  },
+  {
+   "obj": "model",
+   "call": "CREATE",
+   "args": [
+    "Disp_Control_Right"
+   ],
+   "kwargs": {
+    "region": "<obj region>",
+    "u1": "SET",
+    "u2": "SET",
+    "createStepName": "Initial"
+   }
+  },
+  {
+   "obj": "model",
+   "call": "CREATE",
+   "args": [
+    "Disp_Control_Left"
+   ],
+   "kwargs": {
+    "region": "<obj region>",
+    "u1": "SET",
+    "u2": "SET",
+    "createStepName": "Initial"
+   }
+  },
+  {
+   "obj": "model",
+   "call": "CREATE",
+   "args": [
+    "BC_Clamp_CL"
+   ],
+   "kwargs": {
+    "region": "<obj Set(RP_CL_Set)>",
+    "u3": 0,
+    "createStepName": "Initial"
+   }
+  },
+  {
+   "obj": "model",
+   "call": "CREATE",
+   "args": [
+    "BC_Clamp_CR"
+   ],
+   "kwargs": {
+    "region": "<obj Set(RP_CR_Set)>",
+    "u3": 0,
+    "createStepName": "Initial"
+   }
+  },
+  {
+   "obj": "SailModel_Buckle.assembly",
+   "call": "Set",
+   "args": [],
+   "kwargs": {
+    "name": "All_Edges_NoClamp",
+    "nodes": "<__main__.Node object at 0x7a8fe1130c10>|<__main__.Node object at 0x7a8fe1130b20>|<__main__.Node object at 0x7a8fe1130a90>|<__main__.Node object at 0x7a8fe1130af0>|<__main__.Node object at 0x7a8fe1130ac0>|<__main__.Node object at 0x7a8fe1130a60>|<__main__.Node object at 0x7a8fe1130a30>|<__main__.Node object at 0x7a8fe1130a00>|<__main__.Node object at 0x7a8fe11309d0>|<__main__.Node object at 0x7a8fe11309a0>|<__main__.Node object at 0x7a8fe1130970>|<__main__.Node object at 0x7a8fe1130940>|<__main__.Node object at 0x7a8fe1130910>|<__main__.Node object at 0x7a8fe11308e0>|<__main__.Node object at 0x7a8fe11308b0>|<__main__.Node object at 0x7a8fe1130880>|<__main__.Node object at 0x7a8fe1130850>|<__main__.Node object at 0x7a8fe1130820>|<__main__.Node object at 0x7a8fe11307f0>|<__main__.Node object at 0x7a8fe11307c0>|<__main__.Node object at 0x7a8fe1130790>|<__main__.Node object at 0x7a8fe1130760>|<__main__.Node object at 0x7a8fe1130730>|<__main__.Node object at 0x7a8fe1130700>|<__main__.Node object at 0x7a8fe11306d0>|<__main__.Node object at 0x7a8fe11306a0>|<__main__.Node object at 0x7a8fe1130670>|<__main__.Node object at 0x7a8fe1130640>|<__main__.Node object at 0x7a8fe1130610>|<__main__.Node object at 0x7a8fe11305e0>|<__main__.Node object at 0x7a8fe11305b0>|<__main__.Node object at 0x7a8fe1130580>|<__main__.Node object at 0x7a8fe1130550>|<__main__.Node object at 0x7a8fe1130520>|<__main__.Node object at 0x7a8fe11304f0>|<__main__.Node object at 0x7a8fe11304c0>|<__main__.Node object at 0x7a8fe1130490>|<__main__.Node object at 0x7a8fe1130460>|<__main__.Node object at 0x7a8fe1130430>|<__main__.Node object at 0x7a8fe1130400>|<__main__.Node object at 0x7a8fe11303d0>|<__main__.Node object at 0x7a8fe1130b50>|<__main__.Node object at 0x7a8fe112bc40>|<__main__.Node object at 0x7a8fe11303a0>|<__main__.Node object at 0x7a8fe112b550>|<__main__.Node object at 0x7a8fe112bc10>|<__main__.Node object at 0x7a8fe1129d50>|<__main__.Node object at 0x7a8fe112b520>|<__main__.Node object at 0x7a8fe1129720>|<__main__.Node object at 0x7a8fe1129d20>|<__main__.Node object at 0x7a8fe1129150>|<__main__.Node object at 0x7a8fe11296f0>|<__main__.Node object at 0x7a8fe1128be0>|<__main__.Node object at 0x7a8fe1129120>|<__main__.Node object at 0x7a8fe11286d0>|<__main__.Node object at 0x7a8fe1128bb0>|<__main__.Node object at 0x7a8fe1128220>|<__main__.Node object at 0x7a8fe11286a0>|<__main__.Node object at 0x7a8fe1123d90>|<__main__.Node object at 0x7a8fe1123d60>|<__main__.Node object at 0x7a8fe1123610>|<__main__.Node object at 0x7a8fe1123970>|<__main__.Node object at 0x7a8fe11232e0>|<__main__.Node object at 0x7a8fe11235e0>|<__main__.Node object at 0x7a8fe1123010>|<__main__.Node object at 0x7a8fe11232b0>|<__main__.Node object at 0x7a8fe1122530>|<__main__.Node object at 0x7a8fe1122fe0>|<__main__.Node object at 0x7a8fe1122320>|<__main__.Node object at 0x7a8fe1122500>|<__main__.Node object at 0x7a8fe1122170>|<__main__.Node object at 0x7a8fe11222f0>|<__main__.Node object at 0x7a8fe1122020>|<__main__.Node object at 0x7a8fe1122140>|<__main__.Node object at 0x7a8fe1121f30>|<__main__.Node object at 0x7a8fe1121ff0>|<__main__.Node object at 0x7a8fe1121ea0>|<__main__.Node object at 0x7a8fe1121f00>"
+   }
+  },
+  {
+   "obj": "model",
+   "call": "CREATE",
+   "args": [
+    "BC_Edges_Only_Z"
+   ],
+   "kwargs": {
+    "region": "<obj Set(All_Edges_NoClamp)>",
+    "u3": 0,
+    "createStepName": "Step-Buckle"
+   }
+  }
+ ],
+ "all_calls": 98
+}
