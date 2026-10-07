@@ -267,7 +267,7 @@ if CLAMP_DIR not in ('normal', 'balanced', 'inward'):
 #     이 lambda 가 x_c/d_c 에 따라 변하는 것이 MFBO 목적함수의 재료가 된다.
 #   구성: GlobalTension(꼭짓점)은 **그대로** 둔다(검증된 경로, base state 보존).
 #         클램프는 passive 처럼 RP 면외만 구속하고, Step-Buckle 에서 CLOAD 로 LIVE 를 준다.
-CLAMP_F0 = 1.0   # N — 클램프 집중하중. CASE='clamp_lf' 에서는 **코너 대비 비율**이 물리이고
+CLAMP_F0 = 1.0   # N — (구 CLOAD 라우트의 값) **현행 clamp_lf 는 변위로 구동한다(§19)**:
 #   (lambda 가 전체 배수를 흡수한다) 절대값 자체는 결과를 바꾸지 않는다. 비율 CLAMP_F0/CORNER_F0
 #   을 로그에 찍는다.
 
@@ -979,50 +979,50 @@ def build_model(disp):
     #   HAS_CLAMPS=False      : 클램프 패치가 없다 -> 할 일이 없다.
     #   CLAMP_LOAD='none'     : 패치 RP 의 면외(u3)만 막는다. in-plane 자유, 하중 없음.
     #                           실측: none 과 lambda 상대차 6e-6 (구속은 물리를 안 바꾼다).
-    #   CLAMP_LOAD='live'     : 꼭짓점과 클램프를 **모두 집중하중**으로 주고 DEAD/LIVE 로 나눈다.
-    #                           (코너는 케이블·클램프는 CLOAD 인 '혼합 라우트'는 실패했다.)
+    #   CLAMP_LOAD='live'     : 꼭짓점과 클램프를 **prescribed 변위**로 구동하고 DEAD/LIVE 로 나눈다.
+    #                           (검증된 관용구 = BC. CLOAD 라우트는 완주 기록이 없다 — §18.1,
+    #                            CAE 도 스텝 간 하중 수정을 거부했다 — §19)
     if CLAMP_LOAD == 'live':
         # =====================================================================
-        # all-CLOAD 라우트 — CASE='clamp_lf'
-        #   하중 세트 P = 꼭짓점 + 클램프. DEAD = DEAD_FRAC x P, LIVE = (1-DEAD_FRAC) x P.
-        #   BUCKLING LOAD = DEAD + lambda*LIVE 이므로 **lambda = 1 이 운용점**이다.
-        #   RP 구속: 면외(u3)만 막는다. in-plane 은 하중이 잡는다.
-        #   [함정 1] **하중은 Initial 스텝에 만들 수 없다** — Abaqus 가
-        #     "ValueError: The specified step either does not exist or is the Initial step"
-        #     로 모델 생성을 죽인다(2026-10-07 실측; BC 는 Initial 에 가능해서 더 헷갈린다).
-        #     => 만들 때 DEAD 값을 주고, LIVE 만 setValuesInStep 으로 바꾼다.
-        #   [함정 2] 같은 이름을 두 createStepName 으로 만들면 나중 것이 0 으로 덮어쓴다
-        #     (스텁 하네스로 적발) => 이름당 **한 번만** 만든다.
+        # clamp_lf — 꼭짓점과 클램프를 **prescribed 변위**로 구동한다.
+        #   [왜 변위인가 — 2026-10-07 실측] 이 저장소에서 **완주한** 구동 경로는 prescribed 변위
+        #     BC 뿐이다: HF(run_abaqus.py) · 대조(run_abaqus_cable.py) · 모드소스
+        #     (run_abaqus_mode.py) 가 전부 `Disp_Control_*` 를 Initial 에 만들고
+        #     `boundaryConditions[...].setValuesInStep(stepName=...)` 로 스텝마다 값을 바꾼다.
+        #     CLOAD 는 이 저장소에서 **완주한 적이 없고**(기록된 유일한 CLOAD 조합이 실패 조합,
+        #     §18.1), CAE 는 스텝 간 하중 수정 자체를 거부했다:
+        #       ValueError: The load does not exist in the specified step or is suppressed...
+        #     => 검증된 관용구로 되돌린다. **회계는 그대로다**:
+        #        DEAD 를 base state(Step-GlobalTension)에, LIVE 를 좌굴 스텝에 둔다.
+        #        setValuesInStep 은 그 스텝의 값을 대체하므로 lambda=1 에서
+        #        총 구동 = DEAD + LIVE = 운용 변위 P  =>  lambda = 1 이 운용점.
+        #   RP 면외(u3)는 BC_Clamp_* 가 따로 막는다(in-plane 은 아래 변위가 잡는다).
         # =====================================================================
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
                                 region=a.sets['RP_CL_Set'], u3=0)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
                                 region=a.sets['RP_CR_Set'], u3=0)
-        _P = (('CF_Corner_Right', A2, CORNER_F0 * cos_val, -CORNER_F0 * sin_val),
-              ('CF_Corner_Left',  A3, -CORNER_F0 * cos_val, -CORNER_F0 * sin_val),
-              ('CF_Clamp_CL', a.sets['RP_CL_Set'], DIR_CL[0] * CLAMP_F0, DIR_CL[1] * CLAMP_F0),
-              ('CF_Clamp_CR', a.sets['RP_CR_Set'], DIR_CR[0] * CLAMP_F0, DIR_CR[1] * CLAMP_F0))
-        # DEAD = DEAD_FRAC x P — 0 을 생략하지 않고 **만들 때 명시**한다(함정 1).
-        #   [함정 3] 하중 **저장소 이름을 쓰지 않는다**. Abaqus 에 `model.concentratedForces`
-        #     라는 저장소는 없다(집중하중은 `model.loads` 에 들어간다). 실측 2026-10-07:
-        #     AttributeError: 'Model' object has no attribute 'concentratedForces'.
-        #     => 이름으로 조회하지 않고 ConcentratedForce() 가 **돌려준 객체를 그대로 잡아** 쓴다.
-        _cfs = []
-        for _nm, _reg, _c1, _c2 in _P:
-            _cfs.append(my_model.ConcentratedForce(
-                name=_nm, createStepName='Step-GlobalTension', region=_reg,
-                cf1=DEAD_FRAC * _c1, cf2=DEAD_FRAC * _c2, cf3=0.0))
-        # LIVE = (1-DEAD_FRAC) x P — Buckle 스텝에 있다가 lambda 에 곱해진다(§18.2 회계).
-        #   setValuesInStep 은 그 스텝의 값을 **대체**하므로, lambda=1 에서
-        #   총하중 = DEAD(base state) + LIVE = P = 운용점이 된다.
-        for _cf, (_nm, _reg, _c1, _c2) in zip(_cfs, _P):
-            _cf.setValuesInStep(
+        #   크기 출처는 HF 와 동일: 꼭짓점 = DISP, 클램프 = CLAMP_PULL(= CLAMP_DC x DISP).
+        _DRV = (('Disp_Control_Right', A2, cos_val, -sin_val, DISP),
+                ('Disp_Control_Left', A3, -cos_val, -sin_val, DISP),
+                ('Disp_Control_CL', a.sets['RP_CL_Set'], DIR_CL[0], DIR_CL[1], CLAMP_PULL),
+                ('Disp_Control_CR', a.sets['RP_CR_Set'], DIR_CR[0], DIR_CR[1], CLAMP_PULL))
+        for _nm, _reg, _d1, _d2, _mag in _DRV:
+            my_model.DisplacementBC(name=_nm, createStepName='Initial', region=_reg,
+                                    u1=0.0, u2=0.0)
+        for _nm, _reg, _d1, _d2, _mag in _DRV:
+            # DEAD = DEAD_FRAC x P — base state. 0 을 생략하지 않고 **명시**한다.
+            my_model.boundaryConditions[_nm].setValuesInStep(
+                stepName='Step-GlobalTension',
+                u1=DEAD_FRAC * _mag * _d1, u2=DEAD_FRAC * _mag * _d2)
+            # LIVE = (1-DEAD_FRAC) x P x PATTERN_SIGN — 좌굴 스텝 = 섭동 패턴(lambda 의 대상).
+            my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-Buckle',
-                cf1=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _c1,
-                cf2=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _c2, cf3=0.0)
-        print("%s [clamp_lf] P = corner(%.4g N) + clamp(%.4g N) : 비율 clamp/corner=%.3g"
-              % (TAG, CORNER_F0, CLAMP_F0, CLAMP_F0 / CORNER_F0))
-        print("%s [clamp_lf] DEAD_FRAC=%.4g -> DEAD=%.4g x P (만들 때, GlobalTension) / "
+                u1=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _mag * _d1,
+                u2=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _mag * _d2)
+        print("%s [clamp_lf] 변위 구동: 꼭짓점 %.4g m + 클램프 %.4g m (CLAMP_DC=%.3g, 비율 %.3g)"
+              % (TAG, DISP, CLAMP_PULL, CLAMP_DC, (CLAMP_PULL / DISP) if DISP else 0.0))
+        print("%s [clamp_lf] DEAD_FRAC=%.4g -> DEAD=%.4g x P (GlobalTension) / "
               "LIVE=%.4g x P x PATTERN_SIGN(%+.2g) (Buckle)  => lambda=1 이 운용점"
               % (TAG, DEAD_FRAC, DEAD_FRAC, 1.0 - DEAD_FRAC, PATTERN_SIGN))
     elif HAS_CLAMPS:
