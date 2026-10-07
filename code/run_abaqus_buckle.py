@@ -10,10 +10,9 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     + 꼭짓점 강체패치 3개 + 클램프 강체패치 2개 (위치 x_c).
     케이블은 꼭짓점 3개에만 있고(논문 §3.2 의 좌굴 모델과 같은 방식), 하중은 케이블
     끝단에 prescribed 변위로 준다. 클램프는 CLAMP_MODE 에 따라 달라진다(상수부 참조).
-    스텝 (HF 와 같은 체인):
-        Step-GlobalTension      꼭짓점 프리텐션 (DEAD)
-        Step-ClampTension       클램프 하중 (DEAD) — driven/cload 일 때만 생성
-        Step-Buckle             고유값 추출 (LIVE = 꼭짓점/클램프 perturbation 0.01 m)
+    스텝 (2개 — 클램프를 별도 텐션 스텝으로 분리하지 않는다):
+        Step-GlobalTension      꼭짓점 + 클램프 하중 (DEAD = base state)
+        Step-Buckle             고유값 추출 (LIVE = perturbation 0.01 m)
     창은 N_EIG_BUCKLE / BUCKLE_VECTORS 상수로 정한다(요청 수 <= 실제 subspace 차원).
 
 사용법
@@ -233,19 +232,17 @@ if CLAMP_MODE not in ('none', 'passive', 'driven', 'fixed', 'cload'):
     raise RuntimeError("CLAMP_MODE must be 'none'|'passive'|'driven'|'fixed'|'cload' (got %r)"
                        % (CLAMP_MODE,))
 
-# ---- 스텝 체인: 클램프에 하중이 걸리는가 ----
-#   HF(run_abaqus.py)는 3스텝이다: GlobalTension -> ClampTension -> Buckle.
-#   buckle 은 클램프 하중을 perturbation 스텝에만 두어 base state 에 압축을 만들지 못했다.
-#   클램프 하중이 있는 모드(driven/cload)만 ClampTension 스텝을 만든다.
-CLAMP_HAS_LOAD = CLAMP_MODE in ('driven', 'cload')
-PREV_BUCKLE_STEP = 'Step-ClampTension' if CLAMP_HAS_LOAD else 'Step-GlobalTension'
-
+# ---- 스텝 체인: GlobalTension 하나에 꼭짓점 + 클램프를 모두 넣는다 ----
+#   [2026-10-07 사용자 결정] 버클모드 추출에서는 클램프를 **별도 텐션 스텝으로 분리하지
+#   않는다**. 글로벌 텐션 스텝에 클램프도 함께 포함시킨다(HF 처럼 3스텝으로 늘리지 않는다).
+#       Step-GlobalTension   꼭짓점 + 클램프 (DEAD = base state)
+#       Step-Buckle          고유값 추출   (LIVE = perturbation)
+#   주의: 클램프 하중을 Break 스텝(=perturbation)에 걸면 LIVE 로만 작용해 base state 에
+#   압축을 만들지 못한다. 그래서 GlobalTension 쪽에 있어야 한다(이번 수정의 핵심).
+#
 # ---- base state 진단에 쓸 스텝 (base_state_probe 의 인자) ----
-#   [2026-10-07] 예전에는 'Step-GlobalTension' 으로 **고정**이라, 클램프 하중이 어느
-#   스텝에 있든 진단에 안 잡혔다(그래서 '클램프 효과 없음' 처럼 보였다).
-#   'auto' = 좌굴 스텝 바로 앞 스텝(= PREV_BUCKLE_STEP). 명시하려면 스텝 이름을 넣는다.
-BASE_STATE_STEP = 'auto'
-BASE_STATE_STEP_EFF = PREV_BUCKLE_STEP if BASE_STATE_STEP == 'auto' else BASE_STATE_STEP
+#   클램프 하중이 GlobalTension 에 있으므로 이 스텝을 보면 클램프 기여가 진단에 잡힌다.
+BASE_STATE_STEP = 'Step-GlobalTension'
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
@@ -758,30 +755,8 @@ def build_model(disp):
         initialInc=0.0001, minInc=1e-8, maxNumInc=1000
     )
 
-    # ---- Step 2: ClampTension (클램프 하중 = DEAD) ----
-    #   [2026-10-07] HF 와 스텝 구조를 맞춘다. HF 는 3스텝이다:
-    #       Step-GlobalTension -> Step-ClampTension -> Step-Buckle
-    #   buckle 은 2스텝이라 클램프 하중이 **perturbation 스텝에만** 있었고, 그래서
-    #   base state 에 전혀 반영되지 않았다(실측: RF 비영 노드가 꼭짓점 케이블 3개뿐,
-    #   압축 면적 0.08 %, max|u3| = 0 인장지배 -> 클램프 위치가 좌굴모드를 못 바꿈).
-    #   *BUCKLE 의 BUCKLING LOAD ESTIMATE = ("DEAD") + lambda * ("LIVE") 이므로
-    #   클램프가 base state 를 만들려면 **별도 static 스텝의 하중**이어야 한다.
-    #   클램프 하중이 없는 모드(none/passive/fixed)에서는 스텝을 만들지 않는다.
-    if CLAMP_HAS_LOAD:
-        my_model.StaticStep(
-            name='Step-ClampTension',
-            previous='Step-GlobalTension',
-            nlgeom=ON,
-            stabilizationMagnitude=MODE_STABILIZATION,
-            stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
-            continueDampingFactors=False,
-            adaptiveDampingRatio=0.05,
-            initialInc=0.0001, minInc=1e-8, maxNumInc=1000
-        )
-        print("%s Step-ClampTension 생성 (클램프 하중 = DEAD). Buckle previous = %s"
-              % (TAG, PREV_BUCKLE_STEP))
-
-    # ---- Step 3: Buckle — Trigger 스텝을 대체한다 ----
+    # ---- Step 2: Buckle — Trigger 스텝을 대체한다 ----
+    #   클램프 하중은 GlobalTension 스텝에 이미 들어 있다(별도 ClampTension 스텝 없음).
     # 대조 스크립트(run_abaqus_cable.py)에서 완주한 설정을 그대로 사용:
     #   numEigen=100 (음수 모드 건너뛰기), SUBSPACE, vectors=250, maxIterations=5000
     if 'Step-Buckle' in my_model.steps:
@@ -794,7 +769,7 @@ def build_model(disp):
     #   출력 요청은 해석 결과를 바꾸지 않는다.
 
     # ---- 좌굴 스텝: 솔버는 코드 상수 하나로 교체 (SUBSPACE <-> LANCZOS) ----
-    _eig = dict(name='Step-Buckle', previous=PREV_BUCKLE_STEP,
+    _eig = dict(name='Step-Buckle', previous='Step-GlobalTension',
                 numEigen=N_EIG_BUCKLE, eigensolver=EIGENSOLVER_CONST)
     if BUCKLE_SOLVER == 'SUBSPACE':
         _eig.update(vectors=BUCKLE_VECTORS, maxIterations=BUCKLE_MAXITER)
@@ -916,14 +891,14 @@ def build_model(disp):
                                 region=end_cl, u1=0, u2=0)
         my_model.DisplacementBC(name='Disp_Clamp_CR', createStepName='Initial',
                                 region=end_cr, u1=0, u2=0)
-        # [2026-10-07] 클램프 구동을 GlobalTension 이 아니라 **ClampTension** 스텝에 건다.
-        #   GlobalTension 에 걸면 꼭짓점 프리텐션과 클램프 당김이 같은 스텝에 섞여
-        #   어느 쪽이 압축을 만들었는지 분리할 수 없다(HF 도 분리한다).
+        # [2026-10-07] 클램프 구동은 **GlobalTension** 스텝에 넣는다(사용자 결정).
+        #   버클모드 추출에서는 클램프를 별도 텐션 스텝으로 분리하지 않고 글로벌 텐션에
+        #   함께 포함시킨다. 그러면 클램프가 base state 의 압축 분포를 만든다.
         my_model.boundaryConditions['Disp_Clamp_CL'].setValuesInStep(
-            stepName='Step-ClampTension',
+            stepName='Step-GlobalTension',
             u1=DIR_CL[0] * CLAMP_PULL, u2=DIR_CL[1] * CLAMP_PULL)
         my_model.boundaryConditions['Disp_Clamp_CR'].setValuesInStep(
-            stepName='Step-ClampTension',
+            stepName='Step-GlobalTension',
             u1=DIR_CR[0] * CLAMP_PULL, u2=DIR_CR[1] * CLAMP_PULL)
 
     elif CLAMP_MODE == 'cload':
@@ -932,14 +907,14 @@ def build_model(disp):
                                 region=a.sets['RP_CL_Set'], u3=0)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
                                 region=a.sets['RP_CR_Set'], u3=0)
-        # [2026-10-07] CLOAD 를 **Step-ClampTension** 에 건다. perturbation 스텝(Buckle)에
-        #   걸면 LIVE 로만 작용해 base state 에 압축을 만들지 못한다(실측으로 확인).
-        #   DEAD 로 두면 클램프가 base state 의 압축 분포를 만들고, x_c 가 바뀌면
-        #   그 분포가 바뀌어 전역 좌굴모드가 달라진다 — 이것이 원래 목표다.
-        my_model.ConcentratedForce(name='CF_Clamp_CL', createStepName='Step-ClampTension',
+        # [2026-10-07] CLOAD 를 **Step-GlobalTension** 에 건다(사용자 결정: 글로벌 텐션에
+        #   클램프 포함). perturbation 스텝(Buckle)에 걸면 LIVE 로만 작용해 base state 에
+        #   압축을 만들지 못한다 — 실측으로 확인했다(RF 비영 노드가 꼭짓점 케이블뿐,
+        #   압축 면적 0.08 %, max|u3|=0 인장지배 -> 클램프 위치가 좌굴모드를 못 바꿈).
+        my_model.ConcentratedForce(name='CF_Clamp_CL', createStepName='Step-GlobalTension',
                                    region=a.sets['RP_CL_Set'],
                                    cf1=DIR_CL[0] * CLAMP_F0, cf2=DIR_CL[1] * CLAMP_F0, cf3=0.0)
-        my_model.ConcentratedForce(name='CF_Clamp_CR', createStepName='Step-ClampTension',
+        my_model.ConcentratedForce(name='CF_Clamp_CR', createStepName='Step-GlobalTension',
                                    region=a.sets['RP_CR_Set'],
                                    cf1=DIR_CR[0] * CLAMP_F0, cf2=DIR_CR[1] * CLAMP_F0, cf3=0.0)
 
@@ -1036,10 +1011,9 @@ try:
     _probe = os.path.join(_HERE, 'base_state_probe.py')
     _odb = '%s.odb' % JOB_NAME
     if os.path.exists(_probe) and os.path.exists(_odb):
-        print("%s base-state probe: %s / %s (BASE_STATE_STEP=%s)"
-              % (TAG, _odb, BASE_STATE_STEP_EFF, BASE_STATE_STEP))
+        print("%s base-state probe: %s / %s" % (TAG, _odb, BASE_STATE_STEP))
         subprocess.call('abaqus python "%s" "%s" %s'
-                        % (_probe, _odb, BASE_STATE_STEP_EFF), shell=True)
+                        % (_probe, _odb, BASE_STATE_STEP), shell=True)
     else:
         print("%s base-state probe skipped (probe=%s, odb=%s)"
               % (TAG, os.path.exists(_probe), os.path.exists(_odb)))

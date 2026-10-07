@@ -135,12 +135,11 @@ def declared_divergences(path):
 
 # 좌굴 스크립트에 '있으면 안 되는' HF/LF 전용 것들 (역할 분리 검사)
 FORBIDDEN_IN_BUCKLE = [
-    # [2026-10-07] "Step-ClampTension" 을 여기서 **제거**했다.
-    #   이유: 이제 buckle 도 HF 와 같은 3스텝 체인(GlobalTension -> ClampTension ->
-    #   Buckle)을 쓴다. 클램프 하중이 perturbation 스텝에만 있으면 base state 에
-    #   압축이 안 생겨서 클램프 위치가 좌굴모드를 바꾸지 못한다(실측 확인).
-    #   반면 모드 소스(run_abaqus_mode.py)에는 클램프가 없으므로 FORBIDDEN_IN_MODE 에는
-    #   그대로 남겨 둔다.
+    # [2026-10-07] "Step-ClampTension" 은 여기 그대로 둔다.
+    #   버클모드 추출에서는 클램프를 **별도 텐션 스텝으로 분리하지 않고** 글로벌 텐션에
+    #   포함시키기로 했다(사용자 결정). 클램프를 Buckle(perturbation)에 걸면 LIVE 로만
+    #   작용해 base state 에 압축을 만들지 못하므로, GlobalTension 에 둔다.
+    "Step-ClampTension",
     "Step-Postbuckle",
     "Step-HighTension",
     "Step-Trigger",
