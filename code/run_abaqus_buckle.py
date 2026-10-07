@@ -556,10 +556,12 @@ def run_job_safely(job_name, model_name=None):
     # [2026-10-07] 예전에는 같은 조건을 두 번 검사해 두 번째 WARNING 이 **도달 불가**였다
     #   (첫 검사가 먼저 raise 한다). 한 번만 검사하고 실패 이유를 메시지에 구분해 넣는다.
     if job.status == ABORTED or not os.path.exists(odb_file):
+        print_failure_cause(job_name)
         raise RuntimeError('Job %s 실패 (Status=%s): ABORTED 이거나 .odb 가 없다. '
                            'sys.exit 대신 예외로 올린다 — CAE noGUI 러너에서 sys.exit 은 '
                            '종료코드 0으로 보인다.' % (job_name, str(job.status)))
     if not job_completed_ok(job_name):
+        print_failure_cause(job_name)
         raise RuntimeError('Job %s 실패 (Status=%s): .sta/.msg 에 완주 문자열(%s)이 없다 '
                            '(중도 중단 의심; odb 존재만으로는 판정 불가 — R-12).'
                            % (job_name, str(job.status), ' / '.join(_COMPLETION_STRINGS)))
@@ -591,6 +593,57 @@ def job_completed_ok(job_name):
             if any(_s in _up for _s in _COMPLETION_STRINGS):
                 return True
     return False
+
+
+def msg_cause_from_text(msg_text, sta_text='', limit=8):
+    """실패한 잡의 원인 줄을 뽑는다. **순수 함수** — 합성 .msg/.sta 로 Abaqus 없이 검증한다.
+
+    왜: 원인은 .msg 에만 있는데 예전에는 '실패 원인 미상' 만 찍혀 왕복이 늘었다.
+    ***ERROR 를 WARNING 보다 우선한다(원인에 가깝다). ERROR 가 없으면 .sta 마지막 줄로 대체한다.
+    """
+    _keys = ('***ERROR', 'TOO MANY ATTEMPTS', 'HAS NOT BEEN COMPLETED',
+             'THE EIGENVALUES CANNOT BE FOUND', 'HAS BEEN TERMINATED',
+             'NUMERICAL SINGULARITY', 'EXCESSIVE DISTORTION', '***WARNING')
+    out, seen = [], set()
+    for _raw in (msg_text or '').splitlines():
+        _s = _raw.strip()
+        if not _s or _s in seen:
+            continue
+        for _k in _keys:
+            if _k.upper() in _s.upper():
+                seen.add(_s)
+                out.append(_s[:200])
+                break
+    _errs = [s for s in out if '***ERROR' in s.upper() or 'ERROR:' in s.upper()]
+    if _errs:
+        return _errs[:limit], '***ERROR %d줄 (전체 후보 %d줄)' % (len(_errs), len(out))
+    if out:
+        return out[:limit], '***ERROR 없음 — 경고/기타 후보 %d줄' % len(out)
+    _sta = [s.strip() for s in (sta_text or '').splitlines() if s.strip()]
+    if _sta:
+        return _sta[-3:], 'ERROR 줄 없음 — .sta 마지막 %d줄로 대체' % min(3, len(_sta))
+    return [], '.msg/.sta 가 비었거나 없다'
+
+
+def print_failure_cause(job_name, limit=8):
+    """실패 원인을 콘솔에 찍는다. .msg 원문은 ASCII 라 **콘솔 한글 깨짐과 무관하게** 읽힌다."""
+    _read = {}
+    for _ext in ('msg', 'sta'):
+        _fn = '%s.%s' % (job_name, _ext)
+        _read[_ext] = ''
+        if os.path.exists(_fn):
+            try:
+                with open(_fn, 'r', errors='replace') as _f:
+                    _read[_ext] = _f.read()
+            except (IOError, OSError) as _e:
+                print('%s [FAIL] %s 를 읽지 못함: %s' % (TAG, _fn, _e))
+    _pick, _summary = msg_cause_from_text(_read['msg'], _read['sta'], limit=limit)
+    print('%s [FAIL] 원인 판정: %s' % (TAG, _summary))
+    for _s in _pick:
+        print('%s   | %s' % (TAG, _s))
+    print('%s [FAIL] 전문 파일: %s.msg / %s.sta / %s.dat'
+          % (TAG, job_name, job_name, job_name))
+    return _pick
 
 
 def report_job(job_name):
