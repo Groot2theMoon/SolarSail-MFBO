@@ -42,6 +42,67 @@ def _principal(s11, s22, s12):
     return mean + dev, mean - dev      # (max, min)
 
 
+def compression_map(items, xmin=0.0, xmax=20.0, ymin=0.0, ymax=10.0, nx=20, ny=10):
+    """items: list of (x, y, minP, w) — 요소 중심, 면내 최소주응력, 면적가중.
+
+    [2026-10-07] "버클모드가 최소 면내주응력<0 영역에서 생긴다"는 가설을 눈으로 검증하려고
+    넣었다. 모드 centroid(buckle_mode_report)와 이 지도의 압축 무게중심을 겹쳐 보면 된다.
+
+    반환 (grid, frac, centroid):
+      grid     ny행(첫 행이 y=ymax)x nx열. 칸값 = 그 칸의 minP<0 면적비x9 반올림(0..9),
+               요소가 없으면 '.'
+      frac     전체 면적가중 minP<0 비율
+      centroid (x, y, frac) 압축 영역 면적가중 무게중심 (압축이 없으면 None)
+    """
+    num = [[0.0] * nx for _ in range(ny)]
+    den = [[0.0] * nx for _ in range(ny)]
+    tot_a = 0.0
+    tot_c = 0.0
+    sx = 0.0
+    sy = 0.0
+    for x, y, minp, w in items:
+        if w <= 0.0:
+            continue
+        ix = int((x - xmin) / (xmax - xmin) * nx)
+        iy = int((y - ymin) / (ymax - ymin) * ny)
+        if not (0 <= ix < nx and 0 <= iy < ny):
+            continue
+        den[iy][ix] += w
+        tot_a += w
+        if minp < 0.0:
+            num[iy][ix] += w
+            tot_c += w
+            sx += w * x
+            sy += w * y
+    grid = []
+    for iy in range(ny - 1, -1, -1):
+        row = []
+        for ix in range(nx):
+            d = den[iy][ix]
+            row.append('.' if d <= 0.0 else str(min(9, int(round(9.0 * num[iy][ix] / d)))))
+        grid.append(''.join(row))
+    frac = (tot_c / tot_a) if tot_a > 0.0 else 0.0
+    cc = (sx / tot_c, sy / tot_c, frac) if tot_c > 0.0 else None
+    return grid, frac, cc
+
+
+def _selftest_compression_map():
+    """순수 함수만 검증한다(Abaqus 불필요). python3 base_state_probe.py selftest"""
+    items = [(0.5, 0.5, -1.0, 1.0), (1.5, 0.5, +1.0, 1.0),
+             (2.5, 0.5, -2.0, 2.0), (0.5, 9.5, -3.0, 1.0)]
+    grid, frac, cc = compression_map(items)
+    ok = True
+    ok &= (len(grid) == 10 and all(len(r) == 20 for r in grid))
+    ok &= (grid[0][0] == '9')            # y=9.5 칸 = 전부 압축
+    ok &= (grid[9][0] == '9')            # y=0.5 칸 x=0.5 = 압축
+    ok &= (grid[9][1] == '0')            # x=1.5 = 인장
+    ok &= (abs(frac - (1.0 + 2.0 + 1.0) / 5.0) < 1e-12)
+    ok &= (cc is not None and abs(cc[0] - (0.5 * 1 + 2.5 * 2 + 0.5 * 1) / 4.0) < 1e-12)
+    ok &= (compression_map([])[2] is None)
+    print("[selftest] compression_map %s" % ('OK' if ok else 'FAIL'))
+    return 0 if ok else 1
+
+
 def _aggregate(rows):
     """rows: list of (s11,s22,s12,w). 면적 가중 통계를 돌려준다."""
     wsum = sum(r[3] for r in rows)
@@ -174,6 +235,7 @@ def main():
 
         groups = {}      # section number -> rows
         centrerows = []  # 중앙 반경 안의 rows
+        mapitems = []    # (x, y, minP, w) — 압축지도용(2026-10-07)
         for v in sf.values:
             d = v.data
             if len(d) < 3:
@@ -187,6 +249,8 @@ def main():
             groups.setdefault(num, []).append(row)
             xy = cent.get(v.elementLabel)
             if xy is not None:
+                mapitems.append((xy[0], xy[1],
+                                 _principal(row[0], row[1], row[2])[1], row[3]))
                 dx = xy[0] - CENTRE_XY[0]
                 dy = xy[1] - CENTRE_XY[1]
                 if dx * dx + dy * dy <= R_CENTRE * R_CENTRE:
@@ -235,6 +299,18 @@ def main():
                   % (mavg_c / TARGET_STRESS))
         elif mid is not None:
             print("[R-13] >>> 헤드라인: 면내평균<0 비율=%.4f  minP<0 비율=%.4f" % (cm, cmin))
+
+        # ---- 압축지도: "모드가 최소 면내주응력<0 영역에 있는가" (2026-10-07) ----
+        if mapitems:
+            grid, cfrac, cc = compression_map(mapitems)
+            print("[R-13] === 면내 최소주응력<0 압축지도 (칸 1 m, 숫자=압축 면적비x9, '.'=요소없음) ===")
+            print(" " * 9 + ''.join(str(i % 10) for i in range(20)) + "   <- x [m]")
+            for k, rowtxt in enumerate(grid):
+                iy = (len(grid) - 1) - k
+                print("  y=%4.1f %s" % (iy + 0.5, rowtxt))
+            print("[R-13] >>> 압축지도 헤드라인: minP<0 면적비=%.4f  압축 무게중심=%s"
+                  % (cfrac, ('(%.2f, %.2f)  <- buckle_mode_report 의 모드 centroid 와 비교'
+                             % (cc[0], cc[1])) if cc else 'None(압축 없음)'))
 
         # 앵커 반력 (instance 이름 포함)
         try:
