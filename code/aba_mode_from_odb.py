@@ -116,6 +116,22 @@ def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, ver
             _say("[MODES] λ 출처=%s (앞 12개): %s"
                  % (lam_src, ', '.join('%.6e' % v for v in lam[:12])))
 
+        #   [2026-10-07] **λ 목록 정렬.** 좌굴 스텝 ODB 의 frame 1 은 **기저 상태**(frameValue 0)이고
+        #   모드가 아니다. 그런데 .dat 의 λ 목록은 '모드 1..n' 이라 ODB 프레임과 **한 칸 어긋난다**.
+        #   밀린 채로 두면: 기저가 후보로 들어가(면외 미미로 걸리긴 한다) λ 표기가 한 칸씩 틀리고,
+        #   마지막 실제 모드가 λ 목록 범위 밖이 되어 **통째로 버려진다**
+        #   (실측: 5프레임/4고유치에서 3모드만 나왔다 — 네 번째 모드가 사라졌다).
+        #   => 기저 프레임 자리에 자리표시자를 넣어 목록을 프레임에 정렬한다.
+        _has_base = False
+        if len(frames) > 1:
+            try:
+                _has_base = (float(getattr(frames[0], 'frameValue', -1.0)) == 0.0)
+            except Exception:
+                _has_base = False
+        if _has_base:
+            lam = [float('nan')] + list(lam)
+            _say("[MODES] 기저 프레임(frame 1, frameValue 0) 제외 — λ 목록을 한 칸 밀어 정렬")
+
         # --- 후보 프레임: 양수 λ 이고 ODB 프레임 범위 안 ---
         cand = [m for m, v in enumerate(lam) if v > 0.0 and m < len(frames)][:BUCKLE_SCAN_MAX]
         _over = [m + 1 for m, v in enumerate(lam) if v > 0.0 and m >= len(frames)]
