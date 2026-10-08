@@ -221,6 +221,12 @@ else:
 
 CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c, A-route 와 동일)
 
+CLAMP_RP_FIX_ROT = False   # True 면 클램프 RP 의 **회전 3성분도** 고정한다(패치 기울기 차단).
+#   현행은 RP 의 u3 만 고정 -> 강체패치가 **기울 수 있다**(회전 자유). 그 틈이 클램프 옆
+#   국소 면외모드의 통로가 된다(§19.12). 실제 클램프는 패치 방향을 잡아 주므로 회전 고정이
+#   더 물리적일 수 있다. 기본 False = HF 배선과 동일(출력 이름이 _rotfix 로 갈린다).
+_CLAMP_ROT_KW = dict(ur1=0.0, ur2=0.0, ur3=0.0) if CLAMP_RP_FIX_ROT else {}
+
 # ---- 클램프 당김 **방향** (driven 과 cload 가 함께 쓴다) ----
 #   교수님 지적(2026-10-07): 클램프 없이 케이블만 쓸 때는 각 케이블에 걸리는 변위가
 #   힘평형을 이루도록 각도를 맞췄다. 클램프가 있는 모델도 마찬가지로 맞춰야 base state 가
@@ -239,6 +245,9 @@ CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 *
 #                    목표: 클램프 y합 + 꼭짓점 y합 = 0  =>  Top 반력 = 0
 #                    필요 CLAMP_PULL = DISP*sin(28.6)/DIR_y  =>  d_c_eff = √2*sin(28.6) = 0.677
 #                    교수님이 말한 '케이블이 거는 힘의 합 = 0' 에 가장 부합한다.
+#       'along'    : CL=(-1,-1)/√2, CR=(+1,-1)/√2  -> 변을 따라 코너 쪽(접선)
+#                    클램프가 변을 **인장**하고 케이블 당김과 같은 부호가 된다 -> 막 내부가
+#                    일관된 바깥-인장장이 되어 x_c 무관 전역모드를 기대할 수 있다(미시험).
 #       'inward'   : CL=(+1,0), CR=(-1,0)  -> y 성분 0
 #                    y 불평형은 없애지만 사선변 중점을 **안쪽으로 눌러** 면내 압축을 키운다
 #                    => 좌굴 하중을 낮춰 오히려 더 불안정해질 수 있다. 케이블 장력(인장)과 어긋난다.
@@ -496,6 +505,10 @@ sin_val = float(np.sin(angle_rad))
 _s2 = 2.0 ** 0.5
 if CLAMP_DIR == 'inward':
     DIR_CL, DIR_CR = (+1.0, 0.0), (-1.0, 0.0)   # 사선변 안쪽 수평 -> y 성분 0
+elif CLAMP_DIR == 'along':
+    # 접선(변을 따라 코너 쪽) — 클램프가 사선변을 **인장**한다. 두 클램프 모두 아래-바깥으로
+    #   당기므로 꼭짓점 케이블 당김과 **같은 부호**다(현행 'normal' 은 위-바깥 = 반대 부호).
+    DIR_CL, DIR_CR = (-1.0 / _s2, -1.0 / _s2), (+1.0 / _s2, -1.0 / _s2)
 else:
     DIR_CL, DIR_CR = (-1.0 / _s2, +1.0 / _s2), (+1.0 / _s2, +1.0 / _s2)
 
@@ -1008,9 +1021,9 @@ def build_model(disp):
         #   RP 면외(u3)는 BC_Clamp_* 가 따로 막는다(in-plane 은 아래 변위가 잡는다).
         # =====================================================================
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                                region=a.sets['RP_CL_Set'], u3=0)
+                                region=a.sets['RP_CL_Set'], u3=0, **_CLAMP_ROT_KW)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
-                                region=a.sets['RP_CR_Set'], u3=0)
+                                region=a.sets['RP_CR_Set'], u3=0, **_CLAMP_ROT_KW)
         #   크기 출처는 HF 와 동일: 꼭짓점 = DISP, 클램프 = CLAMP_PULL(= CLAMP_DC x DISP).
         _DRV = (('Disp_Control_Right', A2, cos_val, -sin_val, DISP),
                 ('Disp_Control_Left', A3, -cos_val, -sin_val, DISP),
@@ -1037,9 +1050,9 @@ def build_model(disp):
     elif HAS_CLAMPS:
         # 구속만 (CLAMP_LOAD='none'): 패치 RP 의 면외(u3)만 막고 in-plane 은 자유. 하중 없음.
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                                region=a.sets['RP_CL_Set'], u3=0)
+                                region=a.sets['RP_CL_Set'], u3=0, **_CLAMP_ROT_KW)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
-                                region=a.sets['RP_CR_Set'], u3=0)
+                                region=a.sets['RP_CR_Set'], u3=0, **_CLAMP_ROT_KW)
 
     # ---- Buckle 스텝: 논문 (c) 3변 u3=0 유지 + 클램프 구간은 면외 구속에서 제외(§9) ----
     _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
@@ -1099,10 +1112,11 @@ if ELEM_TAG is None:
 #   d_c_eff 도 이름에 넣는다 — CLAMP_PULL 을 CLI 로 바꿔 d_c 스윕을 하면 DISP 만으로는
 #   이름이 겹쳐 run_job_safely 가 직전 증거를 지운다(§11).
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
-JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s%s' % (int(round(x_c * 100.0)),
+_rot_tag = '_rotfix' if CLAMP_RP_FIX_ROT else ''   # 스위치를 켜면 출력 이름이 갈린다
+JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s%s%s' % (int(round(x_c * 100.0)),
                                                        int(round(DISP * 1.0e6)),
                                                        int(round(CLAMP_DC_EFF * 100.0)),
-                                                       ELEM_TAG, CASE, CLAMP_DIR, _excl_tag)
+                                                       ELEM_TAG, CASE, CLAMP_DIR, _excl_tag, _rot_tag)
 
 print("")
 print("=" * 78)
