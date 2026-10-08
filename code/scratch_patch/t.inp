@@ -1,0 +1,21 @@
+*Heading
+** minimal
+*Node
+1, 0., 0.
+2, 1., 0.
+3, 0., 1.
+4, 1., 1.
+*Element, type=S4, elset=ALL
+1, 1, 2, 4, 3
+*Nset, nset=ALLN
+1, 2, 3, 4
+*Step, name=Step-Postbuckle, nlgeom=YES, inc=10000
+*Static, stabilize=0.003, allsdtol=0.05, continue=NO
+0.0001, 1., 1e-08, 0.1
+*Controls, parameters=time incrementation
+8, 10
+*Controls, parameters=field, field=displacement
+0.02, 0.01, ,
+*Controls, parameters=line search
+5,
+*End Step

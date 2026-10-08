@@ -445,6 +445,11 @@ def print_job_diag(job_name):
     keys = ('NEGATIVE EIGENVALUES', 'CONVERGED', 'EIGENVALUES CANNOT BE FOUND',
             'HAS COMPLETED SUCCESSFULLY', 'THE ANALYSIS HAS BEEN COMPLETED',
             'misplaced', 'STIFFNESS MATRIX IS SINGULAR', 'TOO MANY ATTEMPTS',
+            #   [2026-10-08] 실제로 '적용된' 솔루션 컨트롤을 로그에 싣는다. 문서:
+            #   "The controls in effect for an analysis are listed in the .dat and .msg files.
+            #    Nondefault controls are marked by ***".  *CONTROLS 블록을 덱에 넣었는데
+            #   효과가 없을 때(라인서치 0회 등) 이 목록이 유일한 판정 근거다.
+            'CONVERGENCE TOLERANCE PARAMETERS', 'CRIT. FOR', 'LINE SEARCH',
             '***ERROR')
     for ext in ('msg', 'dat'):
         fn = '%s.%s' % (job_name, ext)
