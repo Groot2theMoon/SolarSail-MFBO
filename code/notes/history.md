@@ -1796,3 +1796,24 @@ x_c=0.65, f=0.40 -> RuntimeError(.sta/.msg 미완주). 스크립트가 찍은 .d
 **[동시에 고친 것]** 모드 소스 경로: run_abaqus.py 는 os.chdir('aba')(99행) 로 돌기 때문에
   `abspath('buckle\...')` 가 `code\aba\buckle\...` 이 되어 'ODB 없음' 으로 죽었다.
   후보 (1) 준 그대로 (2) 스크립트 폴더(=code) (3) cwd 순으로 존재하는 것을 쓴다.
+
+### 19.34 HF 두 번째 즉사 = io 임포트 누락 + 전수 스캔으로 SEED_DIV 누출 발견 (2026-10-08)
+
+    NameError: name 'io' is not defined
+        _lines = io.open(deck, 'r', errors='replace').read().splitlines()
+
+`run_abaqus.py` 의 덱 검사 코드(339/349/369행)가 `io` 를 쓰는데 임포트 목록
+(sys/os/subprocess/time/numpy)에 없었다. `import io` 추가. §19.33 의 TAG 수정이 실패 지점을
+한 줄 뒤로 밀자 그 다음 잠복 결함이 드러난 것이다(전형적 연쇄).
+
+**같은 부류를 기계적으로 훑어 하나 더 찾았다**: `run_abaqus_cable.py` 의 `SEED_DIV`
+(자유메쉬 분기 `size=BASE/SEED_DIV` 에서 쓰는데 정의가 없었다 — USE_GRID_MESH=True 라
+지금은 죽은 코드지만 스위치를 되돌리면 즉시 NameError). 좌굴/HF/mode 와 같은 값(200.0)으로 정의.
+
+**재발 방지 — `code/static_leak_check.py` 신설**
+    R1  모듈처럼 쓰였는데 임포트가 없는 표준 라이브러리 이름(io 등)
+    R2  **다른 스크립트의 모듈수준 이름을 정의 없이 사용**(복사 누출: TAG, SEED_DIV)
+    오탐 억제 3종: 줄끝 주석 제거 / 문자열 리터럴 제거 / 함수인자·튜플대입·as 대상 수집
+    1차 스캔은 오탐 8건 -> 정밀화 후 1건(진짜 SEED_DIV) -> 수정 후 **0건**
+    selftest 내장(파일 없이 로직만 검증). Abaqus 불필요.
+=> 앞으로 이 부류(HF 를 3번 죽인 원인)는 실행 전에 잡힌다.
