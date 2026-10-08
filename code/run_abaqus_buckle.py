@@ -24,7 +24,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
       무효 조합(예: 코너는 케이블, 클램프는 CLOAD)은 상수 검증이 런타임 예외로 막는다.
 
 사용법
-    abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
+    abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] [dead_frac]
         x_c            클램프 위치 파라미터. 0.5 -> 좌(5,5) / 우(15,5)
         disp_m         GlobalTension 코너 당김 [m]. 생략하면 DISP_GLOBAL (1.8e-5).
         clamp_pull_m   클램프 당김 [m]. 생략하면 disp_m * CLAMP_DC.
@@ -430,7 +430,11 @@ def _is_launcher_token(tok):
 
 
 def parse_args(argv):
-    """맨 뒤의 숫자 1~4개를 <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] 로 읽는다.
+    """맨 뒤의 숫자 1~5개를 <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] [dead_frac] 로 읽는다.
+
+    dead_frac 을 주면 DEAD_FRAC(기저 상태가 운용 세트의 몇 %까지 올라가는가)을 덮는다.
+    x_c 스윕에서 필요하다: 개시(좌굴) 하중비는 x_c 마다 다르므로 x_c=0.5 에서 통한 0.5 가
+    다른 x_c 에서는 **개시 위**가 되어 고유값 추출이 실패한다(§19.24).
 
     조용한 치환 금지: 개수가 맞지 않거나 숫자가 아닌 토큰을 만나면 추측하지 않고
     사용법과 argv 전문을 찍고 예외로 끝낸다.
@@ -460,21 +464,22 @@ def parse_args(argv):
             stop = t
             break
     nums.reverse()
-    if not (1 <= len(nums) <= 4):
+    if not (1 <= len(nums) <= 5):
         raise RuntimeError(
-            'Expected 1 to 4 trailing numeric arguments '
-            '(<x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]), got %r '
+            'Expected 1 to 5 trailing numeric arguments '
+            '(<x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] [dead_frac]), got %r '
             '(first non-numeric token from the end: %r).\n'
             'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] '
-            '[clamp_excl_r_m]'
+            '[clamp_excl_r_m] [dead_frac]'
             % (nums, stop))
     return (nums[0],
             (nums[1] if len(nums) > 1 else None),
             (nums[2] if len(nums) > 2 else None),
-            (nums[3] if len(nums) > 3 else None))
+            (nums[3] if len(nums) > 3 else None),
+            (nums[4] if len(nums) > 4 else None))
 
 
-x_c, _disp_arg, _clamp_arg, _excl_arg = parse_args(sys.argv)
+x_c, _disp_arg, _clamp_arg, _excl_arg, _dead_arg = parse_args(sys.argv)
 DISP = DISP_GLOBAL if _disp_arg is None else _disp_arg
 # 클램프 법선 당김 — 기본은 코너 당김과 같은 비율(A-route 의 d_c), CLI 3번째 인자로 직접 지정 가능.
 #   예: -- 0.5 0 5e-5  -> 코너 미구동 + 클램프만 5e-5 m (클램프 단독 구동 진단)
@@ -487,6 +492,14 @@ if _excl_arg is not None:
     if CLAMP_EXCL_R < 0.0:
         raise RuntimeError('CLAMP_EXCL_R=%r < 0' % (CLAMP_EXCL_R,))
 CLAMP_DC_EFF = CLAMP_PULL / DISP if DISP > 0.0 else 0.0
+#   DEAD_FRAC (5번째 인자) — 기저 상태의 하중비. 기본은 상수값.
+#   [2026-10-07] 개시(좌굴) 하중비는 x_c 마다 다르다. 0.5 는 x_c=0.5(개시 61.0%)에서는
+#   성공했지만 0.35(39.7%)/0.65(50.1%) 에서는 **개시 위**가 되어 기저 상태가 불안정해지고
+#   고유값 추출이 실패한다. 스윕에서는 x_c 별로 낮춘다.
+#   단 너무 낮추면(0.018) 기저가 거의 무응력이 되어 조건화가 나빠진다(이력 a4c5b2d).
+#   => f 는 [조건화될 만큼 크고 개시 아래일 만큼 작은] 창에서 x_c 마다 고른다.
+if _dead_arg is not None:
+    DEAD_FRAC = float(_dead_arg)
 CLAMP_PERT = PERTURBATION * CLAMP_DC_EFF   # 좌굴 스텝 클램프 섭동 [m]
 
 if not (0.03 <= x_c <= 0.95):
@@ -1178,9 +1191,10 @@ if ELEM_TAG is None:
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
 _rot_tag = '_rotfix' if CLAMP_RP_FIX_ROT else ''   # 스위치를 켜면 출력 이름이 갈린다
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
-JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s_%s%s%s' % (int(round(x_c * 100.0)),
+JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s' % (int(round(x_c * 100.0)),
                                                        int(round(DISP * 1.0e6)),
                                                        int(round(CLAMP_DC_EFF * 100.0)),
+                                                       int(round(DEAD_FRAC * 100.0)),
                                                        ELEM_TAG, MESH_TAG, CASE, CLAMP_DIR,
                                                        _excl_tag, _rot_tag)
 
