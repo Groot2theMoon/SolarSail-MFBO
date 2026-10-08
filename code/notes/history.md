@@ -1540,3 +1540,36 @@ x_c=0.65 의 개시가 0.4 보다 낮다는 뜻(0.35 는 0.3 에서 통했으니
 
 **x_c 분기 없음 확인**: 코드에서 x_c 를 쓰는 곳은 범위검사(0.03~0.95)와 좌표 계산뿐이다.
 따라서 0.65 실패는 코드 경로 문제가 아니라 **수치(기저 상태)** 문제다.
+
+### 19.26 [확정] x_c=0.65 실패 원인 = 기저 상태가 좌굴점을 지났다 — 그리고 클램프 작동 방식 (2026-10-07)
+
+**에러 본문(실측)**
+    .msg: ***ERROR: THE EIGENVALUES CANNOT BE FOUND. THIS COULD BE CAUSED DUE TO
+                    INSTABILITIES IN THE BASE STATE (CHECK FOR NEGATIVE EIGENVALUES
+                    IN THE GENERAL ANALYSIS STEP).
+    .dat: ANALYSIS WARNINGS ARE NEGATIVE EIGENVALUE MESSAGES = **1**
+    (.sta: 24 증분 전부 수렴, 컷백 0 — 즉 **기저 해석은 정상**이었다)
+=> 대조: x_c=0.5 성공 런은 **NEGATIVE EIGENVALUE MESSAGES = 0**.
+=> **가설 확정**: f=0.4 에서 기저 상태가 x_c=0.65 의 개시를 이미 지났다(음수 고유값 1개 =
+   이미 좌굴). 처방: f 를 더 낮춘다(0.25 -> 안 되면 0.2). 0.018 은 조건화 때문에 금지(a4c5b2d).
+=> 성공하는 f 를 찾으면 개시를 **직접 읽을 수 있다**: 개시 = f + (1-f) x lambda1 x 운용.
+   즉 x_c 별 개시 곡선 = MFBO 의 목적/제약량. 실패 f = 개시의 **상한**, 성공 f = 하한.
+
+**클램프 작동 방식 (코드 실측)**
+    위치      clamp_coord_L(x) = (10-10x, 10-10x),  clamp_coord_R(x) = (10+10x, 10-10x)
+              x=0 -> 꼭짓점(10,10), x=1 -> 코너(0,0)/(20,0). 즉 x_c = 꼭짓점->코너 비율.
+    실체      강체패치: 반경 **0.2 m** 내 막 노드를 **분산결합(DISTRIBUTING)** 으로 기준점(RP)에
+              묶는다 (influenceRadius=WHOLE_SURFACE, weightingMethod=UNIFORM).
+              => RP 변위 = 묶인 노드의 **가중 평균** = "테이프로 국소를 잡고 한 점으로 힘을 모음".
+                 KINEMATIC 이면 패치가 강체로 붙어 내부 주름이 불가능해진다 — 지금은 가능.
+    면외      RP 의 u3 = 0 (BC_Clamp_CL/CR). **회전은 자유**(CLAMP_RP_FIX_ROT=False).
+    면내      RP 의 u1,u2 = 지정 변위 (Disp_Control_CL/CR). Initial 0 -> 스텝에서 DEAD/LIVE.
+    방향      CL = (-1,+1)/sqrt2  => 안쪽(오른쪽)+위 ; CR = (+1,+1)/sqrt2 => 안쪽(왼쪽)+위.
+              양쪽이 **서로를 향해 + 위로** 당긴다.
+    크기      CLAMP_PULL = DISP x CLAMP_DC(기본 0.5) if CLI 미지정. 실행값은 CLI 1e-6 m
+              => d_c_eff = 0.0556 (코너 당김의 5.6%).
+    경계      클램프 반경 **0.21 m** 안의 자유경계 노드는 BC_Edges_Only_Z(u3=0) 에서 제외
+              -> 패치 결합과 이중구속 방지.
+    "균형"    클램프 y성분이 코너 y성분과 상쇄되는 값 = sqrt2 x sin(28.6) = **0.677**(=코드 273행).
+              실행값 0.0556 은 그 8% => 클램프의 위쪽 당김은 코너의 아래쪽 당김보다 미미하다.
+              ('balanced' 0.677 은 과거 최악 — 음수 고유값 1978개)
