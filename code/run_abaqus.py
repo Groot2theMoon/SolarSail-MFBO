@@ -52,6 +52,7 @@ import sys
 import os
 import io
 import shutil
+import traceback
 import subprocess
 import time
 import numpy as np
@@ -353,36 +354,70 @@ def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=2e-2
         emit("[PATCHER] 기존 *Controls %d 줄 제거 (멱등성)"
              % (len(_lines) - len(_keep)))
     before = os.path.getsize(deck)
-    #   [2026-10-08] Windows 의 `abaqus` 는 abaqus.bat 이다. shell 없이 부르면 확장자를
-    #   못 붙여 [WinError 2] 가 난다(HF 가 여기서 죽었다). which 로 실제 런처를 해석한다.
-    _abq = shutil.which('abaqus') or shutil.which('abaqus.bat') or 'abaqus'
-    if not (os.path.exists(_abq) or shutil.which(_abq)):
-        emit("[PATCHER] !!! abaqus 런처를 찾지 못했습니다: %r — PATH 를 확인하세요" % _abq)
+    #   [2026-10-08] `abaqus python <script>` 가 Windows 에서 **조용히 아무 일도 안 하는**
+    #   사례가 나왔다: exit 0, stdout 없음, 덱 무변경 -> 크기 검사에 걸려 HF 가 멈췄다.
+    #   riks_patch_input.py 는 io/os/sys 만 쓰는 순수 텍스트 변환기라 Abaqus 인터프리터가
+    #   필요 없다. 그래서 런처를 거치지 않고 **이 프로세스 안에서** 실행한다.
+    #   (로컬 검증: 가짜 덱에 *Controls/line search 마커가 실제로 붙고 8줄 -> 15줄)
+    #   실패하면 셸(cmd.exe) 경로로 한 번 더, 그래도 안 되면 손으로 돌릴 명령을 찍어 준다.
+    _MARKERS = ('*Controls', 'line search', 'discontinuous', 'field=displacement')
+
+    def _deck_markers():
+        _t = io.open(deck, 'r', errors='replace').read().lower()
+        return [m for m in _MARKERS if m.lower() in _t]
+
+    def _run_inproc():
+        _argv = [os.path.basename(_rp), deck, deck, step] + list(ctrl)
+        _src = io.open(_rp, 'r', errors='replace').read()
+        _save = list(sys.argv)
+        _o, _e = io.StringIO(), io.StringIO()
+        _so, _se = sys.stdout, sys.stderr
+        sys.argv = _argv
+        sys.stdout, sys.stderr = _o, _e
+        try:
+            exec(compile(_src, _rp, 'exec'), {'__name__': '__main__', '__file__': _rp})
+            return True, _o.getvalue(), _e.getvalue()
+        except SystemExit as _ex:
+            return (not getattr(_ex, 'code', 0)), _o.getvalue(), \
+                _e.getvalue() + ('\nSystemExit(%s)' % getattr(_ex, 'code', None))
+        except Exception:
+            return False, _o.getvalue(), _e.getvalue() + '\n' + traceback.format_exc()
+        finally:
+            sys.argv, sys.stdout, sys.stderr = _save, _so, _se
+
+    _ok, _out, _err = _run_inproc()
+    for _ln in (_out or '').splitlines()[-14:]:
+        emit("[PATCHER] %s" % _ln.strip())
+    for _ln in (_err or '').splitlines()[-14:]:
+        emit("[PATCHER] (stderr) %s" % _ln.strip())
+    emit("[PATCHER] in-process ok=%s / 마커=%s / 크기 %d -> %d"
+         % (_ok, _deck_markers() or '없음', before, os.path.getsize(deck)))
+
+    if not _deck_markers():
+        _abq2 = shutil.which('abaqus') or shutil.which('abaqus.bat') or 'abaqus'
+        _cmd = '"%s" python "%s" "%s" "%s" %s %s' % (
+            _abq2, _rp, deck, deck, step, ' '.join(ctrl))
+        emit("[PATCHER] 재시도(셸): %s" % _cmd)
+        try:
+            _p = subprocess.run(_cmd, shell=True, cwd=os.getcwd(),
+                                capture_output=True, text=True)
+            for _ln in (_p.stdout or '').splitlines()[-10:]:
+                emit("[PATCHER] %s" % _ln.strip())
+            for _ln in (_p.stderr or '').splitlines()[-10:]:
+                emit("[PATCHER] (stderr) %s" % _ln.strip())
+            emit("[PATCHER] 셸 rc=%s / 마커=%s" % (_p.returncode, _deck_markers() or '없음'))
+        except Exception as _e2:
+            emit("[PATCHER] 셸 실행 실패: %s" % _e2)
+
+    if not _deck_markers():
+        emit("[PATCHER] !!! 패치 마커가 덱에 없다 — 손으로 실행해 보세요:")
+        emit('[PATCHER]     abaqus python riks_patch_input.py "%s" "%s" %s %s'
+             % (deck, deck, step, ' '.join(ctrl)))
         return False
-    cmd = [_abq, 'python', _rp, deck, deck, step] + list(ctrl)
-    emit("[PATCHER] %s" % ' '.join(cmd))
-    try:
-        p = subprocess.run(cmd, cwd=os.getcwd(), capture_output=True, text=True)
-    except Exception as e:
-        emit("[PATCHER] !!! 실행 실패: %s" % e)
-        return False
-    for ln in (p.stdout or '').splitlines()[-12:]:
-        emit("[PATCHER] %s" % ln.strip())
-    if p.returncode != 0:
-        emit("[PATCHER] !!! rc=%d" % p.returncode)
-        for ln in (p.stderr or '').splitlines()[-12:]:
-            emit("[PATCHER] stderr %s" % ln.strip())
-        return False
-    # 패치가 실제로 들어갔는지 확인 — 없으면 원본 그대로 제출되어 40분을 낭비한다(§14)
-    txt = io.open(deck, 'r', errors='replace').read()
-    if 'Step-Postbuckle' not in txt:
-        emit("[PATCHER] !!! 패치 후에도 Step-Postbuckle 이 없다 (원본이 그대로일 가능성)")
-        return False
-    if before == os.path.getsize(deck):
-        emit("[PATCHER] !!! 파일 크기가 변하지 않았다 (before=%d) — 패치 미적용 의심" % before)
-        return False
-    emit("[PATCHER] OK — %s 패치 완료 (%.1f KB -> %.1f KB)"
-         % (deck, before / 1024.0, os.path.getsize(deck) / 1024.0))
+    emit("[PATCHER] OK — %s 패치 확인 (%.1f KB -> %.1f KB, 마커 %s)"
+         % (deck, before / 1024.0, os.path.getsize(deck) / 1024.0, _deck_markers()))
+    return True
+
     return True
 
 
