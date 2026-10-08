@@ -475,7 +475,26 @@ MODE_INSTANCE = 'MEMBRANE-1'                                    # 막 인스턴�
 #   경로는 abspath 로 고정한다(스크립트가 상대경로를 자기 기준으로 해석하는 혼동 방지).
 _SRC_ENV = os.environ.get('SOLARSAIL_MODE_ODB')
 if _SRC_ENV:
-    MODE_SOURCE_ODB = os.path.abspath(_SRC_ENV)
+    #   [2026-10-08 실측] 이 스크립트의 cwd 는 **code\aba** 다(canary: cwd=...\code\aba).
+    #   그래서 사용자가 code 에서 준 상대경로(buckle\...)를 그대로 abspath 하면
+    #   code\aba\buckle\... 이 되어 'ODB 없음' 으로 죽는다.
+    #   => 후보를 (1) 준 그대로 (2) **스크립트가 있는 폴더(=code)** (3) cwd 순으로 만들어
+    #      실제로 존재하는 것을 쓴다. 절대경로면 그대로 통과한다.
+    _srcdirs = []
+    try:
+        _srcdirs.append(os.path.dirname(os.path.abspath(__file__)))      # code\
+    except Exception:
+        pass
+    _srcdirs.append(os.getcwd())                                         # 안전망
+    _pick = None
+    for _d in [None] + _srcdirs:
+        _c = os.path.abspath(_SRC_ENV if _d is None else os.path.join(_d, _SRC_ENV))
+        if os.path.exists(_c):
+            _pick = _c
+            break
+    MODE_SOURCE_ODB = _pick if _pick else os.path.abspath(_SRC_ENV)
+    if _pick is None:
+        print("[IMPERFECTION] 경고: 모드 소스 ODB 를 찾지 못했습니다 -> %s" % MODE_SOURCE_ODB)
     MODE_SOURCE_DAT = os.path.abspath(os.environ.get(
         'SOLARSAIL_MODE_DAT', os.path.splitext(MODE_SOURCE_ODB)[0] + '.dat'))
     IMPERFECTION_NAME = os.path.splitext(os.path.basename(MODE_SOURCE_ODB))[0]
