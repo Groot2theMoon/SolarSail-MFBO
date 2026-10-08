@@ -657,6 +657,15 @@ mat_cable.Elastic(table=((62.0e9, 0.36),))
 my_model.TrussSection(name='Section-Cable', material='Kevlar', area=CABLE_AREA)
 
 # 파트 생성: 멤브레인
+# ---- 메쉬 종류 (2026-10-07) ----
+#   True  = aba_grid_mesh 균일 격자(.inp -> PartFromInputFile, orphan mesh). 좌우 완전 대칭.
+#   False = 기존 자유 메쉬(seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 1.82만 요소).
+#   !! 네 스크립트(buckle/mode/HF/cable)가 **같은 값**을 써야 한다.
+USE_GRID_MESH = True
+#   orphan(격자) 경로는 한 이름이 노드용/요소용을 겸할 수 없다(2026-10-07 실측:
+#     ***ERROR: Unknown part instance node set MEMBRANE-1.ALL).
+#     All      = **절점**집합 -> 변위 BC.  All_Elem = **요소**집합 -> 섹션 + 초기응력.
+_ALL_ELEM = 'All_Elem' if USE_GRID_MESH else 'All'
 if USE_GRID_MESH:
     # 격자: `.inp` 로 **orphan mesh part** 를 import 한다.
     #   Part.addNodes / addElements / deleteMesh 는 odb.Part 전용이라 mdb Part 에는 없다
@@ -668,8 +677,10 @@ if USE_GRID_MESH:
           % (TAG, _nn, _n4, _n3, _n4 + _n3))
     #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
     #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
-    p.Set(elements=p.elements, name='All')
-    p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
+    #   orphan mesh 는 요소/절점 겸용 집합이 없다 -> 두 개를 만든다.
+    p.Set(elements=p.elements, name='All_Elem')   # 섹션+초기응력(요소)
+    p.Set(nodes=p.nodes, name='All')              # 변위 BC(절점) — 이름 유지
+    p.SectionAssignment(region=p.sets['All_Elem'], sectionName='Section-Membrane')
 else:
     s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
     s.Line(point1=V3[:2], point2=V2[:2])
@@ -929,7 +940,7 @@ emit("[run_abaqus] steps=%s  _BUCKLE_STEP_NO=%d" % (_steps_in_order, _BUCKLE_STE
 
 my_model.Stress(
     name='Initial_Stiffness',
-    region=inst_memb.sets['All'],
+    region=inst_memb.sets[_ALL_ELEM],
     distributionType=UNIFORM,
     sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0,
     sigma12=0.0, sigma13=0.0, sigma23=0.0

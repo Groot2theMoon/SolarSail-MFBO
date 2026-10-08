@@ -1328,3 +1328,39 @@ elset=All, material=Kapton` + 사용자 노드 10206 = 격자 10201 + RP 5 ✓.
    실측: 0.21 -> 0개 OK / 0.0 -> 4개 FAIL(음성 테스트로 확인).
  - 게이트가 처음에 상수를 못 읽어 FAIL 로 나왔다: `code_only()` 가 **공백을 지운 정규형**을
    돌려주므로 `^` 앵커 정규식이 안 맞는다 -> 이 게이트는 **원문**을 읽도록 고쳤다.
+
+### 19.20 7 FATAL ERRORS 의 정체 — `All` 을 요소집합으로 만든 것이 원인 (2026-10-07)
+
+7개 문장(실측):
+```
+***ERROR: in keyword *BOUNDARY, file "..._ex210.inp", line 20493:
+          Unknown part instance node set MEMBRANE-1.ALL
+***ERROR: NODE SET ASSEMBLY_MEMBRANE-1_ALL HAS NOT BEEN DEFINED
+***ERROR: A BOUNDARY CONDITION HAS BEEN SPECIFIED ON NODE SET ASSEMBLY_MEMBRANE-1_ALL
+          BUT THIS NODE SET IS NOT ACTIVE IN THE MODEL
+```
+**원인**: §19.19 에서 내가 `p.Set(elements=p.elements, name='All')` 로 `All` 을 **요소**집합으로
+만들었다. 그런데 `inst_memb.sets['All']` 을 쓰는 곳 중 **변위 BC 는 절점집합을 요구**한다 ->
+`*BOUNDARY` 가 없는 절점집합을 참조해 입력 처리기가 죽었다.
+**정정**: 같은 `.dat` 의 overconstraint 경고는 **경고**였고 fatal 이 아니었다. 나는 그쪽으로
+진단했지만 **빗나갔다**(§19.19 의 "7 = 이중 구속" 가설은 틀렸다). `CLAMP_EXCL_R=0.21` 은 잠복
+결함(규칙 격자에서 패치가 경계 노드를 잡음)을 없애므로 유지하되, **이번 실패의 원인은 아니다.**
+
+**자유 메쉬에서는 왜 됐나**: `All` 이 **면(face) 집합**이었다. 기하 집합은 Abaqus 가 용도에 따라
+절점/요소로 **해석해 주므로** 한 이름으로 BC·섹션·초기응력을 모두 겸할 수 있었다. orphan mesh 에는
+기하가 없어 **겸용이 불가**하다 — 이게 이번 전환의 본질적 차이다(§10a 가 예고하지 못한 부분).
+
+**수정**
+ - `All`      = **절점**집합(`p.Set(nodes=p.nodes, name='All')`) -> 변위 BC (호출부 4개 파일 무수정)
+ - `All_Elem` = **요소**집합(`p.Set(elements=p.elements, name='All_Elem')`) -> 섹션 + 초기응력
+ - `_ALL_ELEM = 'All_Elem' if USE_GRID_MESH else 'All'` 상수로 Stress 호출만 분기(free 경로 보존).
+
+**추가로 잡은 치명 버그**: `run_abaqus_mode.py` / `run_abaqus.py` / `run_abaqus_cable.py` 에
+`USE_GRID_MESH` **정의가 없었다**(사용만 있었다). 앞선 지역 교체가 그 줄을 쓸어버렸다 ->
+실행하면 NameError 로 죽는다. 세 파일에 상수 정의를 넣고, **정의가 첫 사용보다 앞인지** 정적
+검사를 통과시켰다(4/4 OK).
+
+**하네스 목 보강**: dependent 인스턴스가 **파트 셋을 상속**한다(실제 Abaqus 동작). 없으면
+`inst_memb.sets['All_Elem']` 이 가짜 KeyError 로 죽는다.
+
+**검증**: py_compile 4/4 · checker EXIT=0 · 하네스 4/4 · 정적 순서 검사 4/4 OK.

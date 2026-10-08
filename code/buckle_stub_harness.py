@@ -310,6 +310,12 @@ class Assembly(Obj):
     def Instance(self, name=None, part=None, dependent=None):
         self._log.add(self._name, 'Instance', (), {'name': name, 'dependent': dependent})
         inst = Instance(name, self._log, nodes=NODES)
+        #   dependent 인스턴스는 **파트의 셋을 상속**한다(실제 Abaqus 동작).
+        #   이것이 없으면 orphan 경로에서 inst_memb.sets['All_Elem'] 이 KeyError 로 죽는다.
+        _psets = getattr(part, 'sets', None)
+        if isinstance(_psets, dict):
+            for _k, _v in _psets.items():
+                inst.sets[_k] = _v
         return inst
 
     def rotate(self, **kw):

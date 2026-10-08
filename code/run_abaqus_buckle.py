@@ -141,6 +141,13 @@ ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 
 #   False = 기존 자유 메쉬 (seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 1.82만 요소).
 #   주의(§11): 잡 이름에 메쉬 태그가 들어가므로 기존 자유메쉬 산출물을 덮지 않는다.
 USE_GRID_MESH = True
+#   orphan(격자) 경로는 **한 이름이 노드용/요소용을 겸할 수 없다**(2026-10-07 실측):
+#     입력 처리기 오류: ***ERROR: Unknown part instance node set MEMBRANE-1.ALL
+#                       NODE SET ASSEMBLY_MEMBRANE-1_ALL HAS NOT BEEN DEFINED
+#     All      = **절점**집합 -> 변위 BC(BC_Stabilize_Z 등).  free 경로에서는 면집합이라 겸용 가능.
+#     All_Elem = **요소**집합 -> 섹션 할당 + 초기응력(Stress).  free 경로에서는 All 그대로 쓴다.
+_ALL_ELEM = 'All_Elem' if USE_GRID_MESH else 'All'
+
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 
@@ -840,8 +847,10 @@ def build_model(disp):
               % (TAG, _nn, _n4, _n3, _n4 + _n3))
         #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
         #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
-        p.Set(elements=p.elements, name='All')
-        p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
+        #   orphan mesh 는 요소/절점 겸용 집합이 없다 -> 두 개를 만든다.
+        p.Set(elements=p.elements, name='All_Elem')      # 섹션 할당 + 초기응력(요소)
+        p.Set(nodes=p.nodes, name='All')                 # 변위 BC 용(절점) — 이름 'All' 유지
+        p.SectionAssignment(region=p.sets['All_Elem'], sectionName='Section-Membrane')
     else:
         s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
         s.Line(point1=V3[:2], point2=V2[:2])
@@ -972,7 +981,7 @@ def build_model(disp):
     # ---- 초기응력 (수렴 보조) — 동일 ----
     my_model.Stress(
         name='Initial_Stiffness',
-        region=inst_memb.sets['All'],
+        region=inst_memb.sets[_ALL_ELEM],
         distributionType=UNIFORM,
         sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0,
         sigma12=0.0, sigma13=0.0, sigma23=0.0
