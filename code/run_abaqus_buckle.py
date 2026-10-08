@@ -254,6 +254,19 @@ CLAMP_RP_FIX_ROT = False   # True 면 클램프 RP 의 **회전 3성분도** 고
 #   더 물리적일 수 있다. 기본 False = HF 배선과 동일(출력 이름이 _rotfix 로 갈린다).
 _CLAMP_ROT_KW = dict(ur1=0.0, ur2=0.0, ur3=0.0) if CLAMP_RP_FIX_ROT else {}
 
+# ---- 좌굴 섭동 청정도 (2026-10-07) ----
+#   True  = **좌굴 스텝에서 구속집합을 바꾸지 않는다.**
+#     자유경계 u3=0(BC_Edges_Only_Z)을 Initial 에서 만들고 BC_Stabilize_Z 는 만들지 않는다.
+#     선형 섭동 스텝에서 **새 구속의 반력은 하중**이고 **구속 해제는 스프링백 하중**이다.
+#     기존 배선(Step-Buckle 에서 BC_Stabilize_Z 해제 + BC_Edges_Only_Z 생성)은 LIVE 패턴을
+#     오염시켜 모드를 그 구속 위치(앵커/자유경계/클램프)에만 붙게 만들었다 — 실측: lambda 가
+#     f 에 따라 부호까지 뒤집혔다(f=0.5 에서 +8.2e-3, f=0.25 에서 -0.16). 같은 구조의 개시가
+#     f 에 무관해야 한다는 자기일관성(320~325행)이 깨진 것이 그 증거다.
+#     기저 해석의 수렴은 스텝 자체의 stabilizationMagnitude(0.0005, 자동 소산 안정화)가 맡는다
+#     — 이것은 **구속이 아니라 점성 감쇠**라 섭동을 오염시키지 않는다.
+#   False = 종전 배선(비교/복구용).
+CLEAN_PERTURBATION = True
+
 # ---- 클램프 당김 **방향** (driven 과 cload 가 함께 쓴다) ----
 #   교수님 지적(2026-10-07): 클램프 없이 케이블만 쓸 때는 각 케이블에 걸리는 변위가
 #   힘평형을 이루도록 각도를 맞췄다. 클램프가 있는 모델도 마찬가지로 맞춰야 base state 가
@@ -1002,12 +1015,15 @@ def build_model(disp):
 
     # ---- 구속조건 ----
     # 시작 시 전체 면 z 고정 (평탄) — 동일
-    my_model.DisplacementBC(
-        name='BC_Stabilize_Z',
-        createStepName='Step-GlobalTension',   # [mode 정합] mode.py 와 동일 (buckle 은 Initial 이었다)
-        region=inst_memb.sets['All'],
-        u3=SET
-    )
+    #   [CLEAN_PERTURBATION] 이 면 이 BC 를 만들지 않는다: 좌굴 스텝에서 해제되는 순간
+    #   스프링백 하중이 되어 섭동을 오염시킨다(위 상수 설명 참조).
+    if not CLEAN_PERTURBATION:
+        my_model.DisplacementBC(
+            name='BC_Stabilize_Z',
+            createStepName='Step-GlobalTension',   # [mode 정합] mode.py 와 동일
+            region=inst_memb.sets['All'],
+            u3=SET
+        )
     # Top 정점: 완전 고정. 'cable' 이면 케이블 끝단, 'cload' 면 강체패치 RP 에 건다.
     my_model.DisplacementBC(
         name='BC_Anchor_Top',
@@ -1141,13 +1157,23 @@ def build_model(disp):
     aba_grid_mesh.make_set(a, 'All_Edges_NoClamp', inst_memb, _keep_labels)
     print("%s All_Edges_NoClamp 셋 생성 완료 (노드 %d개)" % (TAG, len(_keep_labels)))
 
-    my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
-    my_model.DisplacementBC(
-        name='BC_Edges_Only_Z',
-        createStepName='Step-Buckle',
-        region=a.sets['All_Edges_NoClamp'],
-        u3=0
-    )
+    if CLEAN_PERTURBATION:
+        #   자유경계 u3=0 을 **Initial** 에서 건다(패치 반경 내 노드는 이미 제외 — 이중구속 방지).
+        #   => 스텝 간 구속집합이 동일해지고, LIVE 는 prescribed 변위 패턴 하나만 남는다.
+        my_model.DisplacementBC(
+            name='BC_Edges_Only_Z',
+            createStepName='Initial',
+            region=a.sets['All_Edges_NoClamp'],
+            u3=0
+        )
+    else:
+        my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
+        my_model.DisplacementBC(
+            name='BC_Edges_Only_Z',
+            createStepName='Step-Buckle',
+            region=a.sets['All_Edges_NoClamp'],
+            u3=0
+        )
 
     # ---- Buckle 스텝의 perturbation (케이블 라우트 전용) ----
     #   [2026-10-07 결함수정] PATTERN_SIGN 을 여기에도 곱한다. mode.py 는 곱하는데 buckle 은
