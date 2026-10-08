@@ -1739,3 +1739,34 @@ x_c=0.65, f=0.40 -> RuntimeError(.sta/.msg 미완주). 스크립트가 찍은 .d
     x_c=0.50: f=0.50 vs 개시 0.5041 / x_c=0.65: f=0.35 vs 개시 0.3745
 => 그래서 "0.40 에서 시작해 실패하면 내려간다"는 하강이 **자동으로 incipient 기저**를 찾는다.
    개시를 미리 알 필요가 없다.
+
+### 19.32 HF 로 넘어간다 — C-route 시드를 HF 임퍼펙션으로 주입 (2026-10-07)
+
+**파이프라인(이미 완비, 확인함)**
+    좌굴 ODB  ->  aba_mode_from_odb.extract_modes  ->  run_abaqus.py (IMPERFECTION_MODE='odb_direct')
+      - Step-Buckle / MEMBRANE-1 이 C-route 와 동일 -> 상수 수정 불요
+      - **면내 모드 자동 스킵**: U3_MIN_FRAC=1e-3. C-route 의 M1 은 u3_frac~2e-15 라 걸러진다
+      - odb_direct 는 모델 빌드 때 **노드 좌표를 직접 섭동**하고(키워드 경로 생략)
+        "[IMPERFECTION] 주입=기하 섭동 (출처 ..., 진폭 %.2f t = %.3e m)" + perturbation_report 를 찍는다
+        -> 노드 개수/진폭이 로그로 검증된다(라벨 매핑 확인 수단).
+
+**유일한 갭(수정함)**: MODE_SOURCE_ODB/DAT 가 ClampFree_Buckle 로 하드코딩 -> 환경변수 오버라이드.
+    $env:SOLARSAIL_MODE_ODB='buckle\Buckle_xc050_d018um_dc006_f050_s4_grid_clamp_lf_normal_ex210.odb'
+    .dat(λ 표 출처)는 ODB 옆 동명 파일 기본. abspath 고정. IMPERFECTION_NAME 도 소스명에서 유도.
+
+**왜 C-route 시드가 더 나은가**: 기존 시드는 **클램프 없는** 모델에서 왔다(클램프 모델의 좌굴이
+오래 실패: 음수 고유값 598~2897 / CONVERGED=0). C-route 는 클램프를 포함한 좌굴모드를 낸다 —
+주름이 클램프 기인이라는 54배 규명과 정합한다.
+
+**점검한 함정**
+ - HF 스크립트에는 중복-skip 이 없다(재실행/재주입 정상).
+ - coalescence_check.py 의 "[record] 이미 기록됨" 은 (x_c, d_c, **dat_mtime**) 키라서
+   .dat 이 바뀌면 건너뛰지 않는다 — 새 시드 런은 dat_mtime 이 달라 안전하다.
+
+**레시피**
+    cd code
+    abaqus python aba_mode_from_odb.py buckle\<C-route odb> Step-Buckle modes_ClampLF_xc050.txt 4
+    $env:SOLARSAIL_MODE_ODB='buckle\<C-route odb>'
+    abaqus cae noGUI=run_abaqus.py -- HF 0.5 1.0
+**주의**: HF 는 약 40분(2440 s @cpus=4). 진폭은 IMPERFECTION_AMPL_T=1.0 t(=5 µm/모드, 합 규약)
+이므로 3모드면 최대 ~3 t. 논문(Galhofo 0.10 t)과 직접 비교하려면 0.1 로 낮춘다.
