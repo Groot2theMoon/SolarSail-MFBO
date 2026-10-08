@@ -74,19 +74,24 @@ def main():
         say('[probe] 요소 타입 조회 생략 (%s)' % type(e).__name__)
 
     #   좌우대칭: x -> 20-x 짝이 노드 집합에 있어야 한다(§19.13 의 전제)
-    #   주의: CAE noGUI 인터프리터는 `sum(generator)` 를 거부한다
-    #   (TypeError: arg1; found 'generator', expecting a recognized type, 2026-10-07 실측).
-    #   여기서는 생성기 표현식 없이 명시적 루프로 센다.
-    key = set()
+    #   좌우대칭 검사.
+    #   **정확한 키 비교(round 6자리)는 쓰지 않는다**: CAE 는 import 한 노드 좌표를
+    #   **단정밀도(float32)** 로 저장한다. 그 오차(~1e-6)가 6자리 반올림 경계를 넘나들어
+    #   가짜 누락이 생긴다(2026-10-07 실측: 672/10201 이 float32 재현과 **정확히 일치**).
+    #   따라서 허용오차 기반 짝맞춤(mode_symmetry_probe.mirror_partner)으로 판정하고
+    #   편차를 **미터 단위**로 보고한다.
+    from mode_symmetry_probe import mirror_partner
+    _coords = []
     for nd in part.nodes:
-        c = nd.coordinates
-        key.add((round(c[0], 6), round(c[1], 6)))
-    miss = 0
-    for (x, y) in key:
-        if (round(20.0 - x, 6), y) not in key:
-            miss += 1
-    say('[probe] 좌우대칭: 미러짝 누락 %d / %d  (0 이어야 한다)' % (miss, len(key)))
-
+        _c = nd.coordinates
+        _coords.append((_c[0], _c[1], _c[2] if len(_c) > 2 else 0.0))
+    _partner, _st = mirror_partner(_coords, axis=10.0, tol=5.0e-3)
+    say('[probe] 좌우대칭(허용오차 5e-3 m): 커버 %.6f (%d/%d), 편차 평균 %.2e / 최대 %.2e m'
+        % (_st['cover'], _st['n'] - _st['miss'], _st['n'],
+           _st['dev_mean'] or 0.0, _st['dev_max'] or 0.0))
+    if _st['miss'] or _st['cover'] < 0.9999:
+        say('[probe] !! 미러쌍 누락 %d개 — 메쉬가 좌우대칭이 아니다' % _st['miss'])
+        return 1
     say('[probe] OK — 이 경로가 이 기계에서 작동한다. 이제 본 런을 돌려도 좋다.')
     return 0
 
