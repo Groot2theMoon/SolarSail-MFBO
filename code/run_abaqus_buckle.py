@@ -1084,11 +1084,20 @@ def build_model(disp):
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-GlobalTension',
                 u1=DEAD_FRAC * _mag * _d1, u2=DEAD_FRAC * _mag * _d2)
-            # LIVE = (1-DEAD_FRAC) x P x PATTERN_SIGN — 좌굴 스텝 = 섭동 패턴(lambda 의 대상).
+            # LIVE — 좌굴 스텝의 **총 구동값**을 P(=1.0 x mag)로 올린다. 그러면 증분이
+            #   (1-DEAD_FRAC) x P 가 되어 lambda=1 에서 총 구동 = DEAD + LIVE = P 가 된다.
+            #   [2026-10-07 결함수정] 이전 코드는 총값 자리에 (1-DEAD_FRAC) x P 를 넣었다.
+            #   setValuesInStep 의 값은 '그 스텝의 총값'이므로(같은 주석이 그렇게 적고 있고
+            #   A-route/paper 라우트도 그렇게 쓴다) DEAD_FRAC=0.5 에서 총값이 0.5P 로
+            #   **base state 와 같아져 증분이 정확히 0** 이었다. 그러면 *BUCKLE 의 LIVE
+            #   ("INCREMENTAL LOAD IN *BUCKLE STEP") 가 0 이 되어 lambda 와 모드가
+            #   모두 의미를 잃는다 — 실측 lambda=8.197e-3 의 정체가 이것이다.
+            #   A-route(run_abaqus.py 1005행)는 GlobalTension=DISP_GLOBAL / Buckle=PERTURBATION,
+            #   paper 라우트는 Buckle=PAPER_S1_LIVE_M 로 **두 값이 다르다**. 그 관용구를 따른다.
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-Buckle',
-                u1=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _mag * _d1,
-                u2=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _mag * _d2)
+                u1=PATTERN_SIGN * _mag * _d1,
+                u2=PATTERN_SIGN * _mag * _d2)
         print("%s [clamp_lf] 변위 구동: 꼭짓점 %.4g m + 클램프 %.4g m (CLAMP_DC=%.3g, 비율 %.3g)"
               % (TAG, DISP, CLAMP_PULL, CLAMP_DC, (CLAMP_PULL / DISP) if DISP else 0.0))
         print("%s [clamp_lf] DEAD_FRAC=%.4g -> DEAD=%.4g x P (GlobalTension) / "
