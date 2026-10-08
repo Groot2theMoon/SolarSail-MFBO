@@ -51,6 +51,7 @@ import interaction
 import sys
 import os
 import io
+import shutil
 import subprocess
 import time
 import numpy as np
@@ -352,7 +353,13 @@ def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=2e-2
         emit("[PATCHER] 기존 *Controls %d 줄 제거 (멱등성)"
              % (len(_lines) - len(_keep)))
     before = os.path.getsize(deck)
-    cmd = ['abaqus', 'python', _rp, deck, deck, step] + list(ctrl)
+    #   [2026-10-08] Windows 의 `abaqus` 는 abaqus.bat 이다. shell 없이 부르면 확장자를
+    #   못 붙여 [WinError 2] 가 난다(HF 가 여기서 죽었다). which 로 실제 런처를 해석한다.
+    _abq = shutil.which('abaqus') or shutil.which('abaqus.bat') or 'abaqus'
+    if not (os.path.exists(_abq) or shutil.which(_abq)):
+        emit("[PATCHER] !!! abaqus 런처를 찾지 못했습니다: %r — PATH 를 확인하세요" % _abq)
+        return False
+    cmd = [_abq, 'python', _rp, deck, deck, step] + list(ctrl)
     emit("[PATCHER] %s" % ' '.join(cmd))
     try:
         p = subprocess.run(cmd, cwd=os.getcwd(), capture_output=True, text=True)
@@ -682,6 +689,41 @@ cos_val = float(np.cos(angle_rad))
 sin_val = float(np.sin(angle_rad))
 
 # 모델 초기화 및 재질
+def _apply_imperfection_to_part(part):
+    """모드표 -> 파트 노드 좌표 섭동(*IMPERFECTION 과 같은 합 규약). (pert, labels) 반환.
+
+    [2026-10-08] 원래 모델 구축부의 `if not USE_GRID_MESH:` **안에 인라인**으로 있었다.
+    격자(aba_grid_mesh.PartFromInputFile) 경로로 바꾼 뒤 그 블록이 죽은 코드가 되어
+    섭동이 조용히 사라졌다: _pert=None -> 로그 '빈 섭동' -> HF 가 임퍼펙션 없이 제출될 뻔했다.
+    두 경로가 같은 함수를 부르도록 뽑아냈다(중복 금지).
+    """
+    _amp = THICKNESS * IMPERFECTION_AMPL_T
+    _pert = build_perturbation(_mode_table, _amp, IMPERFECTION_MODES)
+    _labels = tuple(sorted(_pert.keys()))
+    _apply, _new = [], []
+    for _nd in part.nodes.sequenceFromLabels(labels=_labels):
+        _dz = _pert.get(_nd.label)
+        if _dz is None:
+            continue
+        _cx, _cy, _cz = _nd.coordinates
+        _apply.append(_nd)
+        _new.append((_cx, _cy, _cz + _dz))
+    #   MeshNode 에는 setValues(coordinates=...) 가 없다 — Part.editNode 로 한 번에 넘긴다(§6b).
+    part.editNode(nodes=tuple(_apply), coordinates=tuple(_new))
+    emit("[IMPERFECTION] 기하 섭동 적용: %d/%d 노드, %s (진폭 %.2f t = %.3e m)"
+         % (len(_apply), len(_labels), perturbation_report(_pert),
+            IMPERFECTION_AMPL_T, _amp))
+    if len(_apply) != len(_labels):
+        emit("!!! WARNING: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치 의심"
+             % (len(_labels), len(_apply)))
+    #   말이 아니라 실측: 좌표에 실제로 들어갔는지 샘플 3개를 로그에 남긴다.
+    for _nd in part.nodes.sequenceFromLabels(
+            labels=(_labels[0], _labels[len(_labels) // 2], _labels[-1])):
+        emit("               파트 노드 %d z=%.9e (dz=%.3e m)"
+             % (_nd.label, _nd.coordinates[2], _pert.get(_nd.label, 0.0)))
+    return _pert, _labels
+
+
 if MODEL_NAME in mdb.models: del mdb.models[MODEL_NAME]
 my_model = mdb.Model(name=MODEL_NAME)
 
@@ -813,40 +855,20 @@ if not USE_GRID_MESH:
     p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
     p.generateMesh()
 
-    # 임퍼펙션(기하 섭동) 주입 — 셸에서 *IMPERFECTION 은 노드 좌표 섭동과 같다. 메쉬 직후에 넣어야
-    #   어셈블리 regenerate 가 이 좌표를 물려받는다(§5·§6a).
-    if not _mode_table:
-        emit("[IMPERFECTION] 기하 섭동 없음 (모드 없음: IMPERFECTION_MODE=%s, table=%s)"
-             % (IMPERFECTION_MODE, type(_mode_table).__name__))
-    else:
-        _amp = THICKNESS * IMPERFECTION_AMPL_T
-        _pert = build_perturbation(_mode_table, _amp, IMPERFECTION_MODES)
-        _labels = tuple(sorted(_pert.keys()))
-        _seq = p.nodes.sequenceFromLabels(labels=_labels)
-        _apply, _new = [], []
-        for _nd in _seq:
-            _dz = _pert.get(_nd.label)
-            if _dz is None:
-                continue
-            _cx, _cy, _cz = _nd.coordinates
-            _apply.append(_nd)
-            _new.append((_cx, _cy, _cz + _dz))
-        #     MeshNode 에는 setValues(coordinates=...) 가 없다 — Part.editNode 로 한 번에 넘긴다(§6b).
-        p.editNode(nodes=tuple(_apply), coordinates=tuple(_new))
-        _n = len(_apply)
-        emit("[IMPERFECTION] 기하 섭동 적용: %d/%d 노드, %s (진폭 %.2f t = %.3e m)"
-              % (_n, len(_labels), perturbation_report(_pert), IMPERFECTION_AMPL_T, _amp))
-        if _n != len(_labels):
-            emit("!!! WARNING: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치 의심"
-                  % (len(_labels), _n))
-        # 말이 아니라 실측: 섭동이 실제 좌표에 들어갔는지 3개 노드를 찍어 로그에 남긴다.
-        for _nd in p.nodes.sequenceFromLabels(
-                labels=(_labels[0], _labels[len(_labels) // 2], _labels[-1])):
-            emit("               파트 노드 %d z=%.9e (Δz=%.3e m)"
-                  % (_nd.label, _nd.coordinates[2], _pert.get(_nd.label, 0.0)))
     a.regenerate()
 
 # 의존 인스턴스는 파트 메쉬를 공유한다 -> 어셈블리 쪽에서도 좌표가 같아야 한다(전달 확인).
+# 격자/자유 **두 경로 모두** 메쉬가 준비된 뒤에 한 번만 적용한다(2026-10-08 수정).
+#   이 호출이 없으면 _pert=None 이 되어 로그에 '빈 섭동'만 남고 HF 가 평탄한 막으로 돌아간다.
+if _mode_table:
+    _pert, _labels = _apply_imperfection_to_part(p)
+else:
+    _pert, _labels = None, ()
+    emit("[IMPERFECTION] 기하 섭동 없음 (모드 없음: IMPERFECTION_MODE=%s, table=%s)"
+         % (IMPERFECTION_MODE, type(_mode_table).__name__))
+
+a.regenerate()   # 파트 메쉬 좌표 변경을 (의존) 인스턴스로 전파(§6a)
+
 if _pert is not None and _labels:
     _i0 = _labels[0]
     emit("[IMPERFECTION] 어셈블리 인스턴스 확인: 노드 %d z=%.9e (파트와 같아야 함)"
