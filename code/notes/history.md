@@ -1364,3 +1364,33 @@ elset=All, material=Kapton` + 사용자 노드 10206 = 격자 10201 + RP 5 ✓.
 `inst_memb.sets['All_Elem']` 이 가짜 KeyError 로 죽는다.
 
 **검증**: py_compile 4/4 · checker EXIT=0 · 하네스 4/4 · 정적 순서 검사 4/4 OK.
+
+### 19.21 "성공 스크립트와 모델링을 통일하면 되지 않나" — 실제 갈라짐 대조 (2026-10-07)
+
+사용자 질문에서 출발해 네 스크립트의 **모델 구성부를 정규화(공백 제거) 후 difflib 으로 대조**했다
+(마테리얼 정의 ~ 첫 Step 사이).
+
+**결론 1 — 좌굴 스크립트는 A-route 를 충실히 따른다.** 강체패치 구현·반경·결합방식이 HF 와 같다:
+| 항목 | run_abaqus.py (HF, 성공) | run_abaqus_mode.py | run_abaqus_buckle.py |
+|---|---|---|---|
+| `create_rigid_patch` | `(name, coord, radius)` + `a.Set(..._RP_Set)` | `(name, coord, radius=PATCH_RADIUS)` + `Region(...)` | `(a, inst, name, coord, radius)` + `a.Set(...)` |
+| 패치 반경 | **0.2** | **PATCH_RADIUS=0.2** | **0.2** (호출부) |
+| 결합 방식 | DISTRIBUTING | DISTRIBUTING (COUPLING_TYPE) | DISTRIBUTING |
+=> **좌굴 스크립트의 모델 구성은 HF 와 사실상 동일**하다. 이번 실패의 원인은 그쪽이 아니라
+   **메쉬/집합**(orphan 고유 제약: 한 집합이 노드/요소 겸용 불가)이었다 — §19.20 에서 수정.
+
+**결론 2 — 대신 다른 곳이 갈라져 있었다: `run_abaqus_cable.py` (LF 기준선)**
+| 항목 | HF / mode / buckle | **run_abaqus_cable.py** |
+|---|---|---|
+| 결합 방식 | **DISTRIBUTING** | **KINEMATIC** |
+| 패치 반경 | **0.2** | **0.4** |
+=> §7 에서 "KINEMATIC -> DISTRIBUTING" 으로 바꿨지만 cable.py 는 그대로 남았다(스테일).
+   즉 **LF 기준선이 HF 와 같은 모델이 아니다** — MFBO 의 LF/HF 상관 연구에 직접 영향.
+   `check_model_consistency.check_coupling_type()` 은 **HF vs mode** 만 비교하므로 이걸 놓친다.
+   (기존 NO_CLAMP 비교 결과가 cable.py 값에 기대고 있다면, 통일 시 재실행이 필요하다.)
+
+**권고 순서**
+ 1. 지금: §19.20 수정으로 좌굴 런 1회 (남은 관문은 마지막 `*BOUNDARY` 하나였다).
+ 2. 다음: cable.py 를 HF 와 통일할지 **사용자 결정**(통일하면 과거 비교의 재실행 필요) +
+    검사기의 결합방식 검사를 네 파일 전체로 확장.
+ 3. 근본: 모델 생성을 **공유 모듈**로 뽑아 네 스크립트가 호출 — 갈라질 수 없게 한다.
