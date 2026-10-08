@@ -203,18 +203,75 @@ class BC(Obj):
 
 
 class Part(Obj):
+    """파트 목. **orphan mesh 경로(§10a)** 를 실제 API 계약대로 흉내낸다.
+
+    왜 필요한가: `aba_grid_mesh.fill_part` 는 part.deleteMesh -> addNodes -> addElements 로
+    파트를 직접 채운다(orphan mesh). 그러면 요소가 파트 기하(face)에 붙지 않으므로
+      - `p.Set(faces=p.faces, ...)` 로 만든 셋은 요소를 못 담고,
+      - 그 셋으로 `SectionAssignment` 를 하면 'N elements have missing property definitions'
+        로 입력 단계에서 죽는다(§10a 실측).
+    목이 이 법칙을 강제하지 않으면 로컬에서 초록으로 통과하고 Abaqus 라이선스를 태운다.
+    """
+
     def __init__(self, name, log):
         Obj.__init__(self, name, log)
+        object.__setattr__(self, 'sets', {})
+        object.__setattr__(self, 'elements', tuple(range(1, 10101)))   # orphan 뒤에 채워지는 것과 동형
+        object.__setattr__(self, '_orphan', False)
+
+    def deleteMesh(self, **kw):
+        self._log.add(self._name, 'deleteMesh', (), kw)
+        object.__setattr__(self, '_orphan', True)
+        return Obj('%s.deleteMesh()' % self._name, self._log)
+
+    def addNodes(self, **kw):
+        nd = kw.get('nodeData') or ()
+        self._log.add(self._name, 'addNodes', (), {'n_nodes': len(nd)})
+        object.__setattr__(self, '_orphan', True)
+        return Obj('%s.addNodes()' % self._name, self._log)
+
+    def addElements(self, **kw):
+        ed = kw.get('elementData') or ()
+        self._log.add(self._name, 'addElements', (), {'n_elem': len(ed)})
+        object.__setattr__(self, '_orphan', True)
+        return Obj('%s.addElements()' % self._name, self._log)
+
+    def generateMesh(self, **kw):
+        #   자유 메쉬 경로: 로그가 '어느 경로로 갔는지'를 말하도록 요소 수를 갈라 둔다
+        #   (자유 메쉬는 약 1.82만 요소, 격자는 10100).
+        self._log.add(self._name, 'generateMesh', (), kw)
+        object.__setattr__(self, 'elements', tuple(range(1, 18201)))
+        return Obj('%s.generateMesh()' % self._name, self._log)
 
     def Set(self, **kw):
+        #   법칙(§10a): orphan mesh 에서 faces 기반 셋은 요소를 담지 못한다.
+        if getattr(self, '_orphan', False) and 'faces' in kw:
+            raise AssertionError(
+                'orphan mesh 인데 p.Set(faces=...) 를 썼다 -> 요소가 섹션을 못 받는다(§10a). '
+                'p.Set(elements=p.elements, name=...) 를 쓸 것.')
         self._log.add(self._name, 'Set', (), kw)
-        return Obj('%s.Set(%s)' % (self._name, kw.get('name')), self._log)
+        s = Obj('%s.Set(%s)' % (self._name, kw.get('name')), self._log)
+        object.__setattr__(s, '_from', tuple(sorted(kw)))
+        if kw.get('name') is not None:
+            self.sets[kw['name']] = s
+        return s
+
+    def SectionAssignment(self, **kw):
+        reg = kw.get('region')
+        src = getattr(reg, '_from', None) if reg is not None else None
+        if getattr(self, '_orphan', False) and src is not None and 'faces' in src:
+            raise AssertionError(
+                'orphan mesh 인데 SectionAssignment 의 region 이 기하(faces) 기반이다(§10a). '
+                'p.Set(elements=p.elements, name="All") + p.sets["All"] 를 쓸 것.')
+        self._log.add(self._name, 'SectionAssignment', (), kw)
+        return Obj('%s.SectionAssignment()' % self._name, self._log)
 
 
 class Instance(Obj):
     def __init__(self, name, log, nodes=None):
         Obj.__init__(self, name, log)
         object.__setattr__(self, 'nodes', nodes if nodes is not None else NodeArray([]))
+        object.__setattr__(self, 'elements', ())
         object.__setattr__(self, 'sets', {})
         self.sets['All'] = Obj('%s.sets[All]' % name, log)
 

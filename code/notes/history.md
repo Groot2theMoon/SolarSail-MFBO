@@ -1110,3 +1110,52 @@ x_c 에 매끄러움, HF 실측과 같은 축).
     대칭이 조금 깨져도 섭동(imperfection) 형상으로는 더 정규적이고, **x_c 를 바꿔가며 비교할 때
     기저 선택의 임의성이 사라진다** — 사용자가 요구한 "양쪽에 대칭적으로" 를 직접 만족한다.
 사용: `abaqus python mode_symmetry_probe.py <odb> <step> [n_modes] [instance]`
+
+### 19.14 메쉬를 균일 격자로 전환 — `USE_GRID_MESH = True` (2026-10-07)
+
+**요청**: `aba_grid_mesh` 의 격자를 쓰도록 코드를 수정.
+
+**전환한 파일 넷** (전부 `USE_GRID_MESH` 상수 하나로 갈린다):
+`run_abaqus_buckle.py` / `run_abaqus_mode.py` / `run_abaqus.py` / `run_abaqus_cable.py`.
+True 일 때 `aba_grid_mesh.fill_part` 로 파트를 직접 채운다(orphan mesh).
+
+**§10c(미해결)의 해결** — 원인은 순서였다. 자유 메쉬는
+`a.Instance(...)` -> `p.generateMesh()` -> `a.regenerate()` 순서인데, orphan mesh 에서 그
+순서가 보장되지 않는다. => **파트를 먼저 메쉬하고 인스턴스를 나중에 만든다**
+(케이블 파트가 이미 쓰던 순서다).
+
+**§10a 요소기반 전환(표 그대로)**:
+```
+p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), ...)     # 기존
+p.Set(elements=p.elements, name='All')                                # 요소 생성 뒤
+p.SectionAssignment(region=p.sets['All'], ...)                        # 신규
+```
+셋 이름 `'All'` 은 유지했다 — `inst_memb.sets['All']` 참조가 HF/mode/buckle 여러 곳에 있다.
+경계 셋은 이미 좌표 기반(`aba_grid_mesh.boundary_node_labels`)이라 그대로 둔다.
+
+**하네스에 새 법칙**: 목의 `Part` 가 orphan mesh 계약을 강제한다 —
+`deleteMesh/addNodes/addElements` 뒤에 `p.Set(faces=...)` 또는 faces 기반 `SectionAssignment`
+를 쓰면 즉시 실패한다(§10a 를 라이선스 없이 잡는다). 또한 목의 `generateMesh` 가 요소 수를
+1.82만으로 바꿔 **로그가 어느 메쉬 경로로 갔는지 말하게** 했다.
+
+**검증(라이선스 0)**
+- 새 메쉬 좌우대칭: 노드 10201 **미러짝 누락 0** / 요소 10100 **누락 0** (순수 파이썬)
+- 면적 `100.000000000 m²`, 오차 **3.5e-12** (기계 정밀도)
+- `py_compile` 4/4 · `check_model_consistency` **EXIT=0** · 하네스 **4/4**(grid 경로)
+- `buckle_mode_report` selftest 18/18 · `mode_symmetry_probe` selftest 12/12
+- **폴백 확인**: `USE_GRID_MESH=False` 로 바꾸면 옛 자유메쉬 경로가 그대로 배선된다(하네스 OK)
+- 잡 이름에 메쉬 태그가 들어가 기존 산출물을 덮지 않는다:
+  `Buckle_xc050_d018um_dc006_s4_`**`grid`**`_clamp_lf_normal`
+
+**기대 효과**
+1. 좌우대칭 메쉬 -> "한쪽에만 모드가 생기는" **구조적 원인 제거**(§19.13)
+2. 요소 10100 vs 약 18200 -> 런이 **1.8배 빠름**(HF 47분 -> 약 26분)
+3. 논문 Galhofo(2022) Table A.1 의 S3+S4 **10,100 토폴로지와 일치**
+
+**주의 — 실 Abaqus 에서 미검증(첫 런에서 확인)**
+- `part.addElements(elementData=..., type=<elemCode>)`: `type` 에 ElemType 객체가 아니라
+  **요소 코드(S4/S3)** 를 넘기는 설계다(fill_part docstring). CAE 에서 실행된 적이 없다.
+- orphan 인스턴스가 `a.regenerate()` 없이 파트 메쉬를 물려받는지(§10c 의 나머지 절반).
+- 클램프/꼭짓점 강체패치(반경 0.2 m)와 `All_Edges_NoClamp` 가 격자 노드에서 정상 생성되는지.
+=> 첫 런은 **seed 케이스(30초)** 로 하고 로그의 `[mesh] grid ...` 줄과 노드 수를 본다.
+   실패하면 `USE_GRID_MESH = False` 한 줄로 즉시 되돌린다.

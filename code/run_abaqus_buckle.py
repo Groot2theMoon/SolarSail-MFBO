@@ -131,6 +131,15 @@ HEIGHT = 10.0 # m
 #   요소코드는 HF/mode 와 같아야 한다 — *IMPERFECTION 이 노드 라벨로 주입된다.
 ELEM_CODE_QUAD = S4         # [2026-10-04] 막(M3D4/M3D3) 실험 철회 -> 1차 셸 복귀.
 ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 셸 복귀
+
+# ---- 메쉬 종류 (2026-10-07) ----
+#   True  = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201).
+#           노드·요소 **미러쌍 누락 0** = 좌우 완전 대칭(순수 파이썬으로 검증). 논문 Table A.1
+#           토폴로지와 일치하며 자유 메쉬(약 1.82만 요소)보다 1.8배 빠르다.
+#           왜 바꾸나: 자유 메쉬는 좌우대칭이 아니라 **한쪽에만 모드가 생기는** 원인이 된다(§19.13).
+#   False = 기존 자유 메쉬 (seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 1.82만 요소).
+#   주의(§11): 잡 이름에 메쉬 태그가 들어가므로 기존 자유메쉬 산출물을 덮지 않는다.
+USE_GRID_MESH = True
 SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 THICKNESS = 5.0e-6
 
@@ -815,7 +824,22 @@ def build_model(disp):
     s.Line(point1=V1[:2], point2=V3[:2])
     p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
     p.BaseShell(sketch=s)
-    p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
+    if USE_GRID_MESH:
+        # ---- 균일 격자(orphan mesh). §10c 미해결 항목을 이렇게 해결한다:
+        #      **파트를 먼저 메쉬하고 인스턴스를 나중에 만든다**(자유 메쉬에서 쓰던
+        #      '인스턴스 -> generateMesh -> regenerate' 순서는 orphan mesh 에서 보장이 없다).
+        _n4, _n3, _nn = aba_grid_mesh.fill_part(
+            p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+            elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
+        print("%s [mesh] grid(격자, orphan): S4 %d + S3 %d = %d 요소 / 노드 %d"
+              % (TAG, _n4, _n3, _n4 + _n3, _nn))
+        #   orphan mesh 는 요소가 파트 기하에 붙지 않는다 -> 섹션은 **요소 기반**으로,
+        #   그리고 요소가 생성된 **뒤**에 준다(§10a). 기하 기반으로 두면
+        #   'N elements have missing property definitions' 로 입력 단계에서 죽는다.
+        p.Set(elements=p.elements, name='All')
+        p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
+    else:
+        p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
     def create_cable_part(name, length):
         """mode.py 와 동일한 케이블 1요소 파트 (T3D2)."""
@@ -836,13 +860,17 @@ def build_model(disp):
     a.DatumCsysByDefault(CARTESIAN)
     inst_memb = a.Instance(name=INSTANCE_NAME, part=p, dependent=ON)
 
-    p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
-    p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-    elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
-    elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
-    p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
-    p.generateMesh()
-    a.regenerate()
+    print("%s [mesh] %s : 파트 요소 %d개 / 인스턴스 노드 %d개"
+          % (TAG, ('grid(격자, orphan)' if USE_GRID_MESH else 'free(자유, seedPart)'),
+             len(p.elements), len(inst_memb.nodes)))
+    if not USE_GRID_MESH:
+        p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
+        p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
+        elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
+        elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
+        p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
+        p.generateMesh()
+        a.regenerate()
 
     # 꼭짓점 RP — 동일 (radius=0.2)
     rp1_obj, rp1_reg = create_rigid_patch(a, inst_memb, 'Top', V1, radius=0.2)
@@ -1113,10 +1141,12 @@ if ELEM_TAG is None:
 #   이름이 겹쳐 run_job_safely 가 직전 증거를 지운다(§11).
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
 _rot_tag = '_rotfix' if CLAMP_RP_FIX_ROT else ''   # 스위치를 켜면 출력 이름이 갈린다
-JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s%s%s' % (int(round(x_c * 100.0)),
+MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
+JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_%s_%s_%s_%s%s%s' % (int(round(x_c * 100.0)),
                                                        int(round(DISP * 1.0e6)),
                                                        int(round(CLAMP_DC_EFF * 100.0)),
-                                                       ELEM_TAG, CASE, CLAMP_DIR, _excl_tag, _rot_tag)
+                                                       ELEM_TAG, MESH_TAG, CASE, CLAMP_DIR,
+                                                       _excl_tag, _rot_tag)
 
 print("")
 print("=" * 78)

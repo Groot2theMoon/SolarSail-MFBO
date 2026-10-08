@@ -652,7 +652,27 @@ s.Line(point1=V2[:2], point2=V1[:2])
 s.Line(point1=V1[:2], point2=V3[:2])
 p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
 p.BaseShell(sketch=s)
-p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
+# ---- 메쉬 종류 (2026-10-07) ----
+#   True  = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201).
+#           노드·요소 **미러쌍 누락 0** = 좌우 완전 대칭(순수 파이썬 검증). 논문 Table A.1
+#           토폴로지와 일치하며 자유 메쉬(약 1.82만 요소)보다 1.8배 빠르다.
+#           왜 바꾸나: 자유 메쉬는 좌우대칭이 아니라 **한쪽에만 모드가 생기는** 원인이 된다(§19.13).
+#   False = 기존 자유 메쉬(seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS).
+#   !! 세 모델 스크립트(HF/mode/cable)와 buckle 이 **같은 값을 써야** 한다 —
+#      임퍼펙션은 노드 대응으로 주입되므로 메쉬가 다르면 주입이 깨진다.
+USE_GRID_MESH = True
+if USE_GRID_MESH:
+    # 균일 격자(orphan mesh) — §10 설계. §10c(인스턴스 순서)는 파트를 먼저
+    # 메쉬하고 인스턴스를 나중에 만드는 것으로 해결한다.
+    _n4, _n3, _nn = aba_grid_mesh.fill_part(
+        p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+        elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
+    print("%s [mesh] grid: S4 %d + S3 %d = %d / 노드 %d" % (TAG, _n4, _n3, _n4 + _n3, _nn))
+    # orphan mesh 는 요소가 파트 기하에 안 붙는다 -> 섹션은 요소 기반·요소 생성 뒤(§10a)
+    p.Set(elements=p.elements, name='All')
+    p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
+else:
+    p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
 # 케이블 생성
 def create_cable_part(name, length):
@@ -728,45 +748,46 @@ def connect_cable(name, part, coord, vector_dir):
 
     return region_start, region_end
 
-p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
-p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
-elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
-p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
-p.generateMesh()
+if not USE_GRID_MESH:
+    p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
+    p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
+    elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
+    elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
+    p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
+    p.generateMesh()
 
-# 임퍼펙션(기하 섭동) 주입 — 셸에서 *IMPERFECTION 은 노드 좌표 섭동과 같다. 메쉬 직후에 넣어야
-#   어셈블리 regenerate 가 이 좌표를 물려받는다(§5·§6a).
-if not _mode_table:
-    emit("[IMPERFECTION] 기하 섭동 없음 (모드 없음: IMPERFECTION_MODE=%s, table=%s)"
-         % (IMPERFECTION_MODE, type(_mode_table).__name__))
-else:
-    _amp = THICKNESS * IMPERFECTION_AMPL_T
-    _pert = build_perturbation(_mode_table, _amp, IMPERFECTION_MODES)
-    _labels = tuple(sorted(_pert.keys()))
-    _seq = p.nodes.sequenceFromLabels(labels=_labels)
-    _apply, _new = [], []
-    for _nd in _seq:
-        _dz = _pert.get(_nd.label)
-        if _dz is None:
-            continue
-        _cx, _cy, _cz = _nd.coordinates
-        _apply.append(_nd)
-        _new.append((_cx, _cy, _cz + _dz))
-    #     MeshNode 에는 setValues(coordinates=...) 가 없다 — Part.editNode 로 한 번에 넘긴다(§6b).
-    p.editNode(nodes=tuple(_apply), coordinates=tuple(_new))
-    _n = len(_apply)
-    emit("[IMPERFECTION] 기하 섭동 적용: %d/%d 노드, %s (진폭 %.2f t = %.3e m)"
-          % (_n, len(_labels), perturbation_report(_pert), IMPERFECTION_AMPL_T, _amp))
-    if _n != len(_labels):
-        emit("!!! WARNING: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치 의심"
-              % (len(_labels), _n))
-    # 말이 아니라 실측: 섭동이 실제 좌표에 들어갔는지 3개 노드를 찍어 로그에 남긴다.
-    for _nd in p.nodes.sequenceFromLabels(
-            labels=(_labels[0], _labels[len(_labels) // 2], _labels[-1])):
-        emit("               파트 노드 %d z=%.9e (Δz=%.3e m)"
-              % (_nd.label, _nd.coordinates[2], _pert.get(_nd.label, 0.0)))
-a.regenerate()
+    # 임퍼펙션(기하 섭동) 주입 — 셸에서 *IMPERFECTION 은 노드 좌표 섭동과 같다. 메쉬 직후에 넣어야
+    #   어셈블리 regenerate 가 이 좌표를 물려받는다(§5·§6a).
+    if not _mode_table:
+        emit("[IMPERFECTION] 기하 섭동 없음 (모드 없음: IMPERFECTION_MODE=%s, table=%s)"
+             % (IMPERFECTION_MODE, type(_mode_table).__name__))
+    else:
+        _amp = THICKNESS * IMPERFECTION_AMPL_T
+        _pert = build_perturbation(_mode_table, _amp, IMPERFECTION_MODES)
+        _labels = tuple(sorted(_pert.keys()))
+        _seq = p.nodes.sequenceFromLabels(labels=_labels)
+        _apply, _new = [], []
+        for _nd in _seq:
+            _dz = _pert.get(_nd.label)
+            if _dz is None:
+                continue
+            _cx, _cy, _cz = _nd.coordinates
+            _apply.append(_nd)
+            _new.append((_cx, _cy, _cz + _dz))
+        #     MeshNode 에는 setValues(coordinates=...) 가 없다 — Part.editNode 로 한 번에 넘긴다(§6b).
+        p.editNode(nodes=tuple(_apply), coordinates=tuple(_new))
+        _n = len(_apply)
+        emit("[IMPERFECTION] 기하 섭동 적용: %d/%d 노드, %s (진폭 %.2f t = %.3e m)"
+              % (_n, len(_labels), perturbation_report(_pert), IMPERFECTION_AMPL_T, _amp))
+        if _n != len(_labels):
+            emit("!!! WARNING: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치 의심"
+                  % (len(_labels), _n))
+        # 말이 아니라 실측: 섭동이 실제 좌표에 들어갔는지 3개 노드를 찍어 로그에 남긴다.
+        for _nd in p.nodes.sequenceFromLabels(
+                labels=(_labels[0], _labels[len(_labels) // 2], _labels[-1])):
+            emit("               파트 노드 %d z=%.9e (Δz=%.3e m)"
+                  % (_nd.label, _nd.coordinates[2], _pert.get(_nd.label, 0.0)))
+    a.regenerate()
 
 # 의존 인스턴스는 파트 메쉬를 공유한다 -> 어셈블리 쪽에서도 좌표가 같아야 한다(전달 확인).
 if _pert is not None and _labels:

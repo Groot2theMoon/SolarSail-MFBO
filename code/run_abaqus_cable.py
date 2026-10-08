@@ -108,7 +108,21 @@ s.Line(point1=V2[:2], point2=V1[:2])
 s.Line(point1=V1[:2], point2=V3[:2])
 p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
 p.BaseShell(sketch=s)
-p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
+# ---- 메쉬 종류 (2026-10-07) ----
+#   True = aba_grid_mesh 균일 격자(좌우 완전 대칭, 논문 Table A.1 토폴로지).
+#   HF/mode/buckle 과 **같은 값**을 써야 비교와 임퍼펙션 주입이 성립한다.
+import aba_grid_mesh
+USE_GRID_MESH = True
+if USE_GRID_MESH:
+    # 균일 격자(orphan mesh) — 파트를 먼저 메쉬하고 인스턴스를 나중에 만든다(§10c).
+    _n4, _n3, _nn = aba_grid_mesh.fill_part(
+        p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+        elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
+    print("%s [mesh] grid: S4 %d + S3 %d = %d / 노드 %d" % (TAG, _n4, _n3, _n4 + _n3, _nn))
+    p.Set(elements=p.elements, name='All')
+    p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
+else:
+    p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
 # -------------------------------------------------------------
 # 4. 파트 생성: 케이블 (함수화)
@@ -209,13 +223,14 @@ def connect_cable(name, part, sail_corner, vector_dir, radius=1e-4):
 
 # 1. 메쉬 생성 (먼저 해야 노드 찾기 가능)
 # [핵심] 아워글래싱 방지를 위해 S4(Full Integration) 사용
-p.seedPart(size=BASE/200.0, deviationFactor=0.1) # 약 5~8천개 요소 목표
-p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD) # Full Integration
-elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)  # Full Integration
-p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
-p.generateMesh()
-a.regenerate()
+if not USE_GRID_MESH:
+    p.seedPart(size=BASE/200.0, deviationFactor=0.1) # 약 5~8천개 요소 목표
+    p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
+    elemTypeQuad = ElemType(elemCode=S4, elemLibrary=STANDARD) # Full Integration
+    elemTypeTri = ElemType(elemCode=S3, elemLibrary=STANDARD)  # Full Integration
+    p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
+    p.generateMesh()
+    a.regenerate()
 
 # 2. RP 생성
 rp1_obj, rp1_reg = create_rigid_patch('Top', V1)
