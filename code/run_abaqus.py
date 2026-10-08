@@ -456,12 +456,25 @@ def print_job_diag(job_name):
             if size > 2000000:
                 f.seek(size - 2000000)
             text = f.read()
-        hits = [ln.strip() for ln in text.splitlines()
-                if ln.strip() and any(k.lower() in ln.lower() for k in keys)]
-        emit("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개"
-              % (job_name, fn, size / 1024.0, len(hits)))
-        for ln in hits[-3:]:
-            emit("      | %s" % ln[:150])
+        #   [2026-10-08] 매치 줄만 찍으면 원인을 가린다: Abaqus 는 오류문을 줄바꿈하므로
+        #   "AN INITIAL CONDITION HAS BEEN SPECIFIED ON ELEMENT SET" 다음 줄에 **집합 이름**이
+        #   온다. 그 줄은 키워드에 안 걸려 버려졌고, 매번 원인을 추측해야 했다(HF 가 여기서 막혔다).
+        #   그래서 매치 지점마다 **뒤 2줄까지** 줄번호와 함께 남긴다(덱 대조용).
+        _lines = text.splitlines()
+        _n_hit = 0
+        hits = []
+        for _i, _ln in enumerate(_lines):
+            if _ln.strip() and any(k.lower() in _ln.lower() for k in keys):
+                _n_hit += 1
+                if len(hits) > 40:
+                    continue
+                for _j in range(_i, min(_i + 3, len(_lines))):
+                    if _lines[_j].strip():
+                        hits.append('%d| %s' % (_j + 1, _lines[_j].strip()))
+        emit("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개 (문맥 포함 %d줄)"
+              % (job_name, fn, size / 1024.0, _n_hit, len(hits)))
+        for ln in hits[-14:]:
+            emit("      | %s" % ln[:170])
 
 sqrt2 = 1.414
 N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
