@@ -1084,8 +1084,16 @@ def build_model(disp):
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-GlobalTension',
                 u1=DEAD_FRAC * _mag * _d1, u2=DEAD_FRAC * _mag * _d2)
-            # LIVE — 좌굴 스텝의 **총 구동값**을 P(=1.0 x mag)로 올린다. 그러면 증분이
-            #   (1-DEAD_FRAC) x P 가 되어 lambda=1 에서 총 구동 = DEAD + LIVE = P 가 된다.
+            # LIVE = (1-DEAD_FRAC) x P x PATTERN_SIGN — 남은 하중(운용점까지의 나머지)을 패턴으로.
+            #   [2026-10-07 실측으로 확정] Abaqus *BUCKLE 의 LIVE 는 '그 스텝에 **지정한 값**'이며
+            #   이전 스텝과의 차분이 아니다. 증거: 스텝 값을 0.5P->P 로 2배로 바꾸니 lambda 가
+            #   8.19695e-03->4.09848e-03 으로 **정확히 절반**(4개 모드 전부 소수점까지)이 되고
+            #   모드 형상은 그대로였다. 즉
+            #       lambda x (좌굴 스텝에 지정한 값) = 좌굴까지의 추가 변위 (불변량)
+            #   따라서 총 구동 = DEAD + lambda x (1-DEAD_FRAC) x P 이고, lambda=1 에서 총 구동 = P
+            #   => lambda=1 이 운용점. 이 회계가 설계 의도이고 주석과 일치한다.
+            #   (중간에 이 값을 P 로 올렸던 적이 있다 — lambda 가 '운용점 하중배수'로 바뀌어
+            #    회계가 어긋났다. 되돌린다.)
             #   [2026-10-07 결함수정] 이전 코드는 총값 자리에 (1-DEAD_FRAC) x P 를 넣었다.
             #   setValuesInStep 의 값은 '그 스텝의 총값'이므로(같은 주석이 그렇게 적고 있고
             #   A-route/paper 라우트도 그렇게 쓴다) DEAD_FRAC=0.5 에서 총값이 0.5P 로
@@ -1096,8 +1104,8 @@ def build_model(disp):
             #   paper 라우트는 Buckle=PAPER_S1_LIVE_M 로 **두 값이 다르다**. 그 관용구를 따른다.
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-Buckle',
-                u1=PATTERN_SIGN * _mag * _d1,
-                u2=PATTERN_SIGN * _mag * _d2)
+                u1=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _mag * _d1,
+                u2=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _mag * _d2)
         print("%s [clamp_lf] 변위 구동: 꼭짓점 %.4g m + 클램프 %.4g m (CLAMP_DC=%.3g, 비율 %.3g)"
               % (TAG, DISP, CLAMP_PULL, CLAMP_DC, (CLAMP_PULL / DISP) if DISP else 0.0))
         print("%s [clamp_lf] DEAD_FRAC=%.4g -> DEAD=%.4g x P (GlobalTension) / "
