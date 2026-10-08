@@ -1198,10 +1198,11 @@ if fidelity == 'LF':
     if 'Initial_Stiffness' in my_model.predefinedFields:
         del my_model.predefinedFields['Initial_Stiffness']
     
-    # 낮은 값으로 다시 생성 
+    # 낮은 값으로 다시 생성 (region 은 반드시 요소집합 _ALL_ELEM — 절점집합 'All' 을
+    #   주면 'not an element set' 으로 입력처리기가 죽는다. 2026-10-08)
     my_model.Stress(
         name='Initial_Stiffness',
-        region=inst_memb.sets['All'],
+        region=inst_memb.sets[_ALL_ELEM],
         distributionType=UNIFORM,
         sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0, 
         sigma12=0.0, sigma13=0.0, sigma23=0.0
@@ -1253,7 +1254,7 @@ elif fidelity == 'HF':
 
     my_model.Stress(
         name='Initial_Stiffness',
-        region=inst_memb.sets['All'],
+        region=inst_memb.sets[_ALL_ELEM],
         distributionType=UNIFORM,
         sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0, 
         sigma12=0.0, sigma13=0.0, sigma23=0.0

@@ -109,6 +109,33 @@ def locally_bound_names(code):
     return out
 
 
+ELEM_NEEDING_CALL = re.compile(r'(\.Stress|\.SectionAssignment|InitialCondition)\s*\(')
+
+
+def grid_node_set_misuse(codes):
+    """격자 모드에서 'All'(절점집합)을 **요소가 필요한 호출**에 넘기면 잡는다.
+
+    격자(USE_GRID_MESH=True)에서 파트의 `All` 은 **절점**집합이다. 초기응력(Stress)이나
+    SectionAssignment 처럼 요소/면 집합이 필요한 곳에 `All` 을 주면 Abaqus 입력처리기가
+    'not an element set' 으로 죽는다. 실제로 HF 가 이걸로 죽었다 — 초기응력을 만드는
+    Stress 호출이 3곳인데 격자 전환에서 1곳만 _ALL_ELEM 으로 바뀌고 나머지 2곳이
+    'All' 로 남아, 마지막 재생성이 절점집합 위에 초기응력을 걸었다(2026-10-08).
+    자유메쉬에서는 All 이 면집합이라 정상이므로 격자일 때만 검사한다.
+    (DisplacementBC 는 절점집합이 맞으므로 대상이 아니다.)
+    """
+    out = []
+    for p in sorted(codes):
+        code = codes[p]
+        if not re.search(r'^USE_GRID_MESH\s*=\s*True', code, re.M):
+            continue
+        for m in ELEM_NEEDING_CALL.finditer(code):
+            seg = code[m.start():m.start() + 700]
+            if re.search(r"sets\['All'\]", seg):
+                ln = code[:m.start()].count('\n') + 1
+                out.append((p, 'R3', '%s @%d 에 sets[All]' % (m.group(1), ln)))
+    return out
+
+
 def scan_files(paths):
     """반환: (problems, notes). problems = [(path, rule, name), ...]"""
     codes = {}
@@ -133,6 +160,7 @@ def scan_files(paths):
                 continue
             if re.search(r'(?<![\w.])%s(?![\w.])' % re.escape(name), strip_strings(code)):
                 problems.append((p, 'R2', name))
+    problems.extend(grid_node_set_misuse(codes))
     return problems, codes
 
 
@@ -151,6 +179,12 @@ def selftest():
     ok &= ('p' in locally_bound_names('def f(p, q=1):\n    return p\n'))
     ok &= ('a' in locally_bound_names('a, b = 1, 2\n'))
     ok &= ('e' in locally_bound_names('try:\n    pass\nexcept X as e:\n    pass\n'))
+    _grid_bad = {'x.py': 'USE_GRID_MESH = True\nmy_model.Stress(\n    region=inst.sets[\'All\'],\n)\n'}
+    _grid_ok = {'x.py': 'USE_GRID_MESH = True\nmy_model.Stress(\n    region=inst.sets[_ALL_ELEM],\n)\n'}
+    _free = {'x.py': 'USE_GRID_MESH = False\nmy_model.Stress(\n    region=inst.sets[\'All\'],\n)\n'}
+    ok &= (len(grid_node_set_misuse(_grid_bad)) == 1)      # 잡아야 한다
+    ok &= (len(grid_node_set_misuse(_grid_ok)) == 0)
+    ok &= (len(grid_node_set_misuse(_free)) == 0)          # 자유메쉬는 정상
     print('[selftest] static_leak_check %s' % ('OK' if ok else 'FAIL'))
     return 0 if ok else 3
 
@@ -175,7 +209,7 @@ def main(argv):
         why = ('모듈처럼 쓰였는데 임포트 없음' if rule == 'R1'
                else '다른 스크립트의 모듈수준 이름을 정의 없이 사용')
         print('  %-24s %s  %-20s  %s' % (os.path.basename(p), rule, name, why))
-    print('\n  R1 = 빠진 임포트 / R2 = 복사가 끌고 온 이름(좌굴 전용 상수 등)')
+    print('\n  R1 = 빠진 임포트 / R2 = 복사가 끌고 온 이름 / R3 = 격자에서 절점집합을 요소자리에 사용')
     return 1
 
 
