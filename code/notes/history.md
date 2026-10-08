@@ -1296,3 +1296,35 @@ import 경로·파트 이름·노드/요소 수·좌우대칭 누락 0 을 확�
 **규칙**: ODB/CAE 에서 읽은 노드 좌표를 **정확 일치**로 비교하면 float32 때문에 실패한다.
   비교는 (a) 허용오차 기반으로, (b) 기준을 미터 단위 편차로 보고한다.
 **프로브 수정**: 대칭 검사를 `mirror_partner` 기반으로 교체(누락이 있으면 실패 처리).
+
+### 19.19 격자 전환 첫 실패 — 클램프 패치의 **이중 구속** (2026-10-07)
+
+첫 격자 런: `run_job_safely` 에서 실패(모델 생성은 통과). `.log`:
+`Abaqus Error: Analysis Input File Processor exited with an error` -> **입력 처리 단계**에서 죽었다
+(`.msg` 는 생성되지 않았다). `.dat`:
+```
+***WARNING: 2 Lagrange multiplier based COUPLING constraints have boundary conditions
+            specified at all nodes associated with each constraint.
+            An overconstraint will most likely occur.
+NUMBER OF ELEMENTS IS 10105 / NODES 10211 (USER 10206 + INTERNAL 5)
+THE PROGRAM HAS DISCOVERED     7 FATAL ERRORS
+```
+**메쉬/섹션 배선 자체는 Abaqus 가 확인해 줬다**: `*Elset, elset=All, generate` + `*Shell Section,
+elset=All, material=Kapton` + 사용자 노드 10206 = 격자 10201 + RP 5 ✓.
+
+**기제**: 클램프 패치 노드는 Coupling 으로 RP 에 묶여 있고(그 RP 의 u3=0), 그 노드가
+`All_Edges_NoClamp` 에 **남아 있으면** `BC_Edges_Only_Z(u3=0)` 과 겹쳐 이중 구속이 된다.
+`CLAMP_EXCL_R=0.0` 이면 아무 노드도 제외되지 않는다(기본값이 그랬다).
+**왜 격자에서 처음 드러났나**: 격자는 경계 노드가 사선변 위에 **규칙적으로**(간격 0.141 m) 놓여
+패치 구체(반경 0.2 m)가 그 노드들을 확실히 잡는다. 자유 메쉬는 불규칙해서 같은 결함이 잠복해 있었다.
+**정직한 한계**: 내 산술은 이중 구속 노드 **4~6개**인데 `.dat` 은 **7 FATAL ERRORS** 다 — 정확히
+일치하지 않으므로, 그 7개의 문장(`***ERROR`)을 보기 전에는 "이것이 원인"이라고 단정할 수 없다.
+
+**수정**
+ - `CLAMP_EXCL_R = 0.0 -> 0.21` (패치 반경 0.2 보다 크게). **물리 변화 없음**: 제외된 노드는
+   Coupling(u3=0)으로 여전히 면외 고정이다. 잡 이름에 `_ex021` 이 붙어 산출물이 갈린다.
+ - `check_model_consistency` 에 **이중 구속 게이트** 신설: 격자 노드로 x_c 3점(0.2/0.5/0.8)을 훑어
+   "패치 안 경계 노드 중 제외되지 않은 것"이 있으면 FAIL. 순수 파이썬(라이선스 0).
+   실측: 0.21 -> 0개 OK / 0.0 -> 4개 FAIL(음성 테스트로 확인).
+ - 게이트가 처음에 상수를 못 읽어 FAIL 로 나왔다: `code_only()` 가 **공백을 지운 정규형**을
+   돌려주므로 `^` 앵커 정규식이 안 맞는다 -> 이 게이트는 **원문**을 읽도록 고쳤다.

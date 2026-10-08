@@ -482,6 +482,65 @@ def check_coupling_type():
     return True
 
 
+def check_clamp_edge_overlap():
+    """클램프 패치 노드가 경계 u3 구속(All_Edges_NoClamp)에 남아 있으면 **이중 구속**이다.
+
+    클램프 패치 노드는 Coupling 으로 RP 에 묶여 있고(그 RP 의 u3=0), 거기에 BC_Edges_Only_Z
+    (u3=0)까지 걸리면 Abaqus 가 입력 처리 단계에서 죽는다:
+      ***WARNING: 2 Lagrange multiplier based COUPLING constraints have boundary conditions
+          specified at all nodes associated with each constraint ... overconstraint ...
+      THE PROGRAM HAS DISCOVERED     7 FATAL ERRORS          (2026-10-07 실측, 격자 메쉬)
+    자유 메쉬는 경계 노드가 불규칙해 패치 구체(0.2 m)가 아무것도 잡지 않아 드러나지 않았다(잠복).
+
+    순수 파이썬(aba_grid_mesh.generate_grid) — 라이선스 0. x_c 3점을 훑는다.
+    주의: CLI 4번째 인자로 CLAMP_EXCL_R 을 덮어쓰면 이 검사는 소스 값을 보므로 반영되지 않는다.
+    """
+    #   주의: code_only() 는 공백을 지운 '정규형'을 돌려주므로 ^ 앵커 정규식이 안 맞는다
+    #   (실측: 이 게이트가 그래서 상수를 못 읽고 FAIL 로 나왔다). 여기서는 **원문**을 쓴다.
+    with io.open('run_abaqus_buckle.py', encoding='utf-8') as _f:
+        src = _f.read()
+    m_excl = re.search(r"^CLAMP_EXCL_R\s*=\s*([0-9.eE+-]+)", src, re.M)
+    m_rad = re.search(r"create_rigid_patch\(a, inst_memb, 'CL', V_CL, radius=([0-9.]+)\)", src)
+    print("--- 클램프 패치 vs 경계 u3 구속 (이중 구속) ---")
+    if not m_excl or not m_rad:
+        print("  FAIL  CLAMP_EXCL_R 또는 패치 반경을 읽지 못했습니다.")
+        return False
+    excl_r, pat_r = float(m_excl.group(1)), float(m_rad.group(1))
+    try:
+        import aba_grid_mesh
+        nodes, _s4, _s3 = aba_grid_mesh.generate_grid(20.0, 10.0, 200.0)
+    except Exception as e:
+        print("  FAIL  aba_grid_mesh 격자 생성 실패: %s" % e)
+        return False
+    tol, worst = 1.0e-4, 0
+    for xc in (0.2, 0.5, 0.8):
+        cl = (10.0 - 10.0 * xc, 10.0 - 10.0 * xc)
+        cr = (10.0 + 10.0 * xc, 10.0 - 10.0 * xc)
+
+        def _d2(p, q):
+            return (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2
+        hit = 0
+        for nd in nodes:
+            x, y = nd[0], nd[1]
+            if not (abs(y) < tol or abs(y - x) < tol * 1.5 or abs(y - (20.0 - x)) < tol * 1.5):
+                continue
+            if not (_d2((x, y), cl) <= pat_r * pat_r or _d2((x, y), cr) <= pat_r * pat_r):
+                continue
+            if _d2((x, y), cl) <= excl_r * excl_r or _d2((x, y), cr) <= excl_r * excl_r:
+                continue
+            hit += 1
+        worst = max(worst, hit)
+        print("    x_c=%.1f : 패치 안 경계 노드 중 **제외되지 않은** 것 = %d 개" % (xc, hit))
+    if worst:
+        print("  FAIL  이중 구속 노드 %d개 -> CLAMP_EXCL_R 을 패치 반경(%g)보다 크게." % (worst, pat_r))
+        return False
+    print("  OK    제외 반경 %.3g m >= 패치 반경 %.3g m -> 이중 구속 없음" % (excl_r, pat_r))
+    return True
+
+
+if not check_clamp_edge_overlap():
+    sys.exit(1)
+
 if not check_coupling_type():
     sys.exit(1)
 

@@ -159,7 +159,17 @@ if PRETENSION_MODE not in ('corner2', 'paper3'):
     raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
 DISP_TOP_OVER_CORNER = 1.4142135623   # paper3 전용
 
-CLAMP_EXCL_R = 0.0   # m — 0.0 이면 제외 노드가 없어 All_Edges_NoClamp == All_Edges 다.
+CLAMP_EXCL_R = 0.21   # m — 클램프 패치 노드를 경계 u3 구속에서 **뺀다**.
+#   왜 0 이 아닌가(2026-10-07 실측): 클램프 패치 노드는 Coupling 으로 RP 에 묶여 있고 그 RP 의
+#   u3=0 이므로, 같은 노드에 BC_Edges_Only_Z(u3=0) 이 겹치면 Abaqus 가 **이중 구속**으로 죽는다:
+#     .dat  ***WARNING: 2 Lagrange multiplier based COUPLING constraints have boundary conditions
+#           specified at all nodes associated with each constraint ... overconstraint ...
+#           THE PROGRAM HAS DISCOVERED 7 FATAL ERRORS
+#   격자 메쉬는 경계 노드가 사선변 위에 규칙적으로 놓여(간격 0.141 m) 패치 구체(0.2 m)가 그 노드들을
+#   확실히 잡는다. 자유 메쉬는 불규칙해서 같은 결함이 드러나지 않았다(잠복).
+#   물리 변화는 없다: 제외된 노드는 Coupling(u3=0)으로 여전히 면외 고정이다.
+#   CLI 4번째 인자로 실행 시 덮어쓸 수 있다(잡 이름에 _ex### 로 반영된다).
+#   0.0 으로 두면 check_model_consistency 가 **실패**한다(이중 구속 게이트).
 #   [2026-10-07] CLI 4번째 인자로 덮어쓸 수 있다(d_c 스윕과 함께 클램프 구간 면외 자유를 본다).
 #   [2026-10-06 철회] 0.2 로 두면 클램프 부착 구간의 경계 노드가 면외 자유로워져 base state 가
 #   불안정해진다(실측: lambda 전부 음수, CONVERGED 0, 스프레드 0.406 %). 이전에 CONVERGED=100
