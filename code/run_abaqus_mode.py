@@ -380,8 +380,8 @@ if USE_GRID_MESH:
     #   mdb.models[].PartFromInputFile 뿐이다.
     p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
         my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV)
-    print("%s [mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
-          % (TAG, _nn, _n4, _n3, _n4 + _n3))
+    print("[mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
+          % (_nn, _n4, _n3, _n4 + _n3))
     #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
     #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
     #   orphan mesh 는 요소/절점 겸용 집합이 없다 -> 두 개를 만든다.

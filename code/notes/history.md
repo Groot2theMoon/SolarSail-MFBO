@@ -1770,3 +1770,29 @@ x_c=0.65, f=0.40 -> RuntimeError(.sta/.msg 미완주). 스크립트가 찍은 .d
     abaqus cae noGUI=run_abaqus.py -- HF 0.5 1.0
 **주의**: HF 는 약 40분(2440 s @cpus=4). 진폭은 IMPERFECTION_AMPL_T=1.0 t(=5 µm/모드, 합 규약)
 이므로 3모드면 최대 ~3 t. 논문(Galhofo 0.10 t)과 직접 비교하려면 0.1 로 낮춘다.
+
+### 19.33 HF 첫 실행이 즉사한 이유 — 격자 블록 복사가 TAG 를 끌고 왔다 (2026-10-08)
+
+    NameError: name 'TAG' is not defined
+        % (TAG, _nn, _n4, _n3, _n4 + _n3)
+    Abaqus Error: cae exited with an error.
+
+격자 메쉬 블록(§19.14)을 네 스크립트에 넣을 때 좌굴 스크립트의 코드를 그대로 복사했고,
+그 안의 `TAG`(좌굴에만 정의: `TAG = '[run_abaqus_buckle]'`)를 함께 가져왔다.
+    run_abaqus.py:717 / run_abaqus_mode.py:384 / run_abaqus_cable.py:125 — 각 1회
+=> **세 스크립트 모두** 그 줄에서 죽는다(HF 는 실제로 죽었다). TAG 0회로 제거하고
+   `"%s [mesh]" -> "[mesh]"`, `% (TAG, ` -> `% (` 로 정리했다.
+
+**[교훈] 좌굴만 스텁 하네스로 실행 검증된다. 나머지 세 스크립트에는 로컬 실행 검사가 없다.**
+  그래서 이런 복사 누출이 조용히 통과한다. `check_model_consistency.py` 에 "좌굴 전용
+  식별자가 다른 스크립트에 나타나면 실패" 규칙을 넣는 것이 싸고 확실하다(제안).
+
+**[동시에 확인된 정상 작동]** 모드표 추출은 완벽했다:
+    [MODES] lambda 출처 = ..._ex210.dat (동명 .dat 자동 연결)
+    [MODES] 기저 프레임(frame 1, frameValue 0) 제외 — λ 목록을 한 칸 밀어 정렬
+    모드 1..4 <- 프레임 2..5, λ = 8.196910e-03 / 8.197340e-03 / 3.826380e-02 / 6.088210e-02
+    저장: modes_ClampLF_xc050.txt (모드 4개)
+
+**[동시에 고친 것]** 모드 소스 경로: run_abaqus.py 는 os.chdir('aba')(99행) 로 돌기 때문에
+  `abspath('buckle\...')` 가 `code\aba\buckle\...` 이 되어 'ODB 없음' 으로 죽었다.
+  후보 (1) 준 그대로 (2) 스크립트 폴더(=code) (3) cwd 순으로 존재하는 것을 쓴다.
