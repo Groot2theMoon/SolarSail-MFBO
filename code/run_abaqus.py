@@ -466,14 +466,17 @@ def print_job_diag(job_name):
         for _i, _ln in enumerate(_lines):
             if _ln.strip() and any(k.lower() in _ln.lower() for k in keys):
                 _n_hit += 1
-                if len(hits) > 40:
-                    continue
+                if len(hits) > 400:
+                    continue        #   메모리 보호용 상한. 40 으로 끊으면 8MB .msg 에서
+                                    #   **마지막(=중단 원인)** 을 잃는다(2026-10-08 수정).
                 for _j in range(_i, min(_i + 3, len(_lines))):
                     if _lines[_j].strip():
                         hits.append('%d| %s' % (_j + 1, _lines[_j].strip()))
         emit("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개 (문맥 포함 %d줄)"
               % (job_name, fn, size / 1024.0, _n_hit, len(hits)))
-        for ln in hits[-14:]:
+        #   처음과 **끝**을 함께 보여준다: 앞 = 최초 발생(어디서 시작), 끝 = 중단 원인.
+        _show = hits if len(hits) <= 16 else (hits[:4] + ['... (중략) ...'] + hits[-11:])
+        for ln in _show:
             emit("      | %s" % ln[:170])
 
 sqrt2 = 1.414
