@@ -50,6 +50,7 @@ import regionToolset
 import interaction
 import sys
 import os
+import io
 import subprocess
 import time
 import numpy as np

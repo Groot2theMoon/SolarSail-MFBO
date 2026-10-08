@@ -65,6 +65,9 @@ INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
+#   [2026-10-08] SEED_DIV 누출 수정: 자유메쉬 분기(size=BASE/SEED_DIV)에서 쓰는데
+#   이 파일에는 정의가 없었다(USE_GRID_MESH=True 라 지금은 죽은 코드). 좌굴/HF/mode 와 같은 값.
+SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 # [수정] 두께를 5um로 설정하여 초기 강성 확보 (논문 2.5um는 수렴 매우 어려움)
 THICKNESS = 5.0e-6 
 TARGET_STRESS = 7000.0 # Pa
