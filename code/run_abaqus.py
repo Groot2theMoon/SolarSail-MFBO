@@ -460,24 +460,22 @@ def print_job_diag(job_name):
         #   "AN INITIAL CONDITION HAS BEEN SPECIFIED ON ELEMENT SET" 다음 줄에 **집합 이름**이
         #   온다. 그 줄은 키워드에 안 걸려 버려졌고, 매번 원인을 추측해야 했다(HF 가 여기서 막혔다).
         #   그래서 매치 지점마다 **뒤 2줄까지** 줄번호와 함께 남긴다(덱 대조용).
+        #   [2026-10-08] 먼저 **매치 줄 번호만** 모으고(정수 리스트 = 메모리 무시 가능),
+        #   출력은 앞 4개 + 끝 11개를 쓴다. 매치마다 문자열을 쌓으며 상한으로 끊으면
+        #   8MB .msg 에서 **마지막(=중단 원인)** 을 잃는다 — 그 실수를 두 번 했다.
         _lines = text.splitlines()
-        _n_hit = 0
-        hits = []
-        for _i, _ln in enumerate(_lines):
-            if _ln.strip() and any(k.lower() in _ln.lower() for k in keys):
-                _n_hit += 1
-                if len(hits) > 400:
-                    continue        #   메모리 보호용 상한. 40 으로 끊으면 8MB .msg 에서
-                                    #   **마지막(=중단 원인)** 을 잃는다(2026-10-08 수정).
-                for _j in range(_i, min(_i + 3, len(_lines))):
-                    if _lines[_j].strip():
-                        hits.append('%d| %s' % (_j + 1, _lines[_j].strip()))
-        emit("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개 (문맥 포함 %d줄)"
-              % (job_name, fn, size / 1024.0, _n_hit, len(hits)))
-        #   처음과 **끝**을 함께 보여준다: 앞 = 최초 발생(어디서 시작), 끝 = 중단 원인.
-        _show = hits if len(hits) <= 16 else (hits[:4] + ['... (중략) ...'] + hits[-11:])
-        for ln in _show:
-            emit("      | %s" % ln[:170])
+        _idx = [i for i, _ln in enumerate(_lines)
+                if _ln.strip() and any(k.lower() in _ln.lower() for k in keys)]
+        emit("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개 (문맥 포함)"
+              % (job_name, fn, size / 1024.0, len(_idx)))
+        _keep = _idx if len(_idx) <= 16 else (_idx[:4] + [None] + _idx[-11:])
+        for _i in _keep:
+            if _i is None:
+                emit("      | ... (중략 %d개) ..." % (len(_idx) - 15))
+                continue
+            for _j in range(_i, min(_i + 3, len(_lines))):
+                if _lines[_j].strip():
+                    emit("      | %d| %s" % (_j + 1, _lines[_j].strip()[:170]))
 
 sqrt2 = 1.414
 N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
