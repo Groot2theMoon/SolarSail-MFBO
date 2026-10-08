@@ -31,6 +31,10 @@ def main():
     part, n_nod, n_s4, n_s3 = aba_grid_mesh.import_grid_part(
         m, part_name='Membrane', base=20.0, height=10.0, seed_div=200.0, inp_path=inp)
 
+    try:
+        print('[probe] import 된 파트 이름 = %r  (이름 규칙을 여기서 확인한다)' % (part.name,))
+    except Exception as e:
+        print('[probe] 파트 이름 조회 생략 (%s)' % type(e).__name__)
     n_parts = len(part.elements)
     print('[probe] 파트 노드 %d / 요소 %d   (기대 노드 10201, 요소 10100)'
           % (len(part.nodes), n_parts))

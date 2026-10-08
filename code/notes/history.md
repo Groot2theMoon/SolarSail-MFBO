@@ -1204,3 +1204,22 @@ else:
 
 **실 CAE 확인 절차**: 먼저 `abaqus cae noGUI=probe_grid_import.py` (30초).
 import 경로·파트 이름·노드/요소 수·좌우대칭 누락 0 을 확인한 뒤 본 런을 돌린다.
+
+### 19.15a `.inp` import 는 성공했고, 깨진 것은 **내 이름 가정**이었다 (2026-10-07)
+
+프로브 실 런: `KeyError: 'Membrane'` — `aba_grid_mesh.py:310` 의 `model.parts[part_name]`.
+**`PartFromInputFile` 자체는 예외 없이 성공했다.** 즉 어려운 부분(.inp 해석·orphan part 생성)은
+통과했고, 깨진 것은 "`*Part, name=Membrane` 헤딩을 썼으니 `parts['Membrane']` 일 것"이라는
+**내 가정**이다. 파트 이름 규칙은 버전/상황에 따라 다르다(헤딩 vs 파일명).
+
+**수정**: 이름을 **가정하지 않고 발견**한다 — 호출 전후의 `model.parts.keys()` 차집합에서 새 키를
+찾고, 그 파트 객체를 돌려준다(호출부는 돌려받은 객체만 쓰므로 이름이 무엇이든 무관하다.
+인스턴스 이름은 `INSTANCE_NAME='MEMBRANE-1'` 으로 따로 지정된다). 발견한 키와 전체 목록을
+로그로 찍어 **이름 규칙을 관측**할 수 있게 했다.
+
+**다음 실패 지점 사전 점검(orphan mesh 에서 위험한 기하 호출)**:
+ - `create_rigid_patch` 는 **노드 기반**이다(`getByBoundingSphere` -> `a.Set(nodes=...)` ->
+   `Coupling(surface=...)`). 기하 참조가 없어 orphan 인스턴스에서도 안전하다.
+ - 남은 `p.faces` / `p.edges` 사용처는 전부 (a) 자유메쉬 `else:` 분기, (b) 케이블 파트(네이티브
+   메쉬), (c) `if not USE_GRID_MESH:` 메쉬 스텝 안이다 — 격자 경로에서는 실행되지 않는다.
+ - `parts[...]` 직접 참조는 `import_grid_part` 안에만 있다.

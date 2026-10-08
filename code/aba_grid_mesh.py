@@ -305,12 +305,22 @@ def import_grid_part(model, part_name='Membrane', base=20.0, height=10.0, seed_d
         inp_path = os.path.join(os.getcwd(), 'grid_%s.inp' % part_name)
     n, q, t = write_inp(inp_path, base, height, seed_div, part_name=part_name)
     if part_name in model.parts:
-        del model.parts[part_name]          # 재실행 시 이름 충돌 방지
+        del model.parts[part_name]          # 재실행 시 이름 충돌 방지(발견을 모호하지 않게)
+    _before = set(model.parts.keys())
     model.PartFromInputFile(inputFileName=inp_path)
-    part = model.parts[part_name]
+    _new = [k for k in model.parts.keys() if k not in _before]
+    if not _new:
+        raise RuntimeError(
+            "PartFromInputFile 이 파트를 만들지 않았다(parts=%s). .inp 와 API 인자를 확인할 것."
+            % sorted(model.parts.keys()))
+    #   파트 이름 규칙은 버전/상황에 따라 다르다(*Part 헤딩 vs 파일명). **가정하지 않고 발견한다.**
+    #   (2026-10-07 실측: 헤딩을 Membrane 으로 썼는데 parts['Membrane'] 에 없어 KeyError 였다.
+    #    import 자체는 성공했다 — 이름만 달랐다. 그래서 호출부는 **돌려받은 객체**만 쓴다.)
+    key = part_name if part_name in _new else _new[0]
+    part = model.parts[key]
     if verbose:
-        print("[grid] PartFromInputFile %s -> part %r (노드 %d, S4 %d, S3 %d)"
-              % (os.path.basename(inp_path), part_name, n, q, t))
+        print("[grid] PartFromInputFile %s -> part %r  (새 키 %s / 전체 %s / 노드 %d, S4 %d, S3 %d)"
+              % (os.path.basename(inp_path), key, _new, sorted(model.parts.keys()), n, q, t))
     return part, n, q, t
 
 
