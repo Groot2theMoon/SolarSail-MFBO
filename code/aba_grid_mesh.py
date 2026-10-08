@@ -148,10 +148,14 @@ def grid_report(base=20.0, height=10.0, seed_div=200.0):
         area += _area(p)
     target = base * height / 2.0
     # 경계 노드
-    nb = sum(1 for x, y in nodes
-             if abs(y) < BOUNDARY_TOL
-             or abs(y - x) < BOUNDARY_TOL * 1.5
-             or abs(y - (base - x)) < BOUNDARY_TOL * 1.5)
+    #   CAE noGUI 인터프리터가 sum(generator) 를 거부하므로 명시적 루프로 센다.
+    #   조건은 원래 식 그대로(2·3번째는 tol 의 1.5배) 유지한다.
+    nb = 0
+    for _x, _y in nodes:
+        if (abs(_y) < BOUNDARY_TOL
+                or abs(_y - _x) < BOUNDARY_TOL * 1.5
+                or abs(_y - (base - _x)) < BOUNDARY_TOL * 1.5):
+            nb += 1
     lines = [
         "[grid] h=%.6g  nx=%d ny=%d  nodes=%d  S4=%d  S3=%d  total=%d"
         % (h, int(round(base / h)), int(round(height / h)), len(nodes), len(s4), len(s3), len(s4) + len(s3)),
@@ -240,6 +244,11 @@ def fill_part(part, base=20.0, height=10.0, seed_div=200.0,
     같은 이유로 어셈블리 인스턴스의 .edges 도 비게 되므로 geometry 기반 셋
     (All_Edges)은 쓰면 안 된다.
     """
+    raise RuntimeError(
+        "fill_part 는 이 환경에서 쓸 수 없다: part.addNodes / addElements / deleteMesh 는 "
+        "**odb.Part 전용**이라 mdb.models[].Part 에는 없다 실측 AttributeError 2026-10-06/07. "
+        "격자를 모델에 넣으려면 import_grid_part() 를 쓸 것(.inp -> PartFromInputFile).")
+
     if elem_quad is None or elem_tri is None:
         from abaqusConstants import S4, S3
         elem_quad = elem_quad if elem_quad is not None else S4
@@ -283,11 +292,18 @@ def write_inp(path, base=20.0, height=10.0, seed_div=200.0, part_name='Membrane'
         for i, (x, y) in enumerate(nodes):
             f.write("%d, %.10g, %.10g, 0.0\n" % (i + 1, x, y))
         f.write("*Element, type=S4\n")
+        #   CAE 인터프리터가 생성기 인자를 거부하므로 명시적 루프로 조립한다.
         for k, t in enumerate(s4):
-            f.write("%d, %s\n" % (k + 1, ", ".join(str(n + 1) for n in t)))
+            _ids = []
+            for _n in t:
+                _ids.append(str(_n + 1))
+            f.write("%d, %s\n" % (k + 1, ", ".join(_ids)))
         f.write("*Element, type=S3\n")
         for k, t in enumerate(s3):
-            f.write("%d, %s\n" % (k + 1 + len(s4), ", ".join(str(n + 1) for n in t)))
+            _ids = []
+            for _n in t:
+                _ids.append(str(_n + 1))
+            f.write("%d, %s\n" % (k + 1 + len(s4), ", ".join(_ids)))
         f.write("*End Part\n")
     return len(nodes), len(s4), len(s3)
 

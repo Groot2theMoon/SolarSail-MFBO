@@ -1223,3 +1223,29 @@ import 경로·파트 이름·노드/요소 수·좌우대칭 누락 0 을 확�
  - 남은 `p.faces` / `p.edges` 사용처는 전부 (a) 자유메쉬 `else:` 분기, (b) 케이블 파트(네이티브
    메쉬), (c) `if not USE_GRID_MESH:` 메쉬 스텝 안이다 — 격자 경로에서는 실행되지 않는다.
  - `parts[...]` 직접 참조는 `import_grid_part` 안에만 있다.
+
+### 19.16 CAE 인터프리터는 `sum(generator)` 를 거부한다 (2026-10-07)
+
+프로브 2차 런: `TypeError: arg1; found 'generator', expecting a recognized type`
+(`probe_grid_import.py:57`, 좌우대칭 진단 줄).
+
+**중요**: 트레이스백이 line 57 에서 멈췄다는 것은 **line 31(`import_grid_part`)이 통과했다**는 뜻이다.
+=> `.inp` import 경로는 **성공**했고(파트 이름 KeyError 도 §19.15a 로 해결), 이번 실패는
+   프로브 안의 **진단 한 줄**이었다. 파이프라인 자체의 문제가 아니다.
+
+**관측된 CAE 인터프리터 제약**:
+ - `sum(<generator>)` -> `TypeError: arg1; found 'generator', expecting a recognized type` ✗
+ - 같은 런에서 `", ".join(<gen>)`(write_inp)과 `tuple(<gen>)`(generate_grid)은 **성공**했다 ✓
+   (그 증거: line 31 이 통과했으므로 write_inp/generate_grid 가 완주했다)
+ - `any(<gen>)` 도 CAE 에서 이미 수십 번 성공했다(`parse_args`, `msg_cause_from_text`) ✓
+ => **생성기 자체가 아니라 `sum` 이 문제**다. CAE 실행 코드에서는 `sum(...)` 을 명시적 루프로 편다.
+
+**수정**
+ - `probe_grid_import.py`: 좌우대칭 검사를 명시적 루프로(생성기 0개).
+ - `aba_grid_mesh.write_inp`: `", ".join(<gen>)` 을 명시적 조립으로(방어적).
+ - `aba_grid_mesh.grid_report`: `sum(1 for ...)` 을 명시적 루프로. **동작 검증**: 경계 노드 400 유지.
+ - `aba_grid_mesh.fill_part`: 이제 **즉시 RuntimeError** 로 막고 `import_grid_part()` 를 가리킨다
+   (`part.addNodes` 가 odb.Part 전용이라 이 경로는 영구 폐기).
+ - 낡은 주석 정정: `run_abaqus_buckle.py` / `run_abaqus.py` 의 "격자(fill_part)는 현재 미사용" 문구.
+
+**검증(라이선스 0)**: py_compile · checker EXIT=0 · 하네스 4/4 · `grid_report` 경계 400/면적 오차 1.3e-11.

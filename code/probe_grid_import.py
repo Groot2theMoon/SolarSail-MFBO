@@ -53,8 +53,17 @@ def main():
         print('[probe] 요소 타입 조회 생략 (%s)' % type(e).__name__)
 
     #   좌우대칭: x -> 20-x 짝이 노드 집합에 있어야 한다(§19.13 의 전제)
-    key = set((round(nd.coordinates[0], 6), round(nd.coordinates[1], 6)) for nd in part.nodes)
-    miss = sum(1 for (x, y) in key if (round(20.0 - x, 6), y) not in key)
+    #   주의: CAE noGUI 인터프리터는 `sum(generator)` 를 거부한다
+    #   (TypeError: arg1; found 'generator', expecting a recognized type, 2026-10-07 실측).
+    #   여기서는 생성기 표현식 없이 명시적 루프로 센다.
+    key = set()
+    for nd in part.nodes:
+        c = nd.coordinates
+        key.add((round(c[0], 6), round(c[1], 6)))
+    miss = 0
+    for (x, y) in key:
+        if (round(20.0 - x, 6), y) not in key:
+            miss += 1
     print('[probe] 좌우대칭: 미러짝 누락 %d / %d  (0 이어야 한다)' % (miss, len(key)))
 
     print('[probe] OK — 이 경로가 이 기계에서 작동한다. 이제 본 런을 돌려도 좋다.')

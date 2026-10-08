@@ -111,7 +111,8 @@ print("%s _HERE = %s" % (TAG, _HERE))
 print("%s _RUN  = %s" % (TAG, _RUN))
 
 # aba_grid_mesh: BC 노드셋 헬퍼만 쓴다(clamp_exclude_labels/boundary_node_labels/make_set).
-#   격자(fill_part)는 현재 미사용 — Part.addNodes 가 없어 되돌렸다(§10).
+#   격자는 이제 사용 중이다: USE_GRID_MESH=True -> aba_grid_mesh.import_grid_part
+#   (.inp -> PartFromInputFile). fill_part 는 Part.addNodes 가 없어 폐기했다(§19.15).
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import aba_grid_mesh                                                            # noqa: E402
