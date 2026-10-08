@@ -129,7 +129,11 @@ def grid_node_set_misuse(codes):
         if not re.search(r'^USE_GRID_MESH\s*=\s*True', code, re.M):
             continue
         for m in ELEM_NEEDING_CALL.finditer(code):
-            seg = code[m.start():m.start() + 700]
+            #   창을 **호출 범위 안**으로 자른다. 그냥 700자를 보면 호출 뒤에 오는
+            #   DisplacementBC 의 정당한 sets['All'](절점집합)까지 잡아 오탐이 난다.
+            _tail = code[m.end():]
+            _end = re.search(r'\n\s*\)', _tail)
+            seg = _tail[:_end.start()] if _end else _tail[:700]
             if re.search(r"sets\['All'\]", seg):
                 ln = code[:m.start()].count('\n') + 1
                 out.append((p, 'R3', '%s @%d 에 sets[All]' % (m.group(1), ln)))
@@ -206,8 +210,9 @@ def main(argv):
         return 0
     print('[leak] 누출 %d건 — 실행 전에 고치세요:' % len(problems))
     for p, rule, name in problems:
-        why = ('모듈처럼 쓰였는데 임포트 없음' if rule == 'R1'
-               else '다른 스크립트의 모듈수준 이름을 정의 없이 사용')
+        why = {'R1': '모듈처럼 쓰였는데 임포트 없음',
+               'R2': '다른 스크립트의 모듈수준 이름을 정의 없이 사용',
+               'R3': "격자에서 절점집합('All')을 요소자리에 사용"}.get(rule, rule)
         print('  %-24s %s  %-20s  %s' % (os.path.basename(p), rule, name, why))
     print('\n  R1 = 빠진 임포트 / R2 = 복사가 끌고 온 이름 / R3 = 격자에서 절점집합을 요소자리에 사용')
     return 1
