@@ -1159,3 +1159,48 @@ p.SectionAssignment(region=p.sets['All'], ...)                        # 신규
 - 클램프/꼭짓점 강체패치(반경 0.2 m)와 `All_Edges_NoClamp` 가 격자 노드에서 정상 생성되는지.
 => 첫 런은 **seed 케이스(30초)** 로 하고 로그의 `[mesh] grid ...` 줄과 노드 수를 본다.
    실패하면 `USE_GRID_MESH = False` 한 줄로 즉시 되돌린다.
+
+### 19.15 격자 경로 확정 — `Part.addNodes` 는 없다 / `.inp` import 로 전환 (2026-10-07)
+
+**첫 실 런의 결과**: `AttributeError: 'Part' object has no attribute 'addNodes'`
+(`aba_grid_mesh.py:246`). **§10 이 이미 겪은 차단 요인이다** — 스크립트 주석에
+"격자는 현재 미사용 — `Part.addNodes` 가 없어 되돌렸다(§10)" 라고 적혀 있었고, §19.14 에서
+나는 차단 요인을 §10c(인스턴스 순서)만으로 진단하고 그 줄을 충분히 무겁게 보지 않았다. 오진이다.
+
+**원인**: `addNodes` / `addElements` / `deleteMesh` 는 **`odb.Part` 전용**이다
+(Abaqus Scripting Manual 의 예제가 `odb.Part` 다). CAE 의 `mdb.models[].Part` 에는 없다.
+=> §10a(orphan mesh 는 섹션을 요소기반으로) 는 여전히 맞지만, **orphan mesh 를 만드는 방법**이
+   addNodes 가 아니라 `.inp` import 여야 한다.
+
+**확정한 대안 API** (실사용 스크립트에서 확인한 이름):
+```
+mdb.models[<name>].PartFromInputFile(inputFileName=<abs path to .inp>)
+```
+=> `aba_grid_mesh.import_grid_part(model, part_name=..., base=..., height=..., seed_div=...)` 추가.
+   `write_inp` 에 `*Part, name=<part_name>` 헤딩 + `*End Part` 를 넣어야 parts 저장소 키가 그 이름이 된다.
+   **추가 발견**: 그 전의 `write_inp` 는 `io`/`os` import 가 없어 호출하면 NameError 였다 —
+   **한 번도 실행된 적이 없는 죽은 코드**였다(격자 경로가 미사용이었다는 또 하나의 증거).
+
+**네 스크립트 전환**: Part 생성부를
+```
+if USE_GRID_MESH:
+    p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(my_model, part_name='Membrane', ...)
+    p.Set(elements=p.elements, name='All')          # orphan: 요소기반, 요소 생성 뒤(§10a)
+    p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
+else:
+    s = my_model.ConstrainedSketch(...); p = my_model.Part(...); p.BaseShell(sketch=s)
+    p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), ...)
+```
+메쉬 스텝(`seedPart/.../generateMesh/regenerate`)은 `if not USE_GRID_MESH:` 안에 그대로 있다.
+
+**하네스에 진짜 법칙 2개** (이게 이번 실수를 로컬에서 잡았어야 했다)
+1. 목 `Part` 가 `addNodes`/`addElements`/`deleteMesh` 를 **거부**한다(AttributeError). 이전 목은
+   관대해서(무엇이든 자식 Obj) 내 첫 구현을 통과시켰고 실 Abaqus 에서 죽었다.
+2. 목 `Model.PartFromInputFile` 이 **파일을 실제로 읽어** `*Part, name=` 헤딩 유무와
+   `*Node`/`*Element` 개수를 검사한다 — `.inp` 형식 계약이 라이선스 없이 검증된다.
+
+**검증(라이선스 0)**: py_compile 6/6 · checker EXIT=0 · 하네스 4/4(import 경로) ·
+`[grid] PartFromInputFile grid_Membrane.inp -> part 'Membrane' (노드 10201, S4 9900, S3 200)`.
+
+**실 CAE 확인 절차**: 먼저 `abaqus cae noGUI=probe_grid_import.py` (30초).
+import 경로·파트 이름·노드/요소 수·좌우대칭 누락 0 을 확인한 뒤 본 런을 돌린다.

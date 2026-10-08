@@ -818,27 +818,26 @@ def build_model(disp):
     my_model.TrussSection(name='Section-Cable', material='Kevlar', area=CABLE_AREA)
 
     # 파트 생성: 멤브레인 — 동일
-    s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
-    s.Line(point1=V3[:2], point2=V2[:2])
-    s.Line(point1=V2[:2], point2=V1[:2])
-    s.Line(point1=V1[:2], point2=V3[:2])
-    p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
-    p.BaseShell(sketch=s)
     if USE_GRID_MESH:
-        # ---- 균일 격자(orphan mesh). §10c 미해결 항목을 이렇게 해결한다:
-        #      **파트를 먼저 메쉬하고 인스턴스를 나중에 만든다**(자유 메쉬에서 쓰던
-        #      '인스턴스 -> generateMesh -> regenerate' 순서는 orphan mesh 에서 보장이 없다).
-        _n4, _n3, _nn = aba_grid_mesh.fill_part(
-            p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
-            elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
-        print("%s [mesh] grid(격자, orphan): S4 %d + S3 %d = %d 요소 / 노드 %d"
-              % (TAG, _n4, _n3, _n4 + _n3, _nn))
-        #   orphan mesh 는 요소가 파트 기하에 붙지 않는다 -> 섹션은 **요소 기반**으로,
-        #   그리고 요소가 생성된 **뒤**에 준다(§10a). 기하 기반으로 두면
-        #   'N elements have missing property definitions' 로 입력 단계에서 죽는다.
+        # 격자: `.inp` 로 **orphan mesh part** 를 import 한다.
+        #   Part.addNodes / addElements / deleteMesh 는 odb.Part 전용이라 mdb Part 에는 없다
+        #   (실측 AttributeError 2026-10-06/07). CAE 스크립트로 격자를 넣는 경로는
+        #   mdb.models[].PartFromInputFile 뿐이다.
+        p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
+            my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV)
+        print("%s [mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
+              % (TAG, _nn, _n4, _n3, _n4 + _n3))
+        #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
+        #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
         p.Set(elements=p.elements, name='All')
         p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
     else:
+        s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
+        s.Line(point1=V3[:2], point2=V2[:2])
+        s.Line(point1=V2[:2], point2=V1[:2])
+        s.Line(point1=V1[:2], point2=V3[:2])
+        p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
+        p.BaseShell(sketch=s)
         p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
     def create_cable_part(name, length):

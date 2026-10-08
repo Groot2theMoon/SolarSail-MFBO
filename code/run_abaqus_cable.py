@@ -102,26 +102,26 @@ my_model.TrussSection(name='Section-Cable', material='Kevlar', area=CABLE_AREA)
 # -------------------------------------------------------------
 # 3. 파트 생성: 멤브레인
 # -------------------------------------------------------------
-s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
-s.Line(point1=V3[:2], point2=V2[:2])
-s.Line(point1=V2[:2], point2=V1[:2])
-s.Line(point1=V1[:2], point2=V3[:2])
-p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
-p.BaseShell(sketch=s)
-# ---- 메쉬 종류 (2026-10-07) ----
-#   True = aba_grid_mesh 균일 격자(좌우 완전 대칭, 논문 Table A.1 토폴로지).
-#   HF/mode/buckle 과 **같은 값**을 써야 비교와 임퍼펙션 주입이 성립한다.
-import aba_grid_mesh
-USE_GRID_MESH = True
 if USE_GRID_MESH:
-    # 균일 격자(orphan mesh) — 파트를 먼저 메쉬하고 인스턴스를 나중에 만든다(§10c).
-    _n4, _n3, _nn = aba_grid_mesh.fill_part(
-        p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
-        elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
-    print("%s [mesh] grid: S4 %d + S3 %d = %d / 노드 %d" % (TAG, _n4, _n3, _n4 + _n3, _nn))
+    # 격자: `.inp` 로 **orphan mesh part** 를 import 한다.
+    #   Part.addNodes / addElements / deleteMesh 는 odb.Part 전용이라 mdb Part 에는 없다
+    #   (실측 AttributeError 2026-10-06/07). CAE 스크립트로 격자를 넣는 경로는
+    #   mdb.models[].PartFromInputFile 뿐이다.
+    p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
+        my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV)
+    print("%s [mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
+          % (TAG, _nn, _n4, _n3, _n4 + _n3))
+    #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
+    #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
     p.Set(elements=p.elements, name='All')
     p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
 else:
+    s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
+    s.Line(point1=V3[:2], point2=V2[:2])
+    s.Line(point1=V2[:2], point2=V1[:2])
+    s.Line(point1=V1[:2], point2=V3[:2])
+    p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
+    p.BaseShell(sketch=s)
     p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
 # -------------------------------------------------------------

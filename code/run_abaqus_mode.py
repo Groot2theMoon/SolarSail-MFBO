@@ -364,32 +364,26 @@ my_model.TrussSection(name='Section-Cable', material='Kevlar', area=CABLE_AREA)
 # -------------------------------------------------------------
 # 3. 파트 생성: 멤브레인
 # -------------------------------------------------------------
-s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
-s.Line(point1=V3[:2], point2=V2[:2])
-s.Line(point1=V2[:2], point2=V1[:2])
-s.Line(point1=V1[:2], point2=V3[:2])
-p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
-p.BaseShell(sketch=s)
-# ---- 메쉬 종류 (2026-10-07) ----
-#   True  = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201).
-#           노드·요소 **미러쌍 누락 0** = 좌우 완전 대칭(순수 파이썬 검증). 논문 Table A.1
-#           토폴로지와 일치하며 자유 메쉬(약 1.82만 요소)보다 1.8배 빠르다.
-#           왜 바꾸나: 자유 메쉬는 좌우대칭이 아니라 **한쪽에만 모드가 생기는** 원인이 된다(§19.13).
-#   False = 기존 자유 메쉬(seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS).
-#   !! 세 모델 스크립트(HF/mode/cable)와 buckle 이 **같은 값을 써야** 한다 —
-#      임퍼펙션은 노드 대응으로 주입되므로 메쉬가 다르면 주입이 깨진다.
-USE_GRID_MESH = True
 if USE_GRID_MESH:
-    # 균일 격자(orphan mesh) — §10 설계. §10c(인스턴스 순서)는 파트를 먼저
-    # 메쉬하고 인스턴스를 나중에 만드는 것으로 해결한다.
-    _n4, _n3, _nn = aba_grid_mesh.fill_part(
-        p, base=BASE, height=HEIGHT, seed_div=SEED_DIV,
-        elem_quad=ELEM_CODE_QUAD, elem_tri=ELEM_CODE_TRI)
-    print("%s [mesh] grid: S4 %d + S3 %d = %d / 노드 %d" % (TAG, _n4, _n3, _n4 + _n3, _nn))
-    # orphan mesh 는 요소가 파트 기하에 안 붙는다 -> 섹션은 요소 기반·요소 생성 뒤(§10a)
+    # 격자: `.inp` 로 **orphan mesh part** 를 import 한다.
+    #   Part.addNodes / addElements / deleteMesh 는 odb.Part 전용이라 mdb Part 에는 없다
+    #   (실측 AttributeError 2026-10-06/07). CAE 스크립트로 격자를 넣는 경로는
+    #   mdb.models[].PartFromInputFile 뿐이다.
+    p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
+        my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV)
+    print("%s [mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
+          % (TAG, _nn, _n4, _n3, _n4 + _n3))
+    #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
+    #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
     p.Set(elements=p.elements, name='All')
     p.SectionAssignment(region=p.sets['All'], sectionName='Section-Membrane')
 else:
+    s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
+    s.Line(point1=V3[:2], point2=V2[:2])
+    s.Line(point1=V2[:2], point2=V1[:2])
+    s.Line(point1=V1[:2], point2=V3[:2])
+    p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
+    p.BaseShell(sketch=s)
     p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
 
 # -------------------------------------------------------------

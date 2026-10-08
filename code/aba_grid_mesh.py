@@ -38,6 +38,10 @@
     MeshNodeArray 를 요구하지 않는다). 라벨은 1부터 연속으로 준다.
 """
 
+import io
+import os
+import sys
+
 TOL = 1e-9
 BOUNDARY_TOL = 1.0e-4   # run_abaqus.py 의 All_Edges_NoClamp 와 같은 값
 
@@ -257,14 +261,15 @@ def fill_part(part, base=20.0, height=10.0, seed_div=200.0,
     return len(s4), len(s3), len(nodes)
 
 
-def write_inp(path, base=20.0, height=10.0, seed_div=200.0):
-    """격자를 최소 `.inp` 로 쓴다 (*Node + *Element 만, 셋/섹션 없음).
+def write_inp(path, base=20.0, height=10.0, seed_div=200.0, part_name='Membrane'):
+    """격자를 `.inp` 로 쓴다 — CAE `PartFromInputFile` 로 **orphan mesh part** 를 만들기 위한 것.
 
-    용도: mdb 파트에 격자를 넣는 경로를 찾기 위한 재료다. `Part.addNodes` 는 존재하지
-    않으므로(odb.Part 전용) CAE 는 `.inp` import 로 orphan mesh part 를 만드는 쪽이
-    후보다. 이 파일을 CAE GUI 의 File > Import > Part 에 넣어 보면 된다.
-    **정확한 스크립트 API 이름은 아직 확정하지 못했다** — CAE 에서
-    File > Macro > Record 로 그 import 를 녹화하면 그 자리에서 확인된다.
+    왜 이 경로인가(2026-10-06/10-07 실측): `Part.addNodes` / `addElements` / `deleteMesh` 는
+    **`odb.Part` 전용**이라 `mdb.models[].Part` 에는 없다:
+        AttributeError: 'Part' object has no attribute 'addNodes'
+    CAE 스크립트로 격자를 모델에 넣는 경로는 `.inp` import 뿐이다:
+        mdb.models[<model>].PartFromInputFile(inputFileName=<abs path>)
+    `*Part, name=<part_name>` 헤딩이 있어야 `model.parts` 의 키가 그 이름이 된다.
 
     반환: (노드 수, S4 수, S3 수)
     """
@@ -273,6 +278,7 @@ def write_inp(path, base=20.0, height=10.0, seed_div=200.0):
         f.write("*Heading\n")
         f.write("** uniform grid: interior quads + edge right triangles"
                 " (Galhofo 10100 topology)\n")
+        f.write("*Part, name=%s\n" % part_name)
         f.write("*Node\n")
         for i, (x, y) in enumerate(nodes):
             f.write("%d, %.10g, %.10g, 0.0\n" % (i + 1, x, y))
@@ -282,7 +288,30 @@ def write_inp(path, base=20.0, height=10.0, seed_div=200.0):
         f.write("*Element, type=S3\n")
         for k, t in enumerate(s3):
             f.write("%d, %s\n" % (k + 1 + len(s4), ", ".join(str(n + 1) for n in t)))
+        f.write("*End Part\n")
     return len(nodes), len(s4), len(s3)
+
+
+def import_grid_part(model, part_name='Membrane', base=20.0, height=10.0, seed_div=200.0,
+                     inp_path=None, verbose=True):
+    """`.inp` 를 써서 CAE 모델에 **orphan mesh part** 를 import 하고 그 파트를 돌려준다.
+
+    `Part.addNodes` 가 없으므로(위 write_inp 주석) 이 경로가 유일하다. import 된 파트는
+    orphan mesh 이므로 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 줘야 한다(§10a).
+
+    반환: (part, n_nodes, n_s4, n_s3)
+    """
+    if inp_path is None:
+        inp_path = os.path.join(os.getcwd(), 'grid_%s.inp' % part_name)
+    n, q, t = write_inp(inp_path, base, height, seed_div, part_name=part_name)
+    if part_name in model.parts:
+        del model.parts[part_name]          # 재실행 시 이름 충돌 방지
+    model.PartFromInputFile(inputFileName=inp_path)
+    part = model.parts[part_name]
+    if verbose:
+        print("[grid] PartFromInputFile %s -> part %r (노드 %d, S4 %d, S3 %d)"
+              % (os.path.basename(inp_path), part_name, n, q, t))
+    return part, n, q, t
 
 
 if __name__ == '__main__':

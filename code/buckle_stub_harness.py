@@ -236,6 +236,16 @@ class Part(Obj):
         object.__setattr__(self, '_orphan', True)
         return Obj('%s.addElements()' % self._name, self._log)
 
+    def addNodes(self, **kw):
+        #   CAE 의 mdb Part 에는 **없는** 메서드다(odb.Part 전용). 목이 통과시키면
+        #   로컬에서 초록으로 지나가고 Abaqus 가 AttributeError 로 죽는다(2026-10-07 실측).
+        raise AttributeError(
+            "'Part' object has no attribute 'addNodes'  "
+            "(mdb Part 에는 없다 — odb.Part 전용. .inp import 를 쓸 것)")
+
+    addElements = addNodes
+    deleteMesh = addNodes
+
     def generateMesh(self, **kw):
         #   자유 메쉬 경로: 로그가 '어느 경로로 갔는지'를 말하도록 요소 수를 갈라 둔다
         #   (자유 메쉬는 약 1.82만 요소, 격자는 10100).
@@ -326,7 +336,38 @@ class Model(Obj):
         object.__setattr__(self, 'boundaryConditions', {})
         object.__setattr__(self, 'loads', {})
         object.__setattr__(self, 'parts', {})
+
+        object.__setattr__(self, 'parts', {})
         object.__setattr__(self, 'rootAssembly', Assembly('%s.assembly' % name, log))
+
+    def PartFromInputFile(self, **kw):
+        """`.inp` import 로 orphan mesh part 를 만든다(실 API 이름 확정: JoVE 실사용 스크립트).
+
+        목은 **파일을 실제로 읽어** 계약을 검사한다:
+          - `*Part, name=X` 헤딩이 있어야 parts 키가 X 가 된다
+          - `*Node` / `*Element, type=...` 블록에서 개수를 센다
+        """
+        path = kw.get('inputFileName')
+        self._log.add(self._name, 'PartFromInputFile', (), kw)
+        if not path or not os.path.exists(path):
+            raise AssertionError('PartFromInputFile: inp 파일이 없다: %r' % (path,))
+        txt = open(path).read()
+        m = re.search(r'^\*Part,\s*name=([^,\n]+)', txt, re.M)
+        if not m:
+            raise AssertionError('inp 에 *Part, name= 헤딩이 없다 -> parts 키를 알 수 없다')
+        pname = m.group(1).strip()
+        n_node = len(re.findall(r'^\s*\d+\s*,', txt[:m.end()]))
+
+        def _count(etype):
+            blk = re.search(r'^\*Element,\s*type=%s\s*$((?:\n[^\*].*)*)' % etype, txt, re.M)
+            return len([ln for ln in (blk.group(1).splitlines() if blk else []) if ln.strip()])
+        n_q, n_t = _count('S4'), _count('S3')
+        prt = Part(pname, self._log)
+        object.__setattr__(prt, 'elements', tuple(range(1, n_q + n_t + 1)))
+        object.__setattr__(prt, '_orphan', True)
+        self.parts[pname] = prt
+        self._log.add(self._name, 'PartFromInputFile:created', (), {'name': pname, 'S4': n_q, 'S3': n_t})
+        return prt
 
     # [법칙 3] Model 은 **Abaqus 가 실제로 가진 이름만** 통과시킨다.
     #   관대한 목(무엇이든 자식 Obj 를 돌려주는 __getattr__)이 아래 두 실수를 조용히 통과시켰고,
