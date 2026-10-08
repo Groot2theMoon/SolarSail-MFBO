@@ -22,6 +22,7 @@ try:
     
 except:
     print("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus_cable.py -- [fidelity]")
+    sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
     sys.exit(1)
 
 def run_job_safely(job_name):
@@ -35,6 +36,7 @@ def run_job_safely(job_name):
         except OSError:
             # 만약 삭제가 안 된다면 다른 프로세스가 실제로 사용 중
             print("!!! FATAL ERROR: Cannot remove lock file. Is another Abaqus process running?")
+            sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
             sys.exit(1)
 
     if job_name in mdb.jobs:
@@ -51,6 +53,7 @@ def run_job_safely(job_name):
     # ABORTED가 아니면서, ODB 파일이 실제로 존재하면 성공으로 간주
     if job.status == ABORTED or not os.path.exists(odb_file):
         print("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(1)
         
     print("Job %s completed successfully (Status: %s)." % (job_name, str(job.status)))
@@ -501,4 +504,5 @@ try:
 
 except Exception as err:
     print("Error during data extraction: %s" % str(err))
+    sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
     sys.exit(1)

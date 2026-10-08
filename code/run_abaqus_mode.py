@@ -717,6 +717,7 @@ if not ok or n_modes <= 0:
     emit("    L4  N_EIG_BUCKLE = 200 + BUCKLE_VECTORS = 500  (요청 수 > 음수 고유값 수)")
     emit("    L5  0.4 m 강체 패치 + KINEMATIC 커플링으로 로드 분산 — 응력집중 완화")
     emit("        (오라클 run_abaqus_cable.py:144 create_rigid_patch 가 쓰는 장치. 실측 응력비 maxP/mean = 52배)")
+    sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
     sys.exit(1)
 
 emit("RESULT:MODE_OK — 좌굴모드 %d개. ODB=%s" % (n_modes, os.path.abspath(JOB_NAME + '.odb')))

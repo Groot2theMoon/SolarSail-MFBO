@@ -362,7 +362,16 @@ class Model(Obj):
             blk = re.search(r'^\*Element,\s*type=%s\s*$((?:\n[^\*].*)*)' % etype, txt, re.M)
             return len([ln for ln in (blk.group(1).splitlines() if blk else []) if ln.strip()])
         n_q, n_t = _count('S4'), _count('S3')
+        #   *Node 줄도 실제로 읽어 part.nodes 를 채운다 — 프로브의 좌우대칭/개수 검사가
+        #   로컬에서 진짜로 돌아가게 하기 위해서다(목이 비어 있으면 그 검사를 못 한다).
+        _nodes = []
+        _nb = re.search(r'^\*Node\s*$((?:\n[^\*].*)*)', txt, re.M)   # *Node 블록만
+        for _m2 in re.finditer(r'^\s*(\d+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*,\s*([-\d.eE+]+)\s*$',
+                               (_nb.group(1) if _nb else ''), re.M):
+            _nodes.append(Node(int(_m2.group(1)),
+                               (float(_m2.group(2)), float(_m2.group(3)), float(_m2.group(4)))))
         prt = Part(pname, self._log)
+        object.__setattr__(prt, 'nodes', NodeArray(_nodes))
         object.__setattr__(prt, 'elements', tuple(range(1, n_q + n_t + 1)))
         object.__setattr__(prt, '_orphan', True)
         self.parts[pname] = prt

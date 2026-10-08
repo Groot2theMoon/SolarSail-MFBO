@@ -206,13 +206,16 @@ try:
     #   MFBO 가 그 구간을 탐색할 때 조용히 sys.exit 으로 죽는다.
     if not (0.05 <= x_c <= 0.95):
         emit('!!! ERROR: x_c=%.4g 는 유효범위 [0.05, 0.95] 밖이다 (패치 겹침).' % x_c)
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(1)
     if not (0.0 < d_c <= 2.0):
         emit('!!! ERROR: d_c=%.4g 는 유효범위 (0, 2.0] 밖이다.' % d_c)
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(1)
     
 except:
     emit("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus.py -- HF x_c d_c")
+    sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
     sys.exit(1)
 
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
@@ -246,6 +249,7 @@ def run_job_safely(job_name, model_name=None):
         except OSError:
             # 만약 삭제가 안 된다면 다른 프로세스가 실제로 사용 중
             emit("!!! FATAL ERROR: Cannot remove lock file. Is another Abaqus process running?")
+            sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
             sys.exit(1)
 
     if job_name in mdb.jobs:
@@ -279,12 +283,14 @@ def run_job_safely(job_name, model_name=None):
         emit("[run_abaqus] RUN_MODE='write' : 덱만 생성(%s.inp)하고 제출하지 않는다." % job_name)
         emit("             다음: python riks_patch_input.py aba\\%s.inp <out>.inp Step-Postbuckle "
              "--line-search --ran=2e-2 --can=1e-2 --i0=8 --ir=10" % job_name)
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(0)
     # 'auto' 는 제출 전에 *Controls 를 주입한다. 제자리 덮어쓰기라 잡 이름/입력명이 유지된다.
     if RUN_MODE == 'auto':
         if not run_patcher(job_name + '.inp'):
             emit("!!! ERROR: 패처 실패 — 패치되지 않은 덱을 제출하지 않는다(§14).")
             emit("RESULTS:FAIL")
+            sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
             sys.exit(1)
     else:
         emit("[run_abaqus] RUN_MODE='plain' : 패처 없이 원본 덱을 제출한다(진단용).")
@@ -300,6 +306,7 @@ def run_job_safely(job_name, model_name=None):
             or not job_completed_from_logs(job_name)):
         print_job_diag(job_name)   # 원인 판별용 — 실패했을 때만(완주 잡에는 노이즈)
         emit("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(1)
         
     if not job_completed_ok(job_name):
@@ -498,6 +505,7 @@ if IMPERFECTION_MODE == 'odb_table':
         emit("!!! ERROR: 임퍼펙션 모드표를 읽지 못했습니다 -> HF 잡을 제출하지 않고 중단합니다.")
         emit("[ERROR-EN] imperfection mode table missing/unreadable -> aborting BEFORE HF job submit.")
         emit(str(_imp_err_tab))
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(1)
     _tinfo = mode_table_info(MODE_TABLE)
     emit("[IMPERFECTION] 모드표 %s 로드 완료: 모드 %s / 모드당 노드 %d개"
@@ -548,12 +556,14 @@ elif IMPERFECTION_MODE == 'odb_direct':
         emit("[ERROR-EN] cannot read modes directly from ODB (%s) -> aborting BEFORE HF job submit."
              % MODE_SOURCE_ODB)
         emit("%s: %s" % (type(_e_odb).__name__, _e_odb))
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(1)
     _want = [m for m in IMPERFECTION_MODES if m in _tbl]
     if not _want:
         emit("!!! ERROR: ODB 에서 요청 모드 %s 를 얻지 못했습니다 (ODB 모드: %s) -> 중단."
              % (list(IMPERFECTION_MODES), sorted(_tbl)))
         emit("[ERROR-EN] requested modes not available in ODB -> aborting BEFORE HF job submit.")
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(1)
     if tuple(_want) != tuple(IMPERFECTION_MODES):
         emit("[IMPERFECTION] ODB 모드 %s -> 주입 모드 %s 로 조정"
@@ -1285,6 +1295,7 @@ elif fidelity == 'HF':
         except ImperfectionSourceError as _imp_err:
             emit("!!! ERROR: 임퍼펙션 소스 스테이징 실패 -> HF 잡을 제출하지 않고 중단합니다.")
             emit(str(_imp_err))
+            sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
             sys.exit(1)
         imp_name, imp_step = _st['name'], MODE_SOURCE_STEP
         emit("[IMPERFECTION] %s STEP=%d amplitude=%.3e m (모드 %s)"
@@ -1340,4 +1351,5 @@ try:
 
 except Exception as err:
     emit("Error during data extraction: %s" % str(err))
+    sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
     sys.exit(1)
