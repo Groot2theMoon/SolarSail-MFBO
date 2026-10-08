@@ -188,7 +188,21 @@ def read_odb_modes(odb_path, step_name, n_modes=8, instance=DEFAULT_INSTANCE, da
         msgs.append('[REPORT] %s / %s : 노드 %d개 (인스턴스 %s)'
                     % (os.path.basename(odb_path), step_name, len(nodes), instance))
         disps = []
-        for fr in odb.steps[step_name].frames:
+        _frames = list(odb.steps[step_name].frames)
+        for _fi, fr in enumerate(_frames):
+            #   [2026-10-07] 좌굴 스텝 ODB 의 **frame 1 은 기저 상태**(frameValue 0)이고 모드가 아니다.
+            #   포함하면 세 가지가 망가진다:
+            #     (a) M1 이 '평탄한 기저'로 잡혀 u3_frac~0 -> 면내 모드처럼 보인다(거짓 판정)
+            #     (b) .dat 의 lambda 목록과 **한 칸씩 어긋난다**
+            #     (c) 요청 n개 중 실제 모드는 n-1개만 보인다(모드 하나를 통째로 놓친다)
+            #   frameValue==0 은 좌굴 스텝에서만 기저를 뜻한다(주파수 스텝은 주파수라 0 이 아니다).
+            if _fi == 0 and len(_frames) > 1:
+                try:
+                    if float(getattr(fr, 'frameValue', -1.0)) == 0.0:
+                        msgs.append('[REPORT] 기저 프레임(frame 1, frameValue 0) 건너뜀 — 모드가 아니다')
+                        continue
+                except Exception:
+                    pass
             d = {}
             try:
                 for v in fr.fieldOutputs['U'].values:

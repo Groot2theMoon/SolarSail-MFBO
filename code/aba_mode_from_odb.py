@@ -181,13 +181,14 @@ def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, ver
 
 
 def write_mode_table(odb_path, step_name, out_path, n_modes=4, instance=DEFAULT_INSTANCE,
-                     verbose=True, extra_header=None):
+                     verbose=True, extra_header=None, dat_hint=None):
     """ODB 모드에서 모드표 txt 를 쓴다. 반환: (쓴 모드 수, 메시지 리스트).
 
     파일을 거치지 않고 ODB 에서 바로 읽으려면 run_abaqus.py 의 IMPERFECTION_MODE='odb_direct'
     를 쓴다(같은 extract_modes 를 호출하므로 결과가 같다).
     """
-    table, meta, picks, lam, msgs = extract_modes(odb_path, step_name, instance, n_modes, verbose)
+    table, meta, picks, lam, msgs = extract_modes(odb_path, step_name, instance, n_modes,
+                                                          verbose, dat_hint=dat_hint)
     header = ["# source=%s" % os.path.abspath(odb_path),
               "# step=%s" % step_name,
               "# instance=%s" % instance,
@@ -233,8 +234,15 @@ def main(argv):
               "  <- 명령을 한 줄로 붙여넣어 뒤 인자가 섞였는지 확인하세요." % (argv[4],))
         return 2
     inst_name = argv[5] if len(argv) > 5 else DEFAULT_INSTANCE
+    #   [2026-10-07] CLI 경로도 **동명 .dat 을 자동으로 물린다**(buckle_mode_report 와 같은 규칙).
+    #   없으면 lambda 가 ODB frameValue(=모드 번호 1,2,3,4)로 찍혀 'λ>0' 필터와 기록이 어긋난다.
+    #   (실측: 사용자가 λ=1.000e+00, 2.000e+00 ... 을 보았다 — 실제 고유치는 8.19691e-03 등이다.)
+    _dat_auto = os.path.splitext(odb_path)[0] + '.dat'
+    _dh = _dat_auto if os.path.exists(_dat_auto) else None
+    print('[MODES] lambda 출처 = %s' % (os.path.basename(_dh) if _dh
+          else 'ODB frameValue(=모드 번호) — 동명 .dat 없음'))
     try:
-        write_mode_table(odb_path, step_name, out_path, n_modes, inst_name)
+        write_mode_table(odb_path, step_name, out_path, n_modes, inst_name, dat_hint=_dh)
     except ImportError:
         print("[MODES] odbAccess 를 못 읽었습니다 - 'abaqus python' 으로 실행해야 합니다.")
         return 3
