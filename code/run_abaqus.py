@@ -463,6 +463,27 @@ MODE_TABLE = os.path.join('..', 'modes_ClampFree_Buckle.txt')   # code\aba -> co
 MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
 MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
 MODE_INSTANCE = 'MEMBRANE-1'                                    # 막 인스턴스 이름
+
+# ---- 모드 소스 오버라이드 (2026-10-07, C-route) ----
+#   기본 소스는 **클램프 없는** 모델(ClampFree_Buckle)이다 — 클램프 모델의 좌굴이 오래 실패했기
+#   때문(음수 고유값 598~2897 / CONVERGED=0 -> 모드 0개). 이제 C-route(run_abaqus_buckle.py)가
+#   클램프를 **포함한** 좌굴모드를 성공적으로 낸다. 주름이 클램프 기인이라는 54배 규명과 맞물려
+#   그쪽이 더 나은 시드다. 경로는 CLI 숫자 파서와 성격이 달라 **환경변수**로 받는다
+#   (숫자 인자 파싱을 건드리지 않는다).
+#     PowerShell:  $env:SOLARSAIL_MODE_ODB='buckle\Buckle_xc050_d018um_dc006_f050_s4_grid_clamp_lf_normal_ex210.odb'
+#   .dat(λ 표 출처)는 **ODB 옆 동명 파일**이 기본이고 SOLARSAIL_MODE_DAT 로 덮을 수 있다.
+#   경로는 abspath 로 고정한다(스크립트가 상대경로를 자기 기준으로 해석하는 혼동 방지).
+_SRC_ENV = os.environ.get('SOLARSAIL_MODE_ODB')
+if _SRC_ENV:
+    MODE_SOURCE_ODB = os.path.abspath(_SRC_ENV)
+    MODE_SOURCE_DAT = os.path.abspath(os.environ.get(
+        'SOLARSAIL_MODE_DAT', os.path.splitext(MODE_SOURCE_ODB)[0] + '.dat'))
+    IMPERFECTION_NAME = os.path.splitext(os.path.basename(MODE_SOURCE_ODB))[0]
+    print("[IMPERFECTION] 모드 소스 override (env SOLARSAIL_MODE_ODB)")
+    print("               ODB = %s" % MODE_SOURCE_ODB)
+    print("               DAT = %s" % MODE_SOURCE_DAT)
+    print("               IMPERFECTION_NAME = %s" % IMPERFECTION_NAME)
+    sys.stdout.flush()
 #   (출처 ODB/스텝은 상수로 중복 기재하지 않고 모드표 헤더에서 읽어 로그에 남긴다)
 if IMPERFECTION_MODE not in ('odb_direct', 'odb_table', 'file'):
     raise RuntimeError("IMPERFECTION_MODE 는 'odb_direct' / 'odb_table' / 'file' 중 하나여야 합니다"
