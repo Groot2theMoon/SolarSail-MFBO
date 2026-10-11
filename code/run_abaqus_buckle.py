@@ -18,14 +18,11 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     seed          코너 전량 DISP (케이블 끝단 구동)  코너 PERTURBATION(끝단)    케이블 라우트 corner 모드 — 전역 4모드 재현
     clamp_lf      DEAD_FRAC x P + 클램프 u3=0       (1-DEAD_FRAC) x P          운용 램프의 좌굴 배수(lambda=1=운용점)
     corner_lf     코너 전량 DISP, 클램프 없음        코너 PERTURBATION          그리드에서의 코너 하중 모드(합성 씨드 1/2)
-    clamp_live    코너 전량 DISP + 클램프 u3=0,      클램프 DIR x PERTURBATION  클램프 구동 모드(합성 씨드 2/2)
-                  클램프 당김 0(명시)
-    clamp_live_cb 위와 같되 클램프 전달 = 케이블      클램프 DIR x PERTURBATION  클램프 **케이블** 라우트
-                  끝단(코너는 RP 구동)               (클램프 케이블 끝단)       (clamp_live 대비 단일변수)
-    clamp_cb      코너도 케이블 끝단 구동(seed 와     클램프 DIR x PERTURBATION  HF 토폴로지
-                  동일) + 클램프 케이블              (클램프 케이블 끝단)       (코너+클램프 케이블)
-    clamp_lf_cb   clamp_lf 와 같되 클램프 몫도        (1-DEAD_FRAC) x P          HF 정합본 — 클램프가
-                  케이블 끝단으로 전달(DEAD 포함)                               base 를 압축(x_c 유효)
+    clamp_live    base=코너+클램프 **둘 다** 구동     클램프 프로브(코너 0 명시) 클램프 가족 2모드 (RP 구동)
+                  (클램프 당김 전량, RP 구동)
+    clamp_live_cb 위와 같되 전부 케이블 끝단 구동     클램프 프로브(코너 0 명시) 클램프 가족 ★ (HF 경로)
+    corner_live_cb base 는 clamp_live_cb 와 **동일**  코너 프로브(클램프 0 명시) 코너 가족 ★ (HF 경로)
+    clamp_lf_cb   clamp_lf + 클램프 당김을 케이블로   (1-DEAD_FRAC) x P          운용점 회계(λ=1=운용점)
     ⚠️ corner_lf/clamp_live 의 lambda 는 운용점 회계(위 clamp_lf 의 lambda=1)가 **아니다** —
        프로브 크기의 배수다. 모드 형상은 프로브 크기에 불변.
       seed 는 케이블 3개(Cable_Top/Right/Left)를 Tie 로 꼭짓점 패치에 연결하고 끝단을 구동한다
@@ -204,7 +201,7 @@ CORNER_ANGLE_DEG = 28.6
 # 케이스 (CASE) — '무엇을 DEAD, 무엇을 LIVE 로 두는가'만 고른다.
 #   원칙: 수치는 모듈 최상위 리터럴 상수로 유지한다(check_model_consistency 의 SHARED 가 리터럴
 #   문자열을 비교한다). CASE 는 배선만 고르고, 요구 상수 조합은 아래에서 런타임 검증한다.
-CASE = 'clamp_live_cb'   # 현재 런 대상 — Stage B 클램프 케이블 (clamp_live 대비 단일변수)
+CASE = 'clamp_live_cb'   # 현재 런 대상 — Stage B 클램프 가족(LIVE=클램프 단독, base=클램프+코너)
 
 _CASE_TABLE = {
     #  seed: [2026-10-11 복원] 꼭짓점을 케이블(T3D2)+Tie 로 잇고 **케이블 끝단**을 구동한다 —
@@ -216,8 +213,8 @@ _CASE_TABLE = {
     'corner_lf':    dict(cables=False, clamps=False, clamp_load='none', corner_dir='hf'),
     #  clamp_live: base=초기 인장만(코너 전량, 클램프 당김 0 명시), LIVE=클램프 단독 프로브.
     #    합성 씨드(클램프 패밀리) 재료. lambda=프로브 배수. live_driver='clamp' 가 배선을 가른다.
-    'clamp_live':   dict(cables=False, clamps=True,  clamp_load='none', corner_dir='hf',
-                         live_driver='clamp'),
+    'clamp_live':   dict(cables=False, clamps=True,  clamp_load='base', corner_dir='hf',
+                         live_driver='clamp'),        # A 의 RP 판 (코너 구동 경로만 다름)
     #  [2026-10-11 Stage B] 클램프 하중을 **케이블 끝단**으로 전달한다(HF run_abaqus.py 와 같은 하중
     #    경로: Cable_CL/CR + Tie_CL/CR + 끝단 구동, CLAMP_CABLE_LEN=0.5).
     #    격리 이유: 구 스크립트의 CLAMP_MODE='driven'(클램프 케이블)은 SYSTEM 음수 1256->888 /
@@ -225,10 +222,16 @@ _CASE_TABLE = {
     #    격자 + 요청 100 + BC_Edges_Only_Z + 코너 케이블(검증됨) 이다.
     #    clamp_live_cb: clamp_live 와 **단일변수**(클램프 전달 경로만 RP -> 케이블) — 진단 1순위.
     #    clamp_cb:      HF 토폴로지(코너도 케이블 — seed 와 같은 경로) + 클램프 케이블.
-    'clamp_live_cb': dict(cables=False, clamps=True, clamp_load='none', corner_dir='hf',
-                          live_driver='clamp', clamp_cable=True),
-    'clamp_cb':      dict(cables=True,  clamps=True, clamp_load='none', corner_dir='hf',
-                          live_driver='clamp', clamp_cable=True),
+    #  [2026-10-11 설계 확정] base = **클램프 + 꼭짓점 둘 다** 구동해 도달하고, 좌굴 스텝의 LIVE 는
+    #    **한 가족만** 준다. 클램프 가족(A)과 코너 가족(B)을 **같은 base** 에서 각각 뽑아 2모드씩
+    #    합성한다(Δz = Σ ω_i φ_i). 두 가족 동시 섭동은 성공 기록이 없다.
+    #    clamp_load='base' = 클램프 당김 **전량**(CLAMP_PULL)을 base(GlobalTension)에 넣는다
+    #      -> 클램프가 base state 를 압축하므로 x_c 가 모드를 바꾼다(CLOAD 를 좌굴 스텝에만 둔 런의
+    #         '완주했지만 클램프 무효' 판정을 피하는 배선).
+    'clamp_live_cb': dict(cables=True,  clamps=True, clamp_load='base', corner_dir='hf',
+                          live_driver='clamp', clamp_cable=True),   # A: 클램프 가족 (HF 경로)
+    'corner_live_cb': dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
+                           live_driver='corner', clamp_cable=True),  # B: 코너 가족 (HF 경로)
     #  clamp_lf_cb: [2026-10-11] **HF 정합본** — 클램프 당김을 base(DEAD_FRAC 몫)까지 케이블로 전달한다.
     #    클램프가 base state 를 압축하므로 x_c 가 모드를 바꾼다(clamp_lf 의 회계 + HF 하중 경로).
     #    ⚠️ 위의 두 _cb 케이스는 클램프 당김이 base 에 **없다** — 구 스크립트가 CLOAD 를 Step-Buckle 에
@@ -1042,8 +1045,32 @@ def build_model(disp):
                  if PRETENSION_MODE == 'paper3' else ' (Top 완전고정)')
     print("%s 프리텐션 = %s : 아래 %.4e m%s"
           % (TAG, PRETENSION_MODE, disp_a, _top_note))
-    # ---- 하중/구속 배선: clamp_lf 는 꼭짓점·클램프를 prescribed 변위로 구동하고 DEAD/LIVE 로 나눈다 ----
-    if CLAMP_LOAD == 'live':
+    # ---- 하중/구속 배선 ----
+    #   clamp_load='base' (설계 확정 2026-10-11): base = 클램프 + 꼭짓점 **둘 다** 구동해 운용 기저에
+    #     도달하고, 좌굴 스텝의 LIVE 는 live_driver 가 고른 **한 가족만** 준다. 두 런의 base 가 동일하므로
+    #     각각 2모드를 뽑아 합성(Δz = Σ ω_i φ_i)할 수 있다.
+    #   clamp_load='live' (clamp_lf): 꼭짓점·클램프를 DEAD_FRAC / (1-DEAD_FRAC) 로 나눈다 = 운용점 회계.
+    if CLAMP_LOAD == 'base':
+        my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
+                                region=a.sets['RP_CL_Set'], u3=0, **_CLAMP_ROT_KW)
+        my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
+                                region=a.sets['RP_CR_Set'], u3=0, **_CLAMP_ROT_KW)
+        _btgt_cl = end_cl if HAS_CLAMP_CABLES else a.sets['RP_CL_Set']
+        _btgt_cr = end_cr if HAS_CLAMP_CABLES else a.sets['RP_CR_Set']
+        for _nm, _rg, _d1, _d2 in (('Disp_Control_CL', _btgt_cl, DIR_CL[0], DIR_CL[1]),
+                                   ('Disp_Control_CR', _btgt_cr, DIR_CR[0], DIR_CR[1])):
+            my_model.DisplacementBC(name=_nm, createStepName='Initial',
+                                    region=_rg, u1=0.0, u2=0.0)
+            #   DEAD = 클램프 당김 **전량**을 base 에 넣는다(생략 금지 — 클램프 압축이 base 에 들어간다).
+            my_model.boundaryConditions[_nm].setValuesInStep(
+                stepName='Step-GlobalTension', u1=_d1 * CLAMP_PULL, u2=_d2 * CLAMP_PULL)
+            #   LIVE = 이 가족이 프로브 대상일 때만; 아니면 **0 명시**.
+            _p = PATTERN_SIGN * PERTURBATION if LIVE_DRIVER == 'clamp' else 0.0
+            my_model.boundaryConditions[_nm].setValuesInStep(
+                stepName='Step-Buckle', u1=_p * _d1, u2=_p * _d2)
+        print("%s [%s] base=코너 %.4g m + 클램프 %.4g m(전량) / LIVE=%s 가족 프로브 %.4g m"
+              % (TAG, CASE, DISP, CLAMP_PULL, LIVE_DRIVER, PERTURBATION))
+    elif CLAMP_LOAD == 'live':
         # =====================================================================
         # clamp_lf — 꼭짓점과 클램프를 prescribed 변위로 구동한다.
         #   이 저장소에서 **완주한** 구동 경로는 prescribed 변위 BC 뿐이다(HF/케이블/모드소스 모두
@@ -1092,32 +1119,30 @@ def build_model(disp):
                                 region=a.sets['RP_CR_Set'], u3=0, **_CLAMP_ROT_KW)
 
     if LIVE_DRIVER == 'clamp':
-        # =====================================================================
-        # clamp_live — base 는 **초기 인장만**(코너 전량, 클램프 당김 0 명시).
-        #   좌굴 스텝의 패턴은 클램프 단독 — 합성 씨드(클램프 패밀리)용. lambda=프로브 배수.
-        # =====================================================================
-        #   프로브 대상: clamp_cable 이면 케이블 끝단(HF 하중 경로), 아니면 패치 RP.
-        _ptgt_cl = end_cl if HAS_CLAMP_CABLES else a.sets['RP_CL_Set']
-        _ptgt_cr = end_cr if HAS_CLAMP_CABLES else a.sets['RP_CR_Set']
-        my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial',
-                                region=_ptgt_cl, u1=0.0, u2=0.0)
-        my_model.DisplacementBC(name='Disp_Control_CR', createStepName='Initial',
-                                region=_ptgt_cr, u1=0.0, u2=0.0)
-        for _nm, _d1, _d2 in (('Disp_Control_CL', DIR_CL[0], DIR_CL[1]),
-                              ('Disp_Control_CR', DIR_CR[0], DIR_CR[1])):
-            #   base: 클램프 당김 0 을 생략하지 않고 **명시**(초기 인장만). 좌굴 스텝: 클램프 단독.
-            my_model.boundaryConditions[_nm].setValuesInStep(
-                stepName='Step-GlobalTension', u1=0.0, u2=0.0)
-            my_model.boundaryConditions[_nm].setValuesInStep(
-                stepName='Step-Buckle',
-                u1=PATTERN_SIGN * PERTURBATION * _d1,
-                u2=PATTERN_SIGN * PERTURBATION * _d2)
-        #   코너는 좌굴 스텝에서 0 명시 — LIVE = 클램프 단독 (E3 프로브 블록과 역할이 다르다).
+        #   클램프 가족 런: LIVE = 클램프 단독 프로브. base 는 CLAMP_LOAD 가 정한다
+        #   ('base' = 당김 전량 -- 위 분기에서 이미 배선 / 'none' = 당김 0 -- 여기서 배선).
+        if CLAMP_LOAD == 'none':
+            #   프로브 대상: clamp_cable 이면 케이블 끝단(HF 하중 경로), 아니면 패치 RP.
+            _ptgt_cl = end_cl if HAS_CLAMP_CABLES else a.sets['RP_CL_Set']
+            _ptgt_cr = end_cr if HAS_CLAMP_CABLES else a.sets['RP_CR_Set']
+            my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial',
+                                    region=_ptgt_cl, u1=0.0, u2=0.0)
+            my_model.DisplacementBC(name='Disp_Control_CR', createStepName='Initial',
+                                    region=_ptgt_cr, u1=0.0, u2=0.0)
+            for _nm, _d1, _d2 in (('Disp_Control_CL', DIR_CL[0], DIR_CL[1]),
+                                  ('Disp_Control_CR', DIR_CR[0], DIR_CR[1])):
+                my_model.boundaryConditions[_nm].setValuesInStep(
+                    stepName='Step-GlobalTension', u1=0.0, u2=0.0)
+                my_model.boundaryConditions[_nm].setValuesInStep(
+                    stepName='Step-Buckle',
+                    u1=PATTERN_SIGN * PERTURBATION * _d1,
+                    u2=PATTERN_SIGN * PERTURBATION * _d2)
+        #   코너는 좌굴 스텝에서 0 명시 — LIVE = 클램프 단독.
         for _nm in ('Disp_Control_Right', 'Disp_Control_Left'):
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-Buckle', u1=0.0, u2=0.0)
-        print("%s [clamp_live] base=코너 %.4g m + 클램프 당김 0 / LIVE=클램프 %.4g m x DIR (프로브)"
-              % (TAG, DISP, PERTURBATION))
+        print("%s [%s] LIVE=클램프 가족 프로브 %.4g m x DIR (코너 0 명시)"
+              % (TAG, CASE, PERTURBATION))
 
     if HAS_CLAMP_CABLES:
         #   케이블 끝단의 면외 구속 — HF 의 BC_CL/BC_CR 과 같은 이름·역할.
@@ -1198,9 +1223,11 @@ if ELEM_TAG is None:
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
 #   새 케이스의 표기: base=전량 프리텐션(f100) / base 클램프 당김 없음(dc000). CASE 세그먼트가 달라 유일성은 보장.
 _f_tag = int(round(DEAD_FRAC * 100.0)) if CASE in ('clamp_lf', 'clamp_lf_cb') else 100
-_dc_tag = int(round(CLAMP_DC_EFF * 100.0)) if CASE in ('clamp_lf', 'clamp_lf_cb') else 0
+_dc_tag = (int(round(CLAMP_DC_EFF * 100.0))
+           if CASE in ('clamp_lf', 'clamp_lf_cb', 'clamp_live', 'clamp_live_cb', 'corner_live_cb')
+           else 0)
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
-_live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE in ('clamp_live', 'clamp_live_cb', 'clamp_cb') else ''
+_live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE in ('clamp_live', 'clamp_live_cb') else ''
 _rot_tag = '_rotfix' if CLAMP_RP_FIX_ROT else ''   # 스위치를 켜면 출력 이름이 갈린다
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
 JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x_c * 100.0)),

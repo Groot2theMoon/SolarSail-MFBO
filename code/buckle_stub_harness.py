@@ -50,7 +50,7 @@ CASE_CONSTANTS = {
     'clamp_live':   {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
     'paper_s1':     {'PRETENSION_MODE': "'paper3'",  'CORNER_ANGLE_DEG': '45.0'},
     'clamp_live_cb': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'clamp_cb':      {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    'corner_live_cb': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
     'clamp_lf_cb':   {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
 }
 
