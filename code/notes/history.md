@@ -2212,3 +2212,43 @@ x_c=0.65, f=0.40 -> RuntimeError(.sta/.msg 미완주). 스크립트가 찍은 .d
 
 [다음] 사용자 런 2개(x_c=0.5): CASE='corner_lf' / CASE='clamp_live' 각 1회 -> buckle_mirror_check + 육안
    -> combine_seed.py(가중·정규화) -> HF A/B.
+
+### 19.38 seed 케이스 복원 — 케이블 구동으로 전역 모드 재현 (2026-10-11)
+
+[배경] 원래 ClampFree_Buckle(run_abaqus_mode.py)의 **전역 좌굴 4모드**는 자유메쉬 + 케이블(T3D2)+끝단 구동
++ 요청 100 조합의 산물이었다. 현행 corner_lf(격자·무클램프·패치 RP 직접구동)는 창을 100 까지 열어도
+λ 100개가 전부 음수. 사용자 결정(메쉬=현행 격자 유지, 품질·균질)에 따라 남은 변수는 **구동 경로(케이블)** 하나.
+
+[진단 3단 — 무엇이 다른가]
+1) 창: N_EIG_BUCKLE 은 "요청 수 > base state 음수 고유값 개수" 조건(mode.py 실측: 케이블 런 음수 52 < 100 -> CONVERGED=4).
+   4 로 내린 뒤 격자로 바꾼 조합이 "모드 못 찾음"의 유력 원인 -> 100 복원.
+2) 메쉬: 자유메쉬(18k, 과거 성공) <-> 격자(10,201). 사용자 판단으로 격자 유지(pass).
+3) 구동 경로: 패치 RP 직접 구동 <-> 케이블 부착 + **케이블 끝단** 구동 — mode.py 와 같은 하중 경로로 되돌린다.
+참고: corner_lf 는 d* = base + λ·probe ≈ −1.89µm 로 disp(5/10/18µm)와 무관하게 고정이고, 하단 중앙 벨리
+클러스터 두께 ≥ 100 — "양수 모드 추격"은 정량 종료된 상태였다.
+
+[조치]
+- `seed` 케이스 복원: 케이블(T3D2) + Tie(꼭짓점 패치 RP ↔ 케이블 시작단) + 구동점 = 케이블 끝단.
+  은퇴(939fbe1, §19.35)는 _CASE_TABLE 한 줄 삭제였고, 헬퍼(create_rigid_patch/connect_cable)·부품
+  (create_cable_part)·A1/A2/A3 구동점 추상화·LIVE 게이트(HAS_CABLES)는 C-route 리팩터에서 **그대로 생존**.
+  검사기 _CABLE_CASES / 하네스 CASE_CONSTANTS 에도 seed 가 남아 있어 화이트리스트 추가 불필요.
+- N_EIG_BUCKLE 4 -> 100 (buckle·mode·checker 3곳 동기) — 계약(SHARED_BUCKLE_MODE) 유지.
+- 커밋 f2965ee(seed 복원) / 8ec9be3(창 100 동기).
+
+[검증 — 라이선스 0] py_compile OK / static_leak 0건(4파일) / checker PASS(buckle↔모드소스 13항목, 위반 0) /
+하네스 4케이스(seed·clamp_lf·corner_lf·clamp_live) EXIT=0. seed 배선 실측: "HAS_CABLES=True -> 구동점 CABLE ENDS",
+Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle (±0.0087798, −0.0047869)
+= PERTURBATION×PATTERN_SIGN — mode.py 와 같은 회계.
+
+[함정 — 실측 기록]
+- check_model_consistency.py 는 **cwd=code** 에서 실행할 것(상대경로 'run_abaqus.py' 를 연다).
+  루트에서 실행하면 FileNotFoundError -> EXIT=1.
+- 하네스를 루트에서 실행하면 grid_Membrane.inp 가 루트에 남는다(.gitignore 는 code/*.inp 만 커버) -> code/ 에서 실행.
+
+[다음 — 사용자 런 1회 + 판정] (에이전트는 Abaqus 를 못 돌린다 — 이 런이 첫 실측이다)
+1) Windows 로컬 편집(N=100 등) 정리 -> pull.
+2) `abaqus cae noGUI=run_abaqus_buckle.py -- 0.5` -> 잡 Buckle_xc050_d018um_dc000_f100_s4_grid_seed_normal_ex210.
+3) 보고: .dat MODE NO 표(양수 λ 유무) + .msg CONVERGED + `abaqus python buckle_mode_report.py <odb> Step-Buckle 4`.
+판정: 양수 4개 내외 + 전역 형상 -> 케이블이 원인 확정 -> Stage B(클램프 케이블 이식, HF 의 Cable_CL/CR).
+      전부 음수 -> 로그 분해(음수 개수·subspace 축소) -> 다음 분기.
+설계: corner_lf(N=100, 전부 음수) <-> seed(N=100) — 차이 = **케이블 유무 하나**.
