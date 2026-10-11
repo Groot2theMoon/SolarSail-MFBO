@@ -1817,3 +1817,46 @@ x_c=0.65, f=0.40 -> RuntimeError(.sta/.msg 미완주). 스크립트가 찍은 .d
     1차 스캔은 오탐 8건 -> 정밀화 후 1건(진짜 SEED_DIV) -> 수정 후 **0건**
     selftest 내장(파일 없이 로직만 검증). Abaqus 불필요.
 => 앞으로 이 부류(HF 를 3번 죽인 원인)는 실행 전에 잡힌다.
+
+### 19.35 buckle 요구사항 확정 + 정리(CLAMP_DC 함정 제거, 탐색 케이스 은퇴) (2026-10-08)
+
+**① 창립 질문의 답이 논문 원문으로 확정됐다.**
+    "우리는 꼭짓점+클램프에 케이블이 붙은 모델인데, 뭘로 좌굴모드를 뽑아야 하나?"
+    Galhofo2022 원문(wiki/raw/papers/galhofo2022-pretensioned-solar-sails.md, 모델 구성 절):
+      "Two models were built: (a) one for the buckling analysis of the membrane **without any cables**,
+       and (b) another for the nonlinear analysis of the membrane **with the attached cables** by means of
+       connectors with a basic translational type (Join) section"
+      "an initial small pre-tensioning is applied ... **by a prescribed displacement at the three vertices**
+       ... The z-displacement is fixed in the three edges ... Then, **a buckle step is built** ... The boundary
+       conditions are equal to ... the previous static step **with exception to the values of the displacement**"
+    => 논문 절차 = 케이블 없는 막 + 꼭짓점 지정변위(Static) -> Buckle(변위값만 변경 = LIVE) + SUBSPACE.
+       우리 clamp_lf = **논문 방식 + 클램프**. 정식화 / 솔버 / 임퍼펙션 규약이 전부 정합.
+    => 논문의 4모드는 거의 축퇴(spread 0.036%). 우리는 클램프 탓에 스펙트럼이 갈라진다
+       (x_c=0.5: 8.197e-3 / 8.197e-3 / 3.826e-2 / 6.088e-2)
+       = "클램프가 물리를 바꾼다"는 선형 수준의 직접 증거.
+
+**② 클램프 비율 창(window) 실측 -> 기본값 함정 제거.**
+    같은 x_c=0.5 에서 클램프 당김만 바꾼 3런(+추가 f 스캔):
+      5.6% (1.0e-6)  -> 4모드 정상
+      50%  (9.0e-6)  -> THE EIGENVALUES CANNOT BE FOUND
+                        (SYSTEM MATRIX 음수 고유값 234개 / DIFFERENTIAL 대각 24528 of 61266,
+                         부분공간이 1벡터로 붕괴(선형종속), λ 가 1.6e-5 -> 2.6e-7 로 감소)
+      100% (1.8e-5), f=0.5 / 0.10 / 0.05 -> 전부 실패 (= f 로는 못 푼다)
+    => 양 극단이 다 실패한다: 하중이 크면 개시 초과, 작으면 slack -> 둘 다 준-메커니즘.
+       5.6% 가 그 사이 창 안이며, 클램프 비율을 키우면 창이 닫힌다.
+    => **CLAMP_DC 기본값 0.5(반드시 실패) -> 0.0556(실측 동작값, 잡 이름 dc006)** 으로 고정.
+    => 시드는 'guidance' 라는 입장 확정(진폭이 수렴을 지배: 실측 0.1t=2215증분/90분 vs
+       1.0t=271증분/11분) -> **비율 정합은 요구하지 않는다. 단 x_c 정합은 필수**(모드의 위치를
+       결정; 모드 centroid (9.89,1.29) ~ 압축 무게중심 (9.88,1.45) 실측 일치).
+
+**③ 정리 작업(실행).**
+    - CASE 은퇴: seed / control_none / paper_s1 제거 -> clamp_lf 단일. (되살리려면 이력에서 표 복원)
+      **주의**: SHARED_BUCKLE_MODE 계약 상수(LEN_TOP / CABLE_RADIUS / PRETENSION_MODE /
+      DISP_TOP_OVER_CORNER 등)는 은퇴 대상이 **아니다** — 검사기가 모드 소스와의 형상 일치를 강제한다.
+      (당초 이 스펙 초안은 이들을 삭제 대상으로 봤으나, 검사기 SHARED_BUCKLE_MODE 확인 후 철회.)
+    - paper_s1 의 paper3/45.0 요구조건 분기 -> 단일 조건으로 단순화.
+    - 판정 임계값 3종(SPREAD_MIN_PCT / U3_FRAC_MIN / CLAMP_ZONE_R)은 **잠정 유지**.
+      재정의 필요(근거: λ 스프레드 2% 기준은 λ1/λ2=0.005% 인 정상 런을 탈락시킬 수 있다.
+      buckle_mode_report.U3_FRAC_MIN 과의 값 동기화 계약도 함께 손봐야 한다).
+    - 남은 작업: run_job_safely 실패 경로에 UTF-8 로그(buckle_run.log) — CAE 콘솔 mojibake 로
+      실패 원인 문장을 두 번 잃었다. 표준출력을 tee 하는 방식으로(현재 원인은 .msg/.dat grep 으로 우회).

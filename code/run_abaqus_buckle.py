@@ -206,14 +206,18 @@ CORNER_ANGLE_DEG = 28.6
 #         리터럴 문자열을 비교하므로 값을 dict 로 감추면 게이트가 깨진다. CASE 는 배선만
 #         고르고, 요구되는 상수 조합은 아래에서 **런타임 검증**한다(조용한 오답 금지).
 # ============================================================================
-CASE = 'clamp_lf'   # 'seed' | 'control_none' | 'clamp_lf' | 'paper_s1'
+CASE = 'clamp_lf'   # [2026-10-08] 은퇴 후 단일 케이스 (구: seed | control_none | paper_s1)
 
 _CASE_TABLE = {
+    #  [2026-10-08 은퇴] 탐색기의 seed / control_none / paper_s1 을 은퇴시켰다.
+    #    근거: 논문 원문 대조로 clamp_lf 의 정당성이 확정됐다 — Galhofo 는 '케이블 없는 막 +
+    #    꼭짓점 지정변위'로 좌굴모드를 뽑고, 케이블은 비선형 모델에만 붙인다(Join 커넥터).
+    #    즉 clamp_lf = 논문 방식 + 클램프. 나머지 케이스는 그 탐색 과정의 산물이다.
+    #    되살리려면 git 이력에서 이 표를 복원하면 된다.
+    #    (주의: SHARED_BUCKLE_MODE 계약 상수 — LEN_TOP / CABLE_RADIUS / PRETENSION_MODE 등 — 은
+    #     은퇴 대상이 아니다. 모드 소스와의 형상 일치를 검사기가 강제한다.)
     #  케이스          케이블  클램프패치  클램프하중      코너각
-    'seed':         dict(cables=True,  clamps=False, clamp_load='none', corner_dir='hf'),
-    'control_none': dict(cables=True,  clamps=True,  clamp_load='none', corner_dir='hf'),
     'clamp_lf':     dict(cables=False, clamps=True,  clamp_load='live', corner_dir='hf'),
-    'paper_s1':     dict(cables=False, clamps=False, clamp_load='none', corner_dir='paper45'),
 }
 
 
@@ -239,14 +243,18 @@ def _require_constant(name, have, want):
                            "  -> 상수부를 고치거나 CASE 를 바꾸세요." % (CASE, name, want, have))
 
 
-if CASE == 'paper_s1':
-    _require_constant('PRETENSION_MODE', PRETENSION_MODE, 'paper3')
-    _require_constant('CORNER_ANGLE_DEG', CORNER_ANGLE_DEG, 45.0)
-else:
-    _require_constant('PRETENSION_MODE', PRETENSION_MODE, 'corner2')
-    _require_constant('CORNER_ANGLE_DEG', CORNER_ANGLE_DEG, 28.6)
+#   paper_s1 은퇴(2026-10-08) -> 단일 조건. 되살릴 때는 paper3 / 45.0 분기도 함께 복원한다.
+_require_constant('PRETENSION_MODE', PRETENSION_MODE, 'corner2')
+_require_constant('CORNER_ANGLE_DEG', CORNER_ANGLE_DEG, 28.6)
 
-CLAMP_DC = 0.5   # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c, A-route 와 동일)
+CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c).
+#   [2026-10-08 실측] 이 비율이 '모드가 존재하는 창' 안의 값이다:
+#     5.6%  -> 4모드 정상 (λ 8.197e-3 / 8.197e-3 / 3.826e-2 / 6.088e-2)
+#     50%   -> THE EIGENVALUES CANNOT BE FOUND (음수 고유값 234개, 대각 24528개)
+#     100%  -> 같은 실패. f=0.5 / 0.10 / 0.05 모두 실패 -> f 로는 못 푼다.
+#   => 클램프가 큰 기저에는 선형 좌굴모드가 존재하지 않는다. 기본값을 동작값으로 고정한다
+#      (이전 기본 0.5 는 그대로 두면 반드시 실패하는 함정이었다). CLI 3번째 인자로 덮을 수 있다.
+#      잡 이름의 dc%03d 가 이 값을 인코딩한다 (0.0556 -> dc006).
 
 CLAMP_RP_FIX_ROT = False   # True 면 클램프 RP 의 **회전 3성분도** 고정한다(패치 기울기 차단).
 #   현행은 RP 의 u3 만 고정 -> 강체패치가 **기울 수 있다**(회전 자유). 그 틈이 클램프 옆
