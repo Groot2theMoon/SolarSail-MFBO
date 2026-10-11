@@ -2355,3 +2355,29 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
      = Stage B 성공(과거 판정이 구 메쉬·창 조건 특이였다는 뜻). 문서의 실패 서명(SYSTEM 음수 수백,
      subspace 붕괴, CONVERGED=0)이 나오면 클램프 케이블을 포기하고 **clamp_lf(RP 직접 구동)** 를 씨드 재료로
      확정한다 — 씨드는 형상만 필요하므로 하중 경로 일치는 필수가 아니다(문서 결론).
+
+### 19.41 [설계 정정] base = 클램프 + 꼭짓점 **둘 다** — Stage B 재배선 (2026-10-11)
+
+[정정 대상] §19.37/§19.40 의 `clamp_live` 계열은 base 의 클램프 당김을 **0** 으로 두었다("초기 인장만").
+  사용자 확인: 합의된 설계는 **base 에 클램프와 꼭짓점을 둘 다 구동**해 운용 기저에 도달한 뒤, 좌굴 스텝의
+  LIVE 를 **가족별로 하나씩**(클램프만 / 꼭짓점만) 주어 **2모드씩** 뽑아 합성하는 것이다.
+  (두 가족 동시 섭동은 성공 기록이 없다.) §19.37/§19.40 의 배선은 그 설계가 아니었다 -> 본 절에서 수정.
+
+[설계 (확정)]
+  base (Step-GlobalTension, DEAD) = 꼭짓점 전량 DISP(1.8e-5) **+ 클램프 당김 전량** CLAMP_PULL(= DISP x CLAMP_DC = 1.0008e-6)
+  LIVE (Step-Buckle) = 가족 하나만 PERTURBATION(0.01 m), 다른 가족은 **0 명시**
+  => 두 런의 base 가 동일(하네스로 값 대조 확인) -> 각 런에서 모드 1·2 채택 -> Δz = Σ ω_i φ_i 합성.
+
+[구현] `clamp_load='base'` 라우트 분기 신설 + 케이스 재편.
+  - A `clamp_live_cb` : cables=True, clamps=True, clamp_load='base', live_driver='clamp', clamp_cable=True  (클램프 가족, HF 경로)
+  - B `corner_live_cb`: cables=True, clamps=True, clamp_load='base', live_driver='corner', clamp_cable=True (코너 가족, HF 경로)
+  - `clamp_live`(RP 판) 도 clamp_load='base' 로 수정(A 와 코너 구동 경로만 다름).
+  - `clamp_cb` **제거**(base 클램프 0 = 잘못된 배선이라 오해 소지).
+  - `clamp_lf_cb` 유지(운용점 회계 λ=1=운용점 — 별개 용도).
+  - `_dc_tag`: base 모드 3종 포함(클램프 당김 비율이 base 를 바꾸므로 잡 이름에 dc### 가 들어가야 한다).
+
+[검증 — 라이선스 0] py_compile / checker PASS(30/27/13) / 하네스 7케이스 EXIT=0(`clamp_cb` 는 제거되어 EXIT=2).
+  배선 실측 — A: 끝단 GlobalTension (−7.0767e-7, +7.0767e-7) = CLAMP_PULL x DIR_CL, Buckle = ±0.0070711(프로브),
+  코너 GlobalTension = DISP 전량 / Buckle = 0. B: **동일한 base**, 코너 Buckle = (0.0087798, −0.0047869)(프로브), 클램프 0.
+
+[다음] 사용자 런 2회(A/B) -> 각 런에서 모드 1·2 채택 -> 형상 리포트로 ω 확정 -> 합성 -> HF 주입.
