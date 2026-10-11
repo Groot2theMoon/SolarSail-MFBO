@@ -307,9 +307,12 @@ PAPER_S1_LIVE_M = 0.10   # m — Galhofo 2022 의 좌굴 스텝은 꼭짓점 변
 #   LIVE 크기에 반비례. PERTURBATION(0.01)은 mode.py 와의 SHARED 계약이라 케이스별로 바꾸지 않는다.
 # ---- 추출 창: N_EIG_BUCKLE 은 두 조건의 교집합 (parse_buckle_log._window_hint 와 같은 판정) ----
 #   (a) N_EIG_BUCKLE > base state 의 SYSTEM 음수 고유값 개수   (b) N_EIG_BUCKLE <= 실제 subspace 차원
-N_EIG_BUCKLE = 10      # 추출 요청 고유값 수 (mode.py 와 같은 값이어야 한다 — 계약)
-#   N_EIG=4 / 기저 100: 대조군이 '요청 4 / 기저 100' 으로 수렴했다. 기저 100 = 천장 112 아래.
-BUCKLE_VECTORS = 200    # subspace 기저 벡터 수. 실측 천장: 300 을 요청하면
+N_EIG_BUCKLE = 100      # 추출 요청 고유값 수 (mode.py 와 같은 값이어야 한다 — 계약)
+                        #   [2026-10-11 복원] 4 -> 100: 과거 성공 조합(100/250). base state 의 음수
+                        #   클러스터를 넘겨야 양수 모드가 subspace 창에 들어온다 — 케이블 런 실측
+                        #   "음수 52 < 100 -> CONVERGED=4".
+#   [이력] N_EIG=4 / 기저 250: 대조군이 '요청 4 / 기저 250' 으로 수렴했다. 기저 250 = 천장 272 아래.
+BUCKLE_VECTORS = 250    # subspace 기저 벡터 수. 실측 천장: 300 을 요청하면
 #   ⚠️ "N_EIG <= 실제 subspace 차원" 이 조건이다: 기저를 키워 요청하면 REDUCED 되고 결국
 #   EIGENVALUES CANNOT BE FOUND. 창을 키우지 말고 이 두 상수를 직접 줄여 시험한다.
 #   (neig=/vec= CLI 는 런처가 '=' 를 삼켜 조용한 오답 — 쓰지 말 것.)

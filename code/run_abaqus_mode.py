@@ -320,7 +320,8 @@ MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
 PERTURBATION = 0.01                          # 좌굴 스텝 섭동 크기 [m] (케이블 런·HF 와 동일)
 PATTERN_SIGN = 1.0                           # 좌굴 '하중 패턴'의 부호: 1.0 = 바깥으로 더 당김 (오라클과 동일)
                                              # PATTERN_SIGN 은 바꾸지 않는다 — λ 부호를 정하는 것은 패턴이 아니라 base state 크기다(§8).
-N_EIG_BUCKLE = 4                            # [2026-10-07] 100 -> 200 -> 150 -> 4 (buckle 정합)
+N_EIG_BUCKLE = 100                          # [2026-10-11] 4 -> 100 복원 (buckle 동기 — 과거 성공값)
+                                             #   [이력] 10-07: 100 -> 200 -> 150 -> 4 (buckle 정합)
                                              #   **base state 의 음수 고유값 개수보다 커야 한다**
                                              #   (규칙: N_EIG_BUCKLE > 음수 개수).
                                              #   실측: 구 메쉬(18,200)에서 음수 48개 -> 요청 8 로는
