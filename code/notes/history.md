@@ -2274,3 +2274,38 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [보존] 실험값 브랜치 `win-knobs-20261011` (=c002371), rebase 전 내 상태 태그 `backup-pre-rebase-093046d`.
 [최종 이력] 72d6fb6 -> c002371 -> bb35b29(seed 복원) -> 2c55848(창 100 동기) -> 3ba9752(§19.38) -> a46ff11(실험값 되돌림).
 [검증] checker PASS(HF↔buckle 29 / HF↔모드소스 27 / buckle↔모드소스 13, 위반 0) / 하네스 seed EXIT=0 / py_compile OK / static_leak 0건.
+
+### 19.39 seed(케이블 구동) 런 — 전역 4모드 양수, 케이블이 원인 확정 (2026-10-11)
+
+[결과] `Buckle_xc050_d018um_dc000_f100_s4_grid_seed_normal_ex210` COMPLETED / 0 error / wall ~45s
+  M1 λ=2.32847e-04 (d*=20.33µm) · M2 2.64706e-04 (20.65) · M3 4.34192e-04 (22.34) · M4 4.49452e-04 (22.49).
+  **4개 전부 양수** — d* = DISP + λ·PERTURBATION 이 전부 +20~22.5µm = 아임계.
+
+[확정 — 단일변수] corner_lf(패치 직접 구동; 같은 격자·18µm·각도·SIGMA0·섭동·안정화·corner2)는
+  λ = −1.9891e-3 ~ −1.9896e-3, d* = −1.89µm(개시 초과). **부호가 뒤집혔다 ⇒ 구동 경로(케이블 유무)가 원인.**
+  5/10/18µm 어느 레벨에서도 −1.89µm 로 고정이던 하단 벨리 클러스터가 케이블에서 사라졌다.
+
+[확정 — 형상 전역] `buckle_mode_report`: 전부 u3_frac=1(순수 면외), centroid ≈ (10.0, 1.06~1.15),
+  **rw 4.00~4.20 m / r90 3.89~4.13 / >2t 76~80 %**. corner_lf(rw 2.0~2.7, centroid y≈0.4~0.8)보다
+  **폭 2배** = 가장자리 국소 → 전역. 시드 후보 [1,2,3,4] 채택. 두 군집: (M1,M2) 13.7 % / (M3,M4) 3.5 %,
+  군 분리 64 % → 미러쌍·대칭 판정은 `buckle_mirror_check` 로.
+
+[서명 일치 — 재현 근거] 요청은 **100**(.msg L1397 `NUMBER OF EIGENVALUES 100`)인데 Abaqus 가 subspace 를
+  241→239→…→4 로 줄이며 **4개만 수렴**(`NUMBER OF EIGENVALUES CONVERGED UPTO THIS ITERATION = 4`).
+  이는 성공 기록(`run_abaqus_mode.py` 헤더 "케이블 런 = 음수 52 < 100 -> CONVERGED=4")과 **같은 서명**이다 —
+  케이블 모델은 요청 100 에서 4개 수렴이 정상 거동이고, corner_lf(무클램프 직접구동)는 100개를 전부 뱉었다(전부 음수).
+
+[철회] "로그 끝줄 `REQUESTED BY THE USER: 4` = 로컬에서 N_EIG 를 4로 바꿨다"는 판단을 **철회**한다.
+  실측: 같은 .msg L1397 이 요청값 100 이고 축소 경고가 241→239→4 로 찍힌다. 끝줄 4 는 Abaqus 가 축소 후 남긴 값.
+  리포(100)와 Windows 사본(100)은 동일하다. ⚠️ 재발 방지: **요청값은 초기 블록의 `NUMBER OF EIGENVALUES n`** 으로 읽는다(끝줄 아님).
+
+[구분 — 혼동 금지] .msg 의 `***WARNING: THE SYSTEM MATRIX HAS n NEGATIVE EIGENVALUES`(4/8/8/4)와
+  `DIFFERENTIAL MATRIX HAS 16132 NEGATIVE DIAGONAL ENTRIES` 는 **정적 solve(GlobalTension)의 negative pivot 경고**로
+  끝에 "5 ANALYSIS WARNINGS ARE NEGATIVE EIGENVALUE MESSAGES" 로 집계된다 — **좌굴 고유값과 다른 수치**다.
+  좌굴 스펙트럼의 최저 4개는 양수다(요청 100 중 4 수렴분).
+
+[도구 함정] Windows `findstr` 는 UTF-8 한글 소스에서 깨진다(`FINDSTR: 쓰기 오류입니다`) →
+  `Select-String -Path run_abaqus_buckle.py -Pattern "N_EIG_BUCKLE" -Encoding UTF8`.
+
+[다음] ① `buckle_mirror_check.py` 로 (M1,M2)/(M3,M4) 미러쌍·대칭 판정(라이선스 0) ② 시드 가중(ω) 확정
+  ③ HF 주입 경로(`MODE_SOURCE_ODB` → `modes_*.txt`) ④ Stage B(클램프 케이블 이식).
