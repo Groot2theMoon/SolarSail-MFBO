@@ -2309,3 +2309,49 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 
 [다음] ① `buckle_mirror_check.py` 로 (M1,M2)/(M3,M4) 미러쌍·대칭 판정(라이선스 0) ② 시드 가중(ω) 확정
   ③ HF 주입 경로(`MODE_SOURCE_ODB` → `modes_*.txt`) ④ Stage B(클램프 케이블 이식).
+
+### 19.40 Stage B — 클램프 케이블 라우트 구현 (2026-10-11)
+
+[목적] 클램프 하중을 **케이블 끝단**으로 전달해 HF(run_abaqus.py) 와 하중 경로를 맞춘다 — 합성 씨드의
+  클램프 패밀리 재료를 HF 와 같은 경로에서 뽑기 위함.
+
+[⚠️ 선행 경고 — 이 경로는 과거 3회 실패 기록이 있다] `references/clamp-cable-driven-route.md`:
+  구 스크립트 CLAMP_MODE='driven'(클램프 케이블, 자유메쉬) = SYSTEM 음수 1256(직접구동) -> 888(케이블),
+  DIFFERENTIAL 27461, subspace 500->45/95, CONVERGED=0. RP 에 u3=0 을 더해도, d_c 를 절반으로 줄여도
+  카운터가 불변 -> "클램프 케이블 자체가 문제" 로 진단, 처방은 제거(cload)였다. cload 도 유효 F0 창이 없었고
+  (0.01=클램프 무효 / 0.1·0.3=실패 / 1.0=좌굴 후), passive(d_c=0, u3=0)만 성공(음수 48, CONVERGED=4).
+  핵심 구분(문서): HF 는 *Static + stabilization 이 저강성 모드를 흡수해 완주하나 *BUCKLE 은 고유해석이라
+  같은 구조가 치명적이다 — "HF 에서 되니 buckle 에서도 된다" 는 성립하지 않는다.
+
+[구현] 커밋 2c488f8(인프라) + 84912c9(케이스 2종). 라우트 키 `clamp_cable`(기본 False = 기존 거동 불변).
+  - `CLAMP_CABLE_LEN = 0.5`(HF 와 동일) + 검사기 SHARED 추가(HF↔buckle 29->30). SHARED_MODE 에서는 제외(mode.py 에 클램프 없음).
+  - 부품 Cable_CL/Cable_CR + `connect_cable(..., cable_len=CLAMP_CABLE_LEN)` — **길이 명시**(이름기반 기본값이
+    'Cable_CL' -> LEN_BOT(0.689) 이 되는 함정 회피 = 문서 함정 #1).
+  - Tie_CL/Tie_CR(RP_CL/CR ↔ 케이블 시작단). 끝단 BC = `BC_CL/BC_CR`(u3=0) — RP 의 `BC_Clamp_*` 와 **이름 분리**(문서 함정 #2).
+  - 구동점 추상화: clamp_cable 이면 `end_cl/end_cr`, 아니면 RP 세트(clamp_lf/clamp_live 배선 무변경).
+  - 가드 2건: CLAMP_DIR='normal' 전용(케이블 축 변경은 근거 약함) + clamps=True 필수(Tie 앵커).
+  - **새 스텝 없음** — 클램프 하중은 Step-GlobalTension(DEAD)/Step-Buckle(LIVE 프로브) 그대로(문서: 스텝 추가 금지).
+
+[케이스 2종]
+  clamp_live_cb : cables=False, live_driver='clamp', clamp_cable=True = clamp_live 와 **단일변수**(클램프 전달만 RP->케이블). 진단 1순위.
+  clamp_cb      : cables=True,  live_driver='clamp', clamp_cable=True = HF 토폴로지(코너 케이블=seed 경로 + 클램프 케이블), LIVE=클램프 단독.
+    ⚠️ 근거: seed 실측에서 **코너 구동 경로**가 결과를 뒤집었다(패치 직접 -> 전부 음수 / 케이블 -> 전부 양수).
+       clamp_live_cb 는 코너가 패치 구동이라 corner_lf 와 기저를 공유한다 — 그쪽이 음수면 clamp_cb 가 본선이다.
+
+[사고 2건 — 하네스가 적발]
+  1) `Disp_Control_Right/Left` 생성 게이트가 **케이스 이름 나열**이라 `clamp_live_cb` 누락 -> 뒤에서 KeyError.
+     => 목록 추가 + "새 케이스는 여기도" 주석.
+  2) 코너 섭동 게이트가 `HAS_CABLES` 로만 열려 `clamp_cb` 에서 LIVE_DRIVER 블록이 코너를 0 으로 둔 뒤
+     코너 프로브가 덮어썼다 = '클램프 단독' 파괴. => `and LIVE_DRIVER != 'clamp'` 추가(실측: 코너 Buckle=(0,0) ✓).
+
+[검증 — 라이선스 0] py_compile / static_leak 0건 / checker PASS(HF↔buckle 30 · HF↔모드소스 27 · buckle↔모드소스 13) /
+  하네스 6케이스 EXIT=0. 배선 실측: clamp_live_cb = BC_CL·BC_CR(끝단 u3=0) + BC_Clamp_*(RP u3=0) +
+  Disp_Control_CL/CR 끝단 프로브 ±0.0070711(=0.01/√2) / 코너는 RP 구동.
+
+[다음 — 사용자 런 2회(각 ~45 s, cae)] 사전 등록 판정:
+  ① clamp_live_cb: 코너가 패치 구동이라 corner_lf 와 같은 기저 -> **음수만** 나올 가능성이 높다. 그러면
+     "클램프 케이블은 구원하지 못한다(코너 경로가 지배)" 가 확인된다.
+  ② clamp_cb: base = seed 의 검증된 기저 + 클램프. **CONVERGED>0 + 양수 λ** 면 클램프 패밀리 씨드 재료 확보
+     = Stage B 성공(과거 판정이 구 메쉬·창 조건 특이였다는 뜻). 문서의 실패 서명(SYSTEM 음수 수백,
+     subspace 붕괴, CONVERGED=0)이 나오면 클램프 케이블을 포기하고 **clamp_lf(RP 직접 구동)** 를 씨드 재료로
+     확정한다 — 씨드는 형상만 필요하므로 하중 경로 일치는 필수가 아니다(문서 결론).
