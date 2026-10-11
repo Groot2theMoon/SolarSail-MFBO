@@ -2252,3 +2252,25 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 판정: 양수 4개 내외 + 전역 형상 -> 케이블이 원인 확정 -> Stage B(클램프 케이블 이식, HF 의 Cable_CL/CR).
       전부 음수 -> 로그 분해(음수 개수·subspace 축소) -> 다음 분기.
 설계: corner_lf(N=100, 전부 음수) <-> seed(N=100) — 차이 = **케이블 유무 하나**.
+
+#### §19.38 보강 — 원격 커밋 c002371 과의 충돌·조정 (2026-10-11)
+
+[사건] push 거부(non-fast-forward). 원격 브랜치 tip = c002371("요소 코드 및 전역 변위 값 수정", 사용자 Windows, 18:38 KST)
+— 내 3커밋과 **같은 부모 72d6fb6** 에서 갈라졌다.
+⚠️ 함정: 이 worktree 의 `remote.origin.fetch` 는 `+refs/heads/main:refs/remotes/origin/main` 뿐이라 `git fetch origin` 이
+  **브랜치 tracking ref 를 갱신하지 않는다**(`* branch ... -> FETCH_HEAD` 로만 남음) -> 원격 tip 확인은
+  `git ls-remote origin <branch>` 또는 명시적 refspec fetch 로 한다. 이 때문에 fetch 직후
+  `rev-list --left-right --count HEAD...origin/<branch>` 가 "30 0" 이라는 **거짓 안심**을 준다.
+
+[원격이 바꾼 값] ELEM_CODE_QUAD S4->S8R5 / ELEM_CODE_TRI S3->STRI65 / DISP_GLOBAL 1.8e-5->5e-6 /
+  CASE clamp_lf->corner_lf / N_EIG_BUCKLE 4->10 / BUCKLE_VECTORS 250->200 (+ ELEM_TAG 사전에서 M3D4/M3D3 제거).
+
+[조정] rebase(c002371 위로) -> 충돌 2건 해소(CASE='seed', N_EIG_BUCKLE=100·BUCKLE_VECTORS=250)
+  -> 되돌림 커밋 a46ff11 로 ELEM_CODE_QUAD/TRI·DISP_GLOBAL·ELEM_TAG 복원.
+  근거(검사기 실측 위반 3건): HF↔buckle 2 = ELEM_CODE_QUAD/TRI, buckle↔mode 1 = DISP_GLOBAL.
+  ELEM_CODE 는 격자 .inp 가 S4/S3 토폴로지라 2차 코드로는 실행 불가 + §4(2차 요소 기각) + HF/mode 정합 계약.
+  DISP_GLOBAL 은 mode.py 계약 1.8e-5(mode.py 쪽 주석도 "mode.py 와 동일한 운용점"이라고 적혀 있었다).
+
+[보존] 실험값 브랜치 `win-knobs-20261011` (=c002371), rebase 전 내 상태 태그 `backup-pre-rebase-093046d`.
+[최종 이력] 72d6fb6 -> c002371 -> bb35b29(seed 복원) -> 2c55848(창 100 동기) -> 3ba9752(§19.38) -> a46ff11(실험값 되돌림).
+[검증] checker PASS(HF↔buckle 29 / HF↔모드소스 27 / buckle↔모드소스 13, 위반 0) / 하네스 seed EXIT=0 / py_compile OK / static_leak 0건.
