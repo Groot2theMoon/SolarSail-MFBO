@@ -2581,3 +2581,31 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   (B) **클램프 가족을 살린다**: 클램프를 RP+Coupling 이 아니라 **노드집합 직접 지정변위**(이상화)로 구현해
       하드웨어 자체를 제거한 라우트(`clamp_drive='nodes'`)를 신설. 국소 압축은 유지. 에이전트가 구현
       (라이선스 0)한 뒤 1~2런으로 판정.
+
+#### §19.48 [B안] 클램프 = **노드집합 직접 구동** — 구현·검증 (2026-10-11)
+
+[동기] §19.47: 클램프 하드웨어(RP + DISTRIBUTING Coupling + Tie/케이블 + BC)를 붙인 **10개 설정이 전부
+  CONVERGED=0**. 문서의 구조적 진단(두께 5µm 막의 굽힘강성 ~0 + 강체패치 결합 = near-zero 모드 통로)을
+  **부품 제거**로 없앤다.
+
+[구현] `clamp_drive` 라우트 키('rp' 기본 = HF 와 동일 부품 | 'nodes' = 이상화) 신설.
+  - 'nodes': `create_patch_nodeset()` 로 `CL_Nodes`/`CR_Nodes` 만 만든다. **RP/Coupling/Tie/케이블 없음**
+    (`RP_CL_Set`/`RP_CR_Set` 도 생성하지 않는다).
+  - 대상 추상화 `_clamp_target(side)` = 케이블 끝단 > 노드집합 > RP. 기존 3쌍(`_btgt_*`/`_tgt_*`/`_ptgt_*`)과
+    `BC_Clamp_*` 3분기가 전부 이 헬퍼를 지나간다.
+  - 클램프 BC = 그 노드집합에 `u3=0`(그립) + `Disp_Control_*` = `DIR x 당김`(u1,u2). 회전고정 kw 는
+    'rp' 에서만 적용(`_CLAMP_ROT_KW_USE`).
+  - 케이스 2종: `corner_live_nodes`(코너 가족) / `clamp_live_nodes`(클램프 가족).
+
+[무엇이 **같은가**] base 의 클램프 당김 크기·방향(`DIR`·`CLAMP_PULL`), 제외 반경 0.21, `CLAMP_CABLE_LEN=0.5`,
+  코너 앵커/코너 케이블 — 전부 동일. 바뀐 것은 **클램프를 무엇으로 붙이는가**뿐 ⇒ 두 가족 base 일치는 유지된다.
+[무엇이 **다른가**] 클램프 구속이 "RP u3=0 + 패치 가중평균 종속" -> "패치 노드마다 u1,u2=당김·u3=0".
+  = 강체 블록의 **회전 구속이 없는** 이상화(클램프 힘은 노드 반력의 합으로 같은 총량).
+
+[검증 (라이선스 0)] py_compile OK / 검사기 PASS(HF↔buckle 30 · HF↔모드소스 27 · buckle↔모드소스 13, 위반 0) /
+  하네스 3케이스 EXIT=0. 배선 실측: `BC_Clamp_CL` -> `Set(CL_Nodes)` u3=0, `Disp_Control_CL`
+  Initial 0 / GlobalTension (DIR x 당김) / Step-Buckle 0, 노드셋에 `CL_Nodes`·`CR_Nodes` 있고
+  `RP_CL_Set`·`Tie_CL`·`Cable_CL` **0건**.
+
+[다음] `CASE=corner_live_nodes` + `-- 0.5 1.8e-5 0` 1런 -> 성공하면 `clamp_live_nodes` 1런 -> 2+2 재료.
+  실패하면 클램프 가족을 포기하고 (A) seed 클램프-free 4모드로 확정한다.

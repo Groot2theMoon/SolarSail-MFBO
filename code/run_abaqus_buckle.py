@@ -23,6 +23,8 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     clamp_live_cb 위와 같되 전부 케이블 끝단 구동     클램프 프로브(코너 0 명시) 클램프 가족 ★ (HF 경로)
     corner_live_cb base 는 clamp_live_cb 와 **동일**  코너 프로브(클램프 0 명시) 코너 가족 ★ (HF 경로)
     corner_live_rp 위와 같되 클램프 전달 = RP 직접    코너 프로브(클램프 0 명시) 대조: 클램프 케이블 제거
+    corner_live_nodes [B안] 클램프 = 노드집합 직접    코너 프로브(클램프 0 명시) 패치/Coupling/케이블 없음
+    clamp_live_nodes  [B안] 클램프 = 노드집합 직접    클램프 프로브(코너 0 명시) 클램프 가족 재료
     clamp_lf_cb   clamp_lf + 클램프 당김을 케이블로   (1-DEAD_FRAC) x P          운용점 회계(λ=1=운용점)
     ⚠️ corner_lf/clamp_live 의 lambda 는 운용점 회계(위 clamp_lf 의 lambda=1)가 **아니다** —
        프로브 크기의 배수다. 모드 형상은 프로브 크기에 불변.
@@ -202,7 +204,7 @@ CORNER_ANGLE_DEG = 28.6
 # 케이스 (CASE) — '무엇을 DEAD, 무엇을 LIVE 로 두는가'만 고른다.
 #   원칙: 수치는 모듈 최상위 리터럴 상수로 유지한다(check_model_consistency 의 SHARED 가 리터럴
 #   문자열을 비교한다). CASE 는 배선만 고르고, 요구 상수 조합은 아래에서 런타임 검증한다.
-CASE = 'corner_live_rp'   # 현재 런 대상 — RP 회전고정(rotfix) 시험 (§19.45)
+CASE = 'corner_live_nodes'   # 현재 런 대상 — [B안] 클램프 노드집합 직접 구동 (§19.48)
 
 _CASE_TABLE = {
     #  seed: [2026-10-11 복원] 꼭짓점을 케이블(T3D2)+Tie 로 잇고 **케이블 끝단**을 구동한다 —
@@ -239,6 +241,13 @@ _CASE_TABLE = {
     #    cb 라우트(음수 62)와의 차이가 **클램프 케이블뿐**인 대조 케이스다.
     'corner_live_rp': dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
                            live_driver='corner', clamp_cable=False),
+    #  [B안, 2026-10-11] 클램프를 **노드집합 직접 지정변위**로 — RP/Coupling/Tie/케이블 없음.
+    #    RP+Coupling 붙은 10개 설정이 전부 CONVERGED=0 이었다(§19.47). 여기서는 클램프가
+    #    'u1,u2 = DIR x 당김, u3 = 0' 인 이동 경계가 된다(국소 압축은 그대로).
+    'corner_live_nodes': dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
+                              live_driver='corner', clamp_drive='nodes'),
+    'clamp_live_nodes':  dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
+                              live_driver='clamp', clamp_drive='nodes'),
     #  clamp_lf_cb: [2026-10-11] **HF 정합본** — 클램프 당김을 base(DEAD_FRAC 몫)까지 케이블로 전달한다.
     #    클램프가 base state 를 압축하므로 x_c 가 모드를 바꾼다(clamp_lf 의 회계 + HF 하중 경로).
     #    ⚠️ 위의 두 _cb 케이스는 클램프 당김이 base 에 **없다** — 구 스크립트가 CLOAD 를 Step-Buckle 에
@@ -266,6 +275,11 @@ LIVE_DRIVER = _ROUTE.get('live_driver', 'corner')   # 'corner'(기존 케이스)
 #   clamp_cable: 클램프 하중을 **케이블 끝단**으로 전달하는가(HF 와 같은 하중 경로).
 #     False(기본) = 클램프 강체패치 RP 직접 구동(clamp_lf/clamp_live 의 현행 경로).
 HAS_CLAMP_CABLES = bool(_ROUTE.get('clamp_cable', False))
+#   clamp_drive: 클램프를 어떻게 붙이는가.
+#     'rp'(기본, 현행) = 강체패치 RP + Coupling(DISTRIBUTING) + (선택) Tie/케이블 — HF 와 같은 부품.
+#     'nodes'         = **이상화**: 노드집합에 u1/u2(당김)·u3=0(그립)을 직접 지정변위 — RP/Coupling/
+#                       Tie/케이블이 **없다**(near-zero 모드의 통로를 제거). 국소 압축은 그대로 생긴다.
+CLAMP_DRIVE = _ROUTE.get('clamp_drive', 'rp')
 
 
 def _require_constant(name, have, want):
@@ -778,6 +792,16 @@ def create_rigid_patch(a, inst_memb, name, coord, radius):
     return rp, rp_region
 
 
+def create_patch_nodeset(a, inst_memb, name, coord, radius):
+    """[B안] 강체패치 없이 **노드집합만** 만든다(RP/Coupling 없음).
+
+    clamp_drive='nodes' 전용: 클램프를 노드집합 직접 지정변위로 구동하기 위한 대상.
+    """
+    nodes = inst_memb.nodes.getByBoundingSphere(center=coord, radius=radius)
+    if not nodes:
+        nodes = (inst_memb.nodes.getClosest(coordinates=coord),)
+    return a.Set(name=name + '_Nodes', nodes=nodes)
+
 
 def connect_cable(a, name, part, sail_corner, vector_dir, radius=1e-4, cable_len=None):
     """케이블 인스턴스를 꼭짓점에 붙이고 (시작단, 끝단) 노드 영역을 돌려준다.
@@ -895,8 +919,12 @@ def build_model(disp):
     # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5) — 동일
     #   CLAMP_MODE='none' 이면 패치를 아예 만들지 않는다 (논문 재현 기준선 P0).
     if not HAS_CLAMPS:
-        # 'cload' 라우트는 CLAMP_MODE 와 무관하게 클램프 패치가 필요하다(집중하중 대상).
         rp_cl_obj = rp_cr_obj = None
+    elif CLAMP_DRIVE == 'nodes':
+        #   [B안] 강체패치를 만들지 않는다 — 노드셋만(RP/Coupling/Tie/케이블 전부 없음).
+        rp_cl_obj = rp_cr_obj = None
+        create_patch_nodeset(a, inst_memb, 'CL', V_CL, radius=0.2)
+        create_patch_nodeset(a, inst_memb, 'CR', V_CR, radius=0.2)
     else:
         rp_cl_obj, rp_cl_reg = create_rigid_patch(a, inst_memb, 'CL', V_CL, radius=0.2)
         rp_cr_obj, rp_cr_reg = create_rigid_patch(a, inst_memb, 'CR', V_CR, radius=0.2)
@@ -917,7 +945,7 @@ def build_model(disp):
     a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
     a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
     a.Set(name='RP_Left_Set', referencePoints=(a.referencePoints[rp3_obj.id],))
-    if HAS_CLAMPS:
+    if HAS_CLAMPS and CLAMP_DRIVE == 'rp':
         a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
         a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
     # Tie (RP <-> 케이블 시작단) — mode.py 와 동일. cload 라우트에는 케이블이 없다.
@@ -939,6 +967,16 @@ def build_model(disp):
     # ---- 구동점 추상화 ----
     #   'cable' : 케이블 끝단(end_c*)에 변위를 준다.
     #   'cload' : 케이블이 없으므로 **강체패치 RP** 에 하중/구속을 직접 건다.
+    def _clamp_target(side):
+        #   클램프 구동/구속 대상: 케이블 끝단 > 노드집합(B안) > 강체패치 RP(현행).
+        if HAS_CLAMP_CABLES:
+            return end_cl if side == 'CL' else end_cr
+        if CLAMP_DRIVE == 'nodes':
+            return a.sets['CL_Nodes' if side == 'CL' else 'CR_Nodes']
+        return a.sets['RP_CL_Set' if side == 'CL' else 'RP_CR_Set']
+
+    _CLAMP_ROT_KW_USE = _CLAMP_ROT_KW if CLAMP_DRIVE == 'rp' else {}
+
     if HAS_CABLES:
         A1, A2, A3 = end_c1, end_c2, end_c3
     else:
@@ -1063,11 +1101,11 @@ def build_model(disp):
     #   clamp_load='live' (clamp_lf): 꼭짓점·클램프를 DEAD_FRAC / (1-DEAD_FRAC) 로 나눈다 = 운용점 회계.
     if CLAMP_LOAD == 'base':
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                                region=a.sets['RP_CL_Set'], u3=0, **_CLAMP_ROT_KW)
+                                region=_clamp_target('CL'), u3=0, **_CLAMP_ROT_KW_USE)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
-                                region=a.sets['RP_CR_Set'], u3=0, **_CLAMP_ROT_KW)
-        _btgt_cl = end_cl if HAS_CLAMP_CABLES else a.sets['RP_CL_Set']
-        _btgt_cr = end_cr if HAS_CLAMP_CABLES else a.sets['RP_CR_Set']
+                                region=_clamp_target('CR'), u3=0, **_CLAMP_ROT_KW_USE)
+        _btgt_cl = _clamp_target('CL')
+        _btgt_cr = _clamp_target('CR')
         for _nm, _rg, _d1, _d2 in (('Disp_Control_CL', _btgt_cl, DIR_CL[0], DIR_CL[1]),
                                    ('Disp_Control_CR', _btgt_cr, DIR_CR[0], DIR_CR[1])):
             my_model.DisplacementBC(name=_nm, createStepName='Initial',
@@ -1089,13 +1127,13 @@ def build_model(disp):
         #   거부했다. 회계: DEAD=base state(GlobalTension) / LIVE=좌굴 스텝 -> lambda=1 이 운용점.
         # =====================================================================
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                                region=a.sets['RP_CL_Set'], u3=0, **_CLAMP_ROT_KW)
+                                region=_clamp_target('CL'), u3=0, **_CLAMP_ROT_KW_USE)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
-                                region=a.sets['RP_CR_Set'], u3=0, **_CLAMP_ROT_KW)
+                                region=_clamp_target('CR'), u3=0, **_CLAMP_ROT_KW_USE)
         #   크기 출처는 HF 와 동일: 꼭짓점 = DISP, 클램프 = CLAMP_PULL(= CLAMP_DC x DISP).
         #   클램프 구동 대상: clamp_cable 이면 **케이블 끝단**(HF 와 같은 하중 경로), 아니면 패치 RP.
-        _tgt_cl = end_cl if HAS_CLAMP_CABLES else a.sets['RP_CL_Set']
-        _tgt_cr = end_cr if HAS_CLAMP_CABLES else a.sets['RP_CR_Set']
+        _tgt_cl = _clamp_target('CL')
+        _tgt_cr = _clamp_target('CR')
         _DRV = (('Disp_Control_Right', A2, cos_val, -sin_val, DISP),
                 ('Disp_Control_Left', A3, -cos_val, -sin_val, DISP),
                 ('Disp_Control_CL', _tgt_cl, DIR_CL[0], DIR_CL[1], CLAMP_PULL),
@@ -1125,17 +1163,17 @@ def build_model(disp):
     elif HAS_CLAMPS:
         # 구속만 (CLAMP_LOAD='none'): 패치 RP 의 면외(u3)만 막고 in-plane 은 자유. 하중 없음.
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                                region=a.sets['RP_CL_Set'], u3=0, **_CLAMP_ROT_KW)
+                                region=_clamp_target('CL'), u3=0, **_CLAMP_ROT_KW_USE)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
-                                region=a.sets['RP_CR_Set'], u3=0, **_CLAMP_ROT_KW)
+                                region=_clamp_target('CR'), u3=0, **_CLAMP_ROT_KW_USE)
 
     if LIVE_DRIVER == 'clamp':
         #   클램프 가족 런: LIVE = 클램프 단독 프로브. base 는 CLAMP_LOAD 가 정한다
         #   ('base' = 당김 전량 -- 위 분기에서 이미 배선 / 'none' = 당김 0 -- 여기서 배선).
         if CLAMP_LOAD == 'none':
             #   프로브 대상: clamp_cable 이면 케이블 끝단(HF 하중 경로), 아니면 패치 RP.
-            _ptgt_cl = end_cl if HAS_CLAMP_CABLES else a.sets['RP_CL_Set']
-            _ptgt_cr = end_cr if HAS_CLAMP_CABLES else a.sets['RP_CR_Set']
+            _ptgt_cl = _clamp_target('CL')
+            _ptgt_cr = _clamp_target('CR')
             my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial',
                                     region=_ptgt_cl, u1=0.0, u2=0.0)
             my_model.DisplacementBC(name='Disp_Control_CR', createStepName='Initial',
@@ -1235,10 +1273,11 @@ _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 
 #   새 케이스의 표기: base=전량 프리텐션(f100) / base 클램프 당김 없음(dc000). CASE 세그먼트가 달라 유일성은 보장.
 _f_tag = int(round(DEAD_FRAC * 100.0)) if CASE in ('clamp_lf', 'clamp_lf_cb') else 100
 _dc_tag = (int(round(CLAMP_DC_EFF * 100.0))
-           if CASE in ('clamp_lf', 'clamp_lf_cb', 'clamp_live', 'clamp_live_cb', 'corner_live_cb')
+           if CASE in ('clamp_lf', 'clamp_lf_cb', 'clamp_live', 'clamp_live_cb', 'corner_live_cb',
+                       'corner_live_rp', 'corner_live_nodes', 'clamp_live_nodes')
            else 0)
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
-_live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE in ('clamp_live', 'clamp_live_cb', 'corner_live_cb') else ''
+_live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE in ('clamp_live', 'clamp_live_cb', 'corner_live_cb', 'clamp_live_nodes', 'corner_live_nodes', 'corner_live_rp') else ''
 _rot_tag = '_rotfix' if CLAMP_RP_FIX_ROT else ''   # 스위치를 켜면 출력 이름이 갈린다
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
 JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x_c * 100.0)),
