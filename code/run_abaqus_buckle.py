@@ -17,7 +17,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     CASE          DEAD (base state)                 LIVE (lambda 의 대상)      답하는 질문
     clamp_lf      DEAD_FRAC x P + 클램프 u3=0       (1-DEAD_FRAC) x P          운용 램프의 좌굴 배수(lambda=1=운용점)
     corner_lf     코너 전량 DISP, 클램프 없음        코너 PERTURBATION          그리드에서의 코너 하중 모드(합성 씨드 1/2)
-    clamp_live    코너 전량 DISP + 클램프 u3=0,      클램프 DIR x CLAMP_LIVE_M  클램프 구동 모드(합성 씨드 2/2)
+    clamp_live    코너 전량 DISP + 클램프 u3=0,      클램프 DIR x PERTURBATION  클램프 구동 모드(합성 씨드 2/2)
                   클램프 당김 0(명시)
     ⚠️ corner_lf/clamp_live 의 lambda 는 운용점 회계(위 clamp_lf 의 lambda=1)가 **아니다** —
        프로브 크기의 배수다. 모드 형상은 프로브 크기에 불변.
@@ -198,6 +198,10 @@ _CASE_TABLE = {
     #  corner_lf: 그리드·무클램프. base=코너 전량(DISP), LIVE=코너 프로브(PERTURBATION).
     #    합성 씨드(코너 패밀리) 재료 — clamp_lf 의 lambda=1 운용점 회계가 아니다(lambda=프로브 배수).
     'corner_lf':    dict(cables=False, clamps=False, clamp_load='none', corner_dir='hf'),
+    #  clamp_live: base=초기 인장만(코너 전량, 클램프 당김 0 명시), LIVE=클램프 단독 프로브.
+    #    합성 씨드(클램프 패밀리) 재료. lambda=프로브 배수. live_driver='clamp' 가 배선을 가른다.
+    'clamp_live':   dict(cables=False, clamps=True,  clamp_load='none', corner_dir='hf',
+                         live_driver='clamp'),
 }
 
 
@@ -214,6 +218,7 @@ HAS_CABLES = _ROUTE['cables']       # 꼭짓점을 케이블(T3D2)+Tie 로 잇�
 HAS_CLAMPS = _ROUTE['clamps']       # 클램프 강체패치를 만드는가
 CLAMP_LOAD = _ROUTE['clamp_load']   # 'none' | 'live' (live = 클램프를 집중하중으로 LIVE 에)
 CORNER_DIR = _ROUTE['corner_dir']   # 'hf' | 'paper45'
+LIVE_DRIVER = _ROUTE.get('live_driver', 'corner')   # 'corner'(기존 케이스) | 'clamp'(clamp_live)
 
 
 def _require_constant(name, have, want):
@@ -941,8 +946,8 @@ def build_model(disp):
         u3=SET, ur1=SET, ur2=SET, ur3=SET
     )
     disp_a = disp
-    #   corner_lf 도 여기서 구동 BC 를 만든다 — 그리드·무클램프 모델의 base(전량 프리텐션).
-    if HAS_CABLES or CORNER_DIR == 'paper45' or CASE == 'corner_lf':
+    #   corner_lf/clamp_live 도 여기서 구동 BC 를 만든다 — 새 케이스의 base(전량 프리텐션).
+    if HAS_CABLES or CORNER_DIR == 'paper45' or CASE in ('corner_lf', 'clamp_live'):
         # 변위 구동: 'cable' 은 케이블 끝단, 'paper45' 는 꼭짓점 강체패치 RP (논문 레시피).
         my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
                                 region=A2, u1=SET, u2=SET)
@@ -1016,6 +1021,31 @@ def build_model(disp):
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
                                 region=a.sets['RP_CR_Set'], u3=0, **_CLAMP_ROT_KW)
 
+    if LIVE_DRIVER == 'clamp':
+        # =====================================================================
+        # clamp_live — base 는 **초기 인장만**(코너 전량, 클램프 당김 0 명시).
+        #   좌굴 스텝의 패턴은 클램프 단독 — 합성 씨드(클램프 패밀리)용. lambda=프로브 배수.
+        # =====================================================================
+        my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial',
+                                region=a.sets['RP_CL_Set'], u1=0.0, u2=0.0)
+        my_model.DisplacementBC(name='Disp_Control_CR', createStepName='Initial',
+                                region=a.sets['RP_CR_Set'], u1=0.0, u2=0.0)
+        for _nm, _d1, _d2 in (('Disp_Control_CL', DIR_CL[0], DIR_CL[1]),
+                              ('Disp_Control_CR', DIR_CR[0], DIR_CR[1])):
+            #   base: 클램프 당김 0 을 생략하지 않고 **명시**(초기 인장만). 좌굴 스텝: 클램프 단독.
+            my_model.boundaryConditions[_nm].setValuesInStep(
+                stepName='Step-GlobalTension', u1=0.0, u2=0.0)
+            my_model.boundaryConditions[_nm].setValuesInStep(
+                stepName='Step-Buckle',
+                u1=PATTERN_SIGN * PERTURBATION * _d1,
+                u2=PATTERN_SIGN * PERTURBATION * _d2)
+        #   코너는 좌굴 스텝에서 0 명시 — LIVE = 클램프 단독 (E3 프로브 블록과 역할이 다르다).
+        for _nm in ('Disp_Control_Right', 'Disp_Control_Left'):
+            my_model.boundaryConditions[_nm].setValuesInStep(
+                stepName='Step-Buckle', u1=0.0, u2=0.0)
+        print("%s [clamp_live] base=코너 %.4g m + 클램프 당김 0 / LIVE=클램프 %.4g m x DIR (프로브)"
+              % (TAG, DISP, PERTURBATION))
+
     # ---- Buckle 스텝: 논문 (c) 3변 u3=0 유지 + 클램프 구간은 면외 구속에서 제외(§9) ----
     _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)
                    if HAS_CLAMPS else set())
@@ -1088,14 +1118,16 @@ _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 
 #   새 케이스의 표기: base=전량 프리텐션(f100) / base 클램프 당김 없음(dc000). CASE 세그먼트가 달라 유일성은 보장.
 _f_tag = int(round(DEAD_FRAC * 100.0)) if CASE == 'clamp_lf' else 100
 _dc_tag = int(round(CLAMP_DC_EFF * 100.0)) if CASE == 'clamp_lf' else 0
+#   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
+_live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE == 'clamp_live' else ''
 _rot_tag = '_rotfix' if CLAMP_RP_FIX_ROT else ''   # 스위치를 켜면 출력 이름이 갈린다
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
-JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s' % (int(round(x_c * 100.0)),
+JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x_c * 100.0)),
                                                        int(round(DISP * 1.0e6)),
                                                        _dc_tag,
                                                        _f_tag,
                                                        ELEM_TAG, MESH_TAG, CASE, CLAMP_DIR,
-                                                       _excl_tag, _rot_tag)
+                                                       _excl_tag, _rot_tag, _live_tag)
 
 print("")
 print("=" * 78)

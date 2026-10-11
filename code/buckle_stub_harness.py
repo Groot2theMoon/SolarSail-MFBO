@@ -519,7 +519,10 @@ def _shim_numpy():
 
 def _stub_modules(head):
     """`from abaqus import *` 등이 대문자 심볼을 전부 가져가므로 소스에서 이름을 긁어 채운다."""
+    #   주의: 스크립트가 **스스로 대입하는** 대문자 이름(PERTURBATION 등)을 스텁이 선점하면
+    #   정의 순서 버그(NameError)를 가려버린다(실측: CLAMP_LIVE_M 사고 — 실제 런은 L263 에서 즉사).
     consts = sorted(set(re.findall(r'\b([A-Z][A-Z0-9_]{1,})\b', head)))
+    consts = [n for n in consts if not re.search(r'^%s\s*=' % n, head, re.M)]
     mods = {}
     for mod in ('abaqus', 'abaqusConstants', 'step', 'mesh', 'regionToolset', 'interaction'):
         m = types.ModuleType(mod)
