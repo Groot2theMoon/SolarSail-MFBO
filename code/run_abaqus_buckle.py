@@ -24,6 +24,8 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
                   끝단(코너는 RP 구동)               (클램프 케이블 끝단)       (clamp_live 대비 단일변수)
     clamp_cb      코너도 케이블 끝단 구동(seed 와     클램프 DIR x PERTURBATION  HF 토폴로지
                   동일) + 클램프 케이블              (클램프 케이블 끝단)       (코너+클램프 케이블)
+    clamp_lf_cb   clamp_lf 와 같되 클램프 몫도        (1-DEAD_FRAC) x P          HF 정합본 — 클램프가
+                  케이블 끝단으로 전달(DEAD 포함)                               base 를 압축(x_c 유효)
     ⚠️ corner_lf/clamp_live 의 lambda 는 운용점 회계(위 clamp_lf 의 lambda=1)가 **아니다** —
        프로브 크기의 배수다. 모드 형상은 프로브 크기에 불변.
       seed 는 케이블 3개(Cable_Top/Right/Left)를 Tie 로 꼭짓점 패치에 연결하고 끝단을 구동한다
@@ -227,6 +229,13 @@ _CASE_TABLE = {
                           live_driver='clamp', clamp_cable=True),
     'clamp_cb':      dict(cables=True,  clamps=True, clamp_load='none', corner_dir='hf',
                           live_driver='clamp', clamp_cable=True),
+    #  clamp_lf_cb: [2026-10-11] **HF 정합본** — 클램프 당김을 base(DEAD_FRAC 몫)까지 케이블로 전달한다.
+    #    클램프가 base state 를 압축하므로 x_c 가 모드를 바꾼다(clamp_lf 의 회계 + HF 하중 경로).
+    #    ⚠️ 위의 두 _cb 케이스는 클램프 당김이 base 에 **없다** — 구 스크립트가 CLOAD 를 Step-Buckle 에
+    #       둔 런을 '완주했지만 클램프 무효(base 압축 0.08 %, x_c 를 바꿔도 모드 불변)' 로 판정한 이력이
+    #       있다(references/clamp-cable-driven-route.md). 그 결론이 이 케이스다.
+    'clamp_lf_cb':   dict(cables=False, clamps=True, clamp_load='live', corner_dir='hf',
+                          clamp_cable=True),
 }
 
 
@@ -1188,8 +1197,8 @@ if ELEM_TAG is None:
 #   이름이 겹쳐 run_job_safely 가 직전 증거를 지운다(§11).
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
 #   새 케이스의 표기: base=전량 프리텐션(f100) / base 클램프 당김 없음(dc000). CASE 세그먼트가 달라 유일성은 보장.
-_f_tag = int(round(DEAD_FRAC * 100.0)) if CASE == 'clamp_lf' else 100
-_dc_tag = int(round(CLAMP_DC_EFF * 100.0)) if CASE == 'clamp_lf' else 0
+_f_tag = int(round(DEAD_FRAC * 100.0)) if CASE in ('clamp_lf', 'clamp_lf_cb') else 100
+_dc_tag = int(round(CLAMP_DC_EFF * 100.0)) if CASE in ('clamp_lf', 'clamp_lf_cb') else 0
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
 _live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE in ('clamp_live', 'clamp_live_cb', 'clamp_cb') else ''
 _rot_tag = '_rotfix' if CLAMP_RP_FIX_ROT else ''   # 스위치를 켜면 출력 이름이 갈린다
