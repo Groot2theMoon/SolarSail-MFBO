@@ -2381,3 +2381,32 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   코너 GlobalTension = DISP 전량 / Buckle = 0. B: **동일한 base**, 코너 Buckle = (0.0087798, −0.0047869)(프로브), 클램프 0.
 
 [다음] 사용자 런 2회(A/B) -> 각 런에서 모드 1·2 채택 -> 형상 리포트로 ω 확정 -> 합성 -> HF 주입.
+
+### 19.42 A/B 런 결과 — 기계는 작동, 다음은 '개시 아래로' (2026-10-11)
+
+[결과] (각 런 ~30 s, cae)
+  A `clamp_live_cb` : ✗ `***ERROR: THE EIGENVALUES CANNOT BE FOUND ... INSTABILITIES IN THE BASE STATE`,
+     CONVERGED=0, eigen table 없음. base 정적 solve 에서 SYSTEM 음수 96 -> 108 -> 114 -> **118**,
+     좌굴 스텝 subspace 16 으로 붕괴.
+  B `corner_live_cb`: ✓ 완주(0 error), 모드 2개, **둘 다 음수** — λ = −5.49377e-05, −6.72179e-05.
+
+[해석 — B: 추출 기계는 정상 작동]
+  d* = base + λ x PERTURBATION = 18µm + λ x 10mm  ->  **17.45 / 17.33µm**.
+  즉 클램프를 5.56 %(1.0µm) 당긴 base 에서 **코너 가족 좌굴 개시 = 17.4µm**.
+  비교: 같은 격자·무클램프 base(`seed`)는 λ = +2.32847e-04 -> 개시 **20.33µm**.
+  => 클램프 1.0µm 당김이 코너 가족 개시를 **20.33 -> 17.45µm (−2.9µm, −14 %)** 로 끌어내렸다 —
+     클램프가 base 를 국소 압축해 좌굴을 앞당긴다는 54배 조사 기제와 정합하고, **x_c 의 영향이 모드에 나타난다**.
+  => λ 가 음수인 이유는 단순히 **base(18µm)가 개시(17.45µm)보다 0.55µm 높기 때문**이다(기계 결함 아님).
+
+[해석 — A: base 자체가 국소 불안정]
+  **같은 base** 에서 LIVE 를 클램프 패턴으로 바꾸면 고유값이 아예 없다. base 정적 solve 부터 SYSTEM 음수 118개
+  (클램프 주변 국소 압축이 만든 negative pivot). 창(요청 수) 문제가 아니다 — 같은 base·같은 요청에서 B 는 2개를 냈다.
+  LIVE 패턴이 클램프일 때만 죽는다(과거 `driven`/`cload` 클램프 라우트의 실패 서명과 같은 계열).
+
+[다음 — 파일 수정 없이 CLI 로 (cae 2회, 각 ~30 s)]
+  ① B: `abaqus cae noGUI=run_abaqus_buckle.py -- 0.5 1.6e-5`  (base 16µm < 개시 17.45µm) -> λ ≈ +1.45e-04 예상(양수)
+  ② A: 같은 `-- 0.5 1.6e-5` -> base 압축이 줄어 SYSTEM 음수가 감소 -> 살아나는지 판정
+     (안 살아나면 `-- 0.5 1.6e-5 5e-7` 로 클램프 당김 0.5µm — CLAMP_DC 대신 CLI 3번째 인자)
+  ⚠️ 요청 수는 `.msg` **초기 블록의 `NUMBER OF EIGENVALUES n`** 으로 읽는다(끝줄 "REQUESTED BY THE USER: 2" 는
+     축소 결과일 수 있다 — §19.39 함정). 두 런의 그 값이 창 규칙(요청 > SYSTEM 음수) 판정에 쓰인다.
+  ⚠️ §19.40 의 사전 등록 판정표는 **배선이 잘못된 상태**에서 쓴 것이라 폐기한다(§19.41 정정).
