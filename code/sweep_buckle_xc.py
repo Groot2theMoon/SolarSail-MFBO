@@ -29,8 +29,9 @@ sweep_buckle_xc.py — 버클모드가 성공하는 x_c 범위를 찾는 스윕 
 
 출력
     buckle/sweep_xc_results.csv — x_c, f, verdict, negative, seconds, job, note
-    판정: ok(고유값 표 있음) / fail:eigenvalues(개시 위·불안정) /
-          fail:other(그 외 — 그 x_c 는 f 로 못 넘긴다) / fail:no-job(Abaqus 실행 실패)
+    판정: ok(**양수 lambda 존재**) / fail:negative-modes(표는 있으나 전부 음수 = 개시 넘음) /
+          fail:eigenvalues(표 없음 — 창·조건화) / fail:other(그 외) / fail:no-job(실행 실패)
+    note 열에 n과 lambda 값 기록. 개시 하중비 = f + (1-f) x lambda1 (x_c=0.5 검증: 0.5041).
 """
 import argparse
 import csv
@@ -64,8 +65,20 @@ def read_text(path):
         return ''
 
 
+def parse_lams(dat):
+    """.dat 의 MODE NO/EIGENVALUE 표에서 lambda 열을 읽는다 (없으면 None)."""
+    m = re.search(r'MODE NO\s+EIGENVALUE(.*?)(?:THE ANALYSIS|\Z)', dat, re.S)
+    if not m:
+        return None
+    lams = [float(x) for x in re.findall(
+        r'^\s*\d+\s+([-+]?[0-9.]+(?:[Ee][-+]?\d+)?)\s*$', m.group(1), re.M)]
+    return lams or None
+
+
 def classify(job, out):
-    """(verdict, negative) — .dat/.msg 우선, 없으면 콘솔 출력."""
+    """(verdict, note) — .dat/.msg 기반. **양수 lambda 가 하나도 없으면 ok 가 아니다**:
+        전부 음수면 base 가 이미 개시를 넘은 상태의 unloading 분기다(시드로 쓸 수 없다).
+        개시 하중비 = f + (1-f) x lambda1 (x_c=0.5 검증: 0.5+0.5x8.1969e-3 = 0.5041)."""
     dat = read_text(os.path.join(BUCKLE, job + '.dat')) if job else ''
     msg = read_text(os.path.join(BUCKLE, job + '.msg')) if job else ''
     neg = ''
@@ -76,8 +89,12 @@ def classify(job, out):
         return 'fail:no-job', neg
     if 'CANNOT BE FOUND' in dat or 'CANNOT BE FOUND' in msg:
         return 'fail:eigenvalues', neg
-    if 'MODE NO' in dat and 'EIGENVALUE' in dat:
-        return 'ok', neg
+    lams = parse_lams(dat)
+    if lams:
+        note = 'n=%d lam=%s' % (len(lams), ','.join('%.4g' % v for v in lams[:4]))
+        if any(v > 0 for v in lams):
+            return 'ok', note
+        return 'fail:negative-modes', note
     if 'HAS BEEN COMPLETED' in dat:
         return 'fail:other', neg          # 완주했는데 고유값 표가 없다 — f 로 못 넘긴다
     return 'fail:other', neg
@@ -167,8 +184,8 @@ def main():
         print('  -> %s (%.0fs)%s' % (verdict, dt, ('  negative=%s' % neg) if neg else ''))
         if verdict == 'ok':
             continue
-        if verdict == 'fail:eigenvalues':
-            continue                       # 개시 위 — f 를 낮춰 재시도
+        if verdict in ('fail:eigenvalues', 'fail:negative-modes'):
+            continue                       # 개시 위/넘음 — f 를 낮춰 재시도
         print('  !! %s — f 로 못 넘긴다. 이 x_c 의 나머지 사다리 생략.' % verdict)
         for f2 in ladder:
             if f2 < f and (round(xc, 4), round(f2, 4)) not in done:
