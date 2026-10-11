@@ -15,12 +15,15 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
 
 케이스 (CASE 상수). 예전의 LOAD_MODE x CLAMP_MODE 조합 표면을 대체한다.
     CASE          DEAD (base state)                 LIVE (lambda 의 대상)      답하는 질문
+    seed          코너 전량 DISP (케이블 끝단 구동)  코너 PERTURBATION(끝단)    케이블 라우트 corner 모드 — 전역 4모드 재현
     clamp_lf      DEAD_FRAC x P + 클램프 u3=0       (1-DEAD_FRAC) x P          운용 램프의 좌굴 배수(lambda=1=운용점)
     corner_lf     코너 전량 DISP, 클램프 없음        코너 PERTURBATION          그리드에서의 코너 하중 모드(합성 씨드 1/2)
     clamp_live    코너 전량 DISP + 클램프 u3=0,      클램프 DIR x PERTURBATION  클램프 구동 모드(합성 씨드 2/2)
                   클램프 당김 0(명시)
     ⚠️ corner_lf/clamp_live 의 lambda 는 운용점 회계(위 clamp_lf 의 lambda=1)가 **아니다** —
        프로브 크기의 배수다. 모드 형상은 프로브 크기에 불변.
+      seed 는 케이블 3개(Cable_Top/Right/Left)를 Tie 로 꼭짓점 패치에 연결하고 끝단을 구동한다
+      — 이 케이스만 HAS_CABLES=True 이며 buckle<->mode 정합 계약의 적용 대상이다.
       P = 꼭짓점 + 클램프 하중 세트(CORNER_F0 / CLAMP_F0). clamp_lf 는 케이블 0개다.
       BUCKLING LOAD = DEAD + lambda*LIVE 이므로 **clamp_lf 의 lambda = 1 이 운용점**이다.
       무효 조합(예: 코너는 케이블, 클램프는 CLOAD)은 상수 검증이 런타임 예외로 막는다.
@@ -190,10 +193,12 @@ CORNER_ANGLE_DEG = 28.6
 # 케이스 (CASE) — '무엇을 DEAD, 무엇을 LIVE 로 두는가'만 고른다.
 #   원칙: 수치는 모듈 최상위 리터럴 상수로 유지한다(check_model_consistency 의 SHARED 가 리터럴
 #   문자열을 비교한다). CASE 는 배선만 고르고, 요구 상수 조합은 아래에서 런타임 검증한다.
-CASE = 'corner_lf'   # 단일 케이스 (은퇴 이력: notes/history.md §19.35)
+CASE = 'seed'   # 현재 런 대상 — 케이블 구동 corner-family 재현 (은퇴/복원 이력: §19.35, §19.38)
 
 _CASE_TABLE = {
-    #  소케이블 라우트(구 seed 등)의 은퇴 경위는 notes/history.md §19.35.
+    #  seed: [2026-10-11 복원] 꼭짓점을 케이블(T3D2)+Tie 로 잇고 **케이블 끝단**을 구동한다 —
+    #    mode.py(ClampFree_Buckle) 와 같은 하중 경로. 원래 전역 4모드의 재현용(은퇴 경위 §19.35).
+    'seed':         dict(cables=True,  clamps=False, clamp_load='none', corner_dir='hf'),
     'clamp_lf':     dict(cables=False, clamps=True,  clamp_load='live', corner_dir='hf'),
     #  corner_lf: 그리드·무클램프. base=코너 전량(DISP), LIVE=코너 프로브(PERTURBATION).
     #    합성 씨드(코너 패밀리) 재료 — clamp_lf 의 lambda=1 운용점 회계가 아니다(lambda=프로브 배수).
