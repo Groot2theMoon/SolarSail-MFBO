@@ -331,7 +331,7 @@ def main():
     print("  run_abaqus_buckle.py  CASE = %s   CORNER_ANGLE_DEG = %s   DEAD_FRAC = %s   CORNER_F0 = %s"
           % (_case, _cang, _dfr, _cf0))
     _CABLE_CASES = ('seed', 'control_none')
-    _KNOWN_CASES = _CABLE_CASES + ('clamp_lf', 'paper_s1')
+    _KNOWN_CASES = _CABLE_CASES + ('clamp_lf', 'corner_lf', 'clamp_live', 'paper_s1')
     if _case == '(없음)':
         # [2026-10-07] 여기서 **실패**시킨다. 경고만 찍으면 CASE 줄을 주석 처리한 옛 사본이
         #   PASS 로 통과한다(규칙 18: 문자열 존재 검사는 주석 처리된 쌍둥이에 만족한다).
@@ -343,8 +343,8 @@ def main():
               % (_case, '|'.join(_KNOWN_CASES)))
     elif _case in _CABLE_CASES:
         print("  OK   CASE='%s' — 위 buckle<->mode 정합 계약이 그대로 성립한다." % _case)
-    elif _case == 'clamp_lf':
-        print("  WARN CASE='clamp_lf' — 케이블 0개(전부 집중하중). buckle<->mode 계약은 적용 대상이 아니다.")
+    elif _case in ('clamp_lf', 'corner_lf', 'clamp_live'):
+        print("  WARN CASE='%s' — 케이블 0개(전부 집중하중). buckle<->mode 계약은 적용 대상이 아니다." % _case)
         print("       판정은 모드 형상(면외 비율 / 압축영역 분포 / x_c 이동)으로 한다.")
         if _dfr == '(없음)':
             bad7.append('clamp_lf 인데 DEAD_FRAC 를 읽지 못함')

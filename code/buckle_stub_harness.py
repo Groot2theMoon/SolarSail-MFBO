@@ -18,7 +18,7 @@
 
 사용
     python3 buckle_stub_harness.py <case> [x_c] [--out PATH]
-        case : CASE 이름 (seed|control_none|clamp_lf|paper_s1)
+        case : CASE 이름 (seed|control_none|clamp_lf|corner_lf|clamp_live|paper_s1)
     python3 buckle_stub_harness.py --legacy <combo> [x_c]
         combo: 리팩토링 **전** 소스용 CLAMP_MODE (none|passive|driven|fixed|cload)
 
@@ -46,6 +46,8 @@ CASE_CONSTANTS = {
     'seed':         {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
     'control_none': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
     'clamp_lf':     {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    'corner_lf':    {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    'clamp_live':   {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
     'paper_s1':     {'PRETENSION_MODE': "'paper3'",  'CORNER_ANGLE_DEG': '45.0'},
 }
 
