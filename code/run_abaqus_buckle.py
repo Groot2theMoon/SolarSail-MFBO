@@ -133,13 +133,10 @@ HEIGHT = 10.0 # m
 ELEM_CODE_QUAD = S4         # 1차 셸(S4/S3). 막 계열(M3D4/M3D3)은 기각 — 재시도 금지(notes §4·§24).
 ELEM_CODE_TRI = S3          # 위와 같은 이유로 3절점 1차 셸
 
-# ---- 메쉬 종류 (2026-10-07) ----
-#   True  = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201).
-#           노드·요소 **미러쌍 누락 0** = 좌우 완전 대칭(순수 파이썬으로 검증). 논문 Table A.1
-#           토폴로지와 일치하며 자유 메쉬(약 1.82만 요소)보다 1.8배 빠르다.
-#           왜 바꾸나: 자유 메쉬는 좌우대칭이 아니라 **한쪽에만 모드가 생기는** 원인이 된다(§19.13).
-#   False = 기존 자유 메쉬 (seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 1.82만 요소).
-#   주의(§11): 잡 이름에 메쉬 태그가 들어가므로 기존 자유메쉬 산출물을 덮지 않는다.
+# ---- 메쉬 종류 ----
+#   True = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201, 미러쌍 누락 0).
+#           논문 Table A.1 토폴로지 일치. 자유 메쉬와 달리 좌우대칭이라 한쪽에만 모드가 생기지 않는다.
+#   False = 자유 메쉬(약 1.82만 요소, 구 경로).
 USE_GRID_MESH = True
 #   orphan(격자) 경로는 **한 이름이 노드용/요소용을 겸할 수 없다**(2026-10-07 실측):
 #     입력 처리기 오류: ***ERROR: Unknown part instance node set MEMBRANE-1.ALL
@@ -188,14 +185,9 @@ DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용�
 # 코너 하중 각도 [deg] — CASE 가 요구한다('hf' = 28.6 = 우리 HF/케이블 방향, 'paper45' = 논문).
 CORNER_ANGLE_DEG = 28.6
 
-# ============================================================================
-# 케이스 (CASE) — '무엇을 DEAD, 무엇을 LIVE 로 두는가' 만 고른다.   (§18)
-#   왜: 예전에는 LOAD_MODE(2) x CLAMP_MODE(5) = 10 조합이 독립이라 **무효 조합이 조용히
-#       만들어졌다**. 실제로 실패 조합(cable + cload)이 커밋된 기본값이었다.
-#   원칙: 수치는 이름 있는 리터럴 상수로 유지한다 — check_model_consistency.py 의 SHARED 가
-#         리터럴 문자열을 비교하므로 값을 dict 로 감추면 게이트가 깨진다. CASE 는 배선만
-#         고르고, 요구되는 상수 조합은 아래에서 **런타임 검증**한다(조용한 오답 금지).
-# ============================================================================
+# 케이스 (CASE) — '무엇을 DEAD, 무엇을 LIVE 로 두는가'만 고른다.
+#   원칙: 수치는 모듈 최상위 리터럴 상수로 유지한다(check_model_consistency 의 SHARED 가 리터럴
+#   문자열을 비교한다). CASE 는 배선만 고르고, 요구 상수 조합은 아래에서 런타임 검증한다.
 CASE = 'clamp_lf'   # 단일 케이스 (은퇴 이력: notes/history.md §19.35)
 
 _CASE_TABLE = {
@@ -242,43 +234,18 @@ CLAMP_RP_FIX_ROT = False   # True 면 클램프 RP 의 **회전 3성분도** 고
 #   더 물리적일 수 있다. 기본 False = HF 배선과 동일(출력 이름이 _rotfix 로 갈린다).
 _CLAMP_ROT_KW = dict(ur1=0.0, ur2=0.0, ur3=0.0) if CLAMP_RP_FIX_ROT else {}
 
-# ---- 좌굴 섭동 청정도 (2026-10-07) ----
-#   True  = **좌굴 스텝에서 구속집합을 바꾸지 않는다.**
-#     자유경계 u3=0(BC_Edges_Only_Z)을 Initial 에서 만들고 BC_Stabilize_Z 는 만들지 않는다.
-#     선형 섭동 스텝에서 **새 구속의 반력은 하중**이고 **구속 해제는 스프링백 하중**이다.
-#     기존 배선(Step-Buckle 에서 BC_Stabilize_Z 해제 + BC_Edges_Only_Z 생성)은 LIVE 패턴을
-#     오염시켜 모드를 그 구속 위치(앵커/자유경계/클램프)에만 붙게 만들었다 — 실측: lambda 가
-#     f 에 따라 부호까지 뒤집혔다(f=0.5 에서 +8.2e-3, f=0.25 에서 -0.16). 같은 구조의 개시가
-#     f 에 무관해야 한다는 자기일관성(320~325행)이 깨진 것이 그 증거다.
-#     기저 해석의 수렴은 스텝 자체의 stabilizationMagnitude(0.0005, 자동 소산 안정화)가 맡는다
-#     — 이것은 **구속이 아니라 점성 감쇠**라 섭동을 오염시키지 않는다.
+# ---- CLEAN_PERTURBATION ----
+#   True = 좌굴 스텝에서 구속집합을 바꾸지 않는다(자유경계 u3=0 은 Initial 에서, BC_Stabilize_Z 는
+#   생성 안 함). 선형 섭동 스텝에서 **새 구속의 반력·구속 해제의 스프링백은 하중**이라 LIVE 패턴을
+#   오염시킨다 — 실측: lambda 가 f 에 따라 부호까지 뒤집혔다(+8.2e-3 @f=0.5 / -0.16 @f=0.25).
 #   False = 종전 배선(비교/복구용).
 CLEAN_PERTURBATION = True
 
-# ---- 클램프 당김 **방향** (driven 과 cload 가 함께 쓴다) ----
-#   교수님 지적(2026-10-07): 클램프 없이 케이블만 쓸 때는 각 케이블에 걸리는 변위가
-#   힘평형을 이루도록 각도를 맞췄다. 클램프가 있는 모델도 마찬가지로 맞춰야 base state 가
-#   안정하고 선형 모드를 찾을 수 있다.
-#   실측한 현재 불평형 (DISP=1.8e-5, d_c=0.5):
-#       꼭짓점 2개 y합 = -1.723e-05 m (아래로)      <- u2=-DISP*sin(28.6)
-#       클램프  2개 y합 = +1.273e-05 m (위로)        <- u2=+CLAMP_PULL/√2  (normal)
-#     => 두 하중계가 **반대 방향**이다. Top 완전고정이 순합(-4.5e-06 m)을 반력으로
-#        흡수하지만, 막 내부는 '위로 잡아당겨진' 면내 응력 상태가 된다.
-#   세 후보 (실측 계산):
-#       'normal'   : CL=(-1,+1)/√2, CR=(+1,+1)/√2 , d_c=0.5 그대로
-#                    클램프 y합 +1.273e-05 m / 꼭짓점 y합 -1.723e-05 m
-#                    -> 남는 -4.505e-06 m 를 Top 완전고정이 반력으로 흡수.
-#                    **HF 와 동일한 실제 부품 형상**이다(기본값).
-#       'balanced' : 'normal' 방향 그대로, **크기만** 힘평형으로 자동 조정한다.
-#                    목표: 클램프 y합 + 꼭짓점 y합 = 0  =>  Top 반력 = 0
-#                    필요 CLAMP_PULL = DISP*sin(28.6)/DIR_y  =>  d_c_eff = √2*sin(28.6) = 0.677
-#                    교수님이 말한 '케이블이 거는 힘의 합 = 0' 에 가장 부합한다.
-#       'along'    : CL=(-1,-1)/√2, CR=(+1,-1)/√2  -> 변을 따라 코너 쪽(접선)
-#                    클램프가 변을 **인장**하고 케이블 당김과 같은 부호가 된다 -> 막 내부가
-#                    일관된 바깥-인장장이 되어 x_c 무관 전역모드를 기대할 수 있다(미시험).
-#       'inward'   : CL=(+1,0), CR=(-1,0)  -> y 성분 0
-#                    y 불평형은 없애지만 사선변 중점을 **안쪽으로 눌러** 면내 압축을 키운다
-#                    => 좌굴 하중을 낮춰 오히려 더 불안정해질 수 있다. 케이블 장력(인장)과 어긋난다.
+# ---- 클램프 당김 방향 (CLAMP_DIR) ----
+#   normal(기본, HF 와 동일 부품 형상): CL=(-1,+1)/√2, CR=(+1,+1)/√2, 크기 CLAMP_PULL=d_c x DISP.
+#     힘평형은 아니다 — 남는 y 불평형(-4.5e-6 m)을 Top 고정이 반력으로 흡수한다.
+#   balanced: 같은 방향, 크기만 힘평형으로(d_c_eff=√2*sin 28.6도=0.677). along/inward 는 미시험·기각.
+#   상세 계산과 기각 근거: notes/history.md §12.
 CLAMP_DIR = 'normal'
 if CLAMP_DIR not in ('normal', 'balanced', 'inward'):
     raise RuntimeError("CLAMP_DIR must be 'normal'|'balanced'|'inward' (got %r)" % (CLAMP_DIR,))
@@ -300,15 +267,9 @@ DEAD_FRAC = 0.5   # [-] 프리텐션 단계가 운용 하중 세트 P 의 어느
 #   자기일관성 검증: 개시 = f + (1-f)*lambda1*운용 은 f 와 무관해야 한다. lambda=1 <=> 운용점 도.
 
 # ---- 스텝 체인: GlobalTension 하나에 꼭짓점 + 클램프를 모두 넣는다 ----
-#   버클모드 추출에서는 클램프를 **별도 텐션 스텝으로 분리하지
-#   않는다**. 글로벌 텐션 스텝에 클램프도 함께 포함시킨다(HF 처럼 3스텝으로 늘리지 않는다).
-#       Step-GlobalTension   꼭짓점 + 클램프 (DEAD = base state)
-#       Step-Buckle          고유값 추출   (LIVE = perturbation)
-#   주의: 클램프 하중을 Break 스텝(=perturbation)에 걸면 LIVE 로만 작용해 base state 에
-#   압축을 만들지 못한다. 그래서 GlobalTension 쪽에 있어야 한다(이번 수정의 핵심).
-#
-# ---- base state 진단에 쓸 스텝 (base_state_probe 의 인자) ----
-#   클램프 하중이 GlobalTension 에 있으므로 이 스텝을 보면 클램프 기여가 진단에 잡힌다.
+#   Step-GlobalTension = 꼭짓점+클램프 (DEAD = base state) / Step-Buckle = 고유값 (LIVE = perturbation).
+#   클램프를 perturbation 스텝에 걸면 LIVE 로만 작용해 base state 에 기압축을 못 만든다 — 그래서
+#   GlobalTension 쪽에 있어야 한다. base_state_probe 는 이 스텝을 본다(클램프 기여 진단).
 BASE_STATE_STEP = 'Step-GlobalTension'
 
 # ---- 판정 임계값 (계획 §4: 3번 런 결과 뒤에 확정한다 — 지금은 잠정값) ----
@@ -322,30 +283,15 @@ CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거�
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
-#   [mode 정합] mode.py 와 HF 는 0.01 을 쓴다. buckle 만 1e-4 였다.
-#   ⚠️ CASE='paper_s1' 에는 이 값을 쓰지 않는다 — 아래 PAPER_S1_LIVE_M 참조
-#      (논문 자신의 좌굴 스텝 크기에서만 lambda 비교가 성립한다).
-#   1e-4 에서 CONVERGED=100, 0.01 에서 CONVERGED=0 이었던 관측은
-#   클램프가 있는 상태에서 얻은 것이다. 이제 나머지 조건을 mode.py 와 맞췄으므로
-#   0.01 로 두고 다시 판정한다 — 클램프만 다른 상태에서 비교하려면 이 값도 같아야 한다.
+#   [mode 정합] PERTURBATION=0.01: mode.py/HF 와 동일해야 한다(클램프만 다른 상태로 비교하려면).
+#   paper_s1 은 예외로 PAPER_S1_LIVE_M 을 쓴다(논문 자신의 좌굴 스텝 크기에서만 lambda 비교 성립).
 
 # ---- 논문 baseline 좌굴 스텝 크기 (CASE='paper_s1' 전용) ----
 PAPER_S1_LIVE_M = 0.10   # m — Galhofo 2022 의 좌굴 스텝은 꼭짓점 변위를 0.10 m 까지 올린다.
-#   lambda 는 LIVE 크기에 반비례하므로, **논문 자신의 크기**에서만 논문의 lambda
-#   (대역 3.18e-4)와 직접 비교가 성립한다. PERTURBATION(0.01, mode.py 와의 SHARED 계약)과
-#   분리해 둔 이유: 계약 항목을 케이스별로 바꾸면 HF<->buckle<->mode 게이트가 깨진다.
-#   [주의] paper_s1 의 LIVE 는 **prescribed 변위**(꼭짓점 3개)이지 CLOAD 가 아니다.
-# ---- 추출 창 (래더 L4) ----
-#   규칙(mode.py L26): '요청 고유값 수 > base state 의 음수 고유값 수' 여야 양수
-#   좌굴모드가 subspace 창에 들어온다. 그런데 클램프(passive)를 켜면 음수 고유값이
-#   48 개로 늘고, N_EIG=100 / vectors=250 에서는 ***ERROR: THE EIGENVALUES CANNOT BE
-#   FOUND (INSTABILITIES IN THE BASE STATE) 로 죽는다. 클램프를 끄면(none) 같은
-#   조건에서 CONVERGED=4 다 — 즉 창이 아니라 음수 개수가 문제다.
-#   그래서 창을 넓혀(D) 음수 48 개를 넘겨 본다. 실패 비용이 40 초라 판정이 빠르다.
-#   창을 정하는 규칙은 이제 두 조건의 **교집합**이다(parse_buckle_log._window_hint 가 같은 판정을 찍는다):
-#     (a) N_EIG_BUCKLE > base state 의 SYSTEM 음수 고유값 개수
-#     (b) N_EIG_BUCKLE <= 실제 subspace 차원 ("REDUCED TO n" 의 n)
-#   (a)는 음수 모드 뒤에 양수 모드가 들어오게 하는 조건, (b)는 원리적 상한이다.
+#   논문 lambda 비교는 **논문 자신의 좌굴 스텝 크기**(PAPER_S1_LIVE_M)에서만 성립한다 — lambda 는
+#   LIVE 크기에 반비례. PERTURBATION(0.01)은 mode.py 와의 SHARED 계약이라 케이스별로 바꾸지 않는다.
+# ---- 추출 창: N_EIG_BUCKLE 은 두 조건의 교집합 (parse_buckle_log._window_hint 와 같은 판정) ----
+#   (a) N_EIG_BUCKLE > base state 의 SYSTEM 음수 고유값 개수   (b) N_EIG_BUCKLE <= 실제 subspace 차원
 N_EIG_BUCKLE = 4        # 추출 요청 고유값 수 (mode.py 와 같은 값이어야 한다 — 계약)
 #   N_EIG=4 / 기저 250: 대조군이 '요청 4 / 기저 250' 으로 수렴했다. 기저 250 = 천장 272 아래.
 BUCKLE_VECTORS = 250    # subspace 기저 벡터 수. 실측 천장: 300 을 요청하면
@@ -456,12 +402,9 @@ if _excl_arg is not None:
     if CLAMP_EXCL_R < 0.0:
         raise RuntimeError('CLAMP_EXCL_R=%r < 0' % (CLAMP_EXCL_R,))
 CLAMP_DC_EFF = CLAMP_PULL / DISP if DISP > 0.0 else 0.0
-#   DEAD_FRAC (5번째 인자) — 기저 상태의 하중비. 기본은 상수값.
-#   개시(좌굴) 하중비는 x_c 마다 다르다. 0.5 는 x_c=0.5(개시 61.0%)에서는
-#   성공했지만 0.35(39.7%)/0.65(50.1%) 에서는 **개시 위**가 되어 기저 상태가 불안정해지고
-#   고유값 추출이 실패한다. 스윕에서는 x_c 별로 낮춘다.
-#   단 너무 낮추면(0.018) 기저가 거의 무응력 -> 조건화 악화.
-#   => f 는 [조건화될 만큼 크고 개시 아래일 만큼 작은] 창에서 x_c 마다 고른다.
+#   DEAD_FRAC (5번째 인자) — 기저 상태의 하중비. 창이 좁다: 0.018 -> 무응력 퇴화 /
+#   0.5 는 x_c=0.5(개시 61%)에서만 성공, 0.35·0.65 에서는 개시 위라 추출 실패. 스윕은 x_c 별로 낮춘다.
+#   => f 는 [조건화될 만큼 크고 개시 아래일 만큼 작은] 창에서 고른다.
 if _dead_arg is not None:
     DEAD_FRAC = float(_dead_arg)
 CLAMP_PERT = PERTURBATION * CLAMP_DC_EFF   # 좌굴 스텝 클램프 섭동 [m]
@@ -1009,12 +952,9 @@ def build_model(disp):
             u1=-disp_a * cos_val,
             u2=-disp_a * sin_val
         )
-    # 'cload' 라우트의 꼭짓점 하중은 아래 CLAMP_MODE 분기(LOAD_MODE=='cload')에서
-    #   일괄 생성한다. 여기서 또 만들면 같은 이름이 두 createStepName 으로 등록되어
-    #   나중 것이 0 으로 덮어쓴다(스텁 하네스로 적발: CF_Corner_* 가 Initial/GlobalTension
-    #   양쪽에 나타나 최종값이 0 이 됐다).
-    # [paper3] 위 꼭짓점도 케이블 축(+y)으로 당긴다 — mode.py 와 동일.
-    #   corner2(기본)에서는 BC_Anchor_Top 의 완전고정이 그대로 유지된다.
+    # 'cload' 라우트용 꼭짓점 하중은 아래 CLAMP_MODE 분기에서 일괄 생성한다 — 여기서 또 만들면
+    #   같은 이름이 두 스텝에 등록되어 최종값이 0 이 된다(스텁 하네스로 적발).
+    # [paper3] 꼭짓점도 케이블 축(+y)으로 당긴다(corner2 는 BC_Anchor_Top 고정 유지).
     if PRETENSION_MODE == 'paper3':
         my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
             stepName='Step-GlobalTension',
