@@ -2183,3 +2183,32 @@ x_c=0.65, f=0.40 -> RuntimeError(.sta/.msg 미완주). 스크립트가 찍은 .d
 #   False = 기존 자유 메쉬 (seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 1.82만 요소).
 #   주의(§11): 잡 이름에 메쉬 태그가 들어가므로 기존 자유메쉬 산출물을 덮지 않는다.
 ```
+
+### 19.37 corner_lf / clamp_live 케이스 신설 — 합성 씨드 재료 (2026-10-11)
+
+[배경] 클램프 단독 구동 모드 + 코너 단독 모드를 **각각** 뽑아 합성 초기결함(Δz = ω_c·φ_corner + ω_k·φ_clamp)의
+재료로 쓰는 아이디어. 10-07 계획의 원 Goal(클램프 LIVE)이 λ=1 회계 때문에 접혔던 것을 **합성 씨드 목적**으로 재구현.
+그리드(10201 노드) 통일이 필수 — 자유메쉬(18k) 모드와는 합성 불가.
+
+[설계]
+- corner_lf : base = 코너 전량(18µm, mode.py 레벨), LIVE = 코너 PERTURBATION(0.01).
+- clamp_live: base = 코너 18µm + 클램프 당김 **0(명시)**("초기 인장만" — 당김 스펙), LIVE = 클램프 DIR×PERTURBATION,
+              코너는 좌굴 스텝에서 0(명시).
+- 두 케이스의 λ 는 운용점 회계(λ=1)가 **아니라** 프로브 배수 — docstring 케이스 표 + 태그(f100/dc000/_plv)로 구분.
+
+[사고 2건 — 실측 기록]
+1) T0 정찰: check_model_consistency._KNOWN_CASES 화이트리스트 때문에 새 케이스 추가가 검사기를 EXIT=1 로 깬다
+   (계획의 "깨지지 않음" 예상이 틀렸음). -> T1 에서 하네스 CASE_CONSTANTS + 검사기 화이트리스트/분기를 선행 확장.
+2) CLAMP_LIVE_M = PERTURBATION 을 PERTURBATION 정의(L299)보다 앞(L263)에 둠 — 실제 Abaqus 런이면 NameError 즉사.
+   하네스가 못 잡은 이유: _stub_modules 가 소스의 **모든 대문자 이름**을 자기-이름 문자열로 선점
+   (from abaqusConstants import * 모사) -> PERTURBATION='PERTURBATION'(문자열)로 미리 바인딩되어
+   NameError 가 1126행 TypeError 로 위장됐다.
+   -> 상수 자체를 제거하고 PERTURBATION 직접 사용(계약: 케이스별로 바꾸지 않는다) +
+      하네스가 '대입되는' 대문자 이름은 선점하지 않게 수정(R5).
+
+[검증] py_compile / static_leak 0건 / checker EXIT=0 / 하네스 3케이스(clamp_lf·corner_lf·clamp_live) EXIT=0.
+   clamp_live 배선 실측: GlobalTension 코너 ±1.5804e-5 + 클램프 (0,0) 명시 / Buckle 코너 (0,0) 명시 +
+   클램프 (−0.00707, +0.00707) = ±(1/√2)×0.01.
+
+[다음] 사용자 런 2개(x_c=0.5): CASE='corner_lf' / CASE='clamp_live' 각 1회 -> buckle_mirror_check + 육안
+   -> combine_seed.py(가중·정규화) -> HF A/B.
