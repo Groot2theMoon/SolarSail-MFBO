@@ -13,12 +13,14 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
         Step-Buckle             고유값 추출 (LIVE = perturbation 0.01 m)
     창은 N_EIG_BUCKLE / BUCKLE_VECTORS 상수로 정한다(요청 수 <= 실제 subspace 차원).
 
-케이스 (CASE 상수 — 2026-10-07). 예전의 LOAD_MODE x CLAMP_MODE 조합 표면을 대체한다.
+케이스 (CASE 상수). 예전의 LOAD_MODE x CLAMP_MODE 조합 표면을 대체한다.
     CASE          DEAD (base state)                 LIVE (lambda 의 대상)      답하는 질문
-    seed          클램프 없음, 코너 당김            코너 당김                  코너 하중의 좌굴 배수
-    control_none  클램프 패치 u3=0, 당김 0          코너 당김                  (클램프 구속이 무해한가)
-    clamp_lf      DEAD_FRAC x P + 클램프 u3=0       (1-DEAD_FRAC) x P          운용 램프의 좌굴 배수
-    paper_s1      논문 baseline(케이블/클램프 없음) 논문 0.10 m                우리 추출 셋업이 맞는가
+    clamp_lf      DEAD_FRAC x P + 클램프 u3=0       (1-DEAD_FRAC) x P          운용 램프의 좌굴 배수(lambda=1=운용점)
+    corner_lf     코너 전량 DISP, 클램프 없음        코너 PERTURBATION          그리드에서의 코너 하중 모드(합성 씨드 1/2)
+    clamp_live    코너 전량 DISP + 클램프 u3=0,      클램프 DIR x CLAMP_LIVE_M  클램프 구동 모드(합성 씨드 2/2)
+                  클램프 당김 0(명시)
+    ⚠️ corner_lf/clamp_live 의 lambda 는 운용점 회계(위 clamp_lf 의 lambda=1)가 **아니다** —
+       프로브 크기의 배수다. 모드 형상은 프로브 크기에 불변.
       P = 꼭짓점 + 클램프 하중 세트(CORNER_F0 / CLAMP_F0). clamp_lf 는 케이블 0개다.
       BUCKLING LOAD = DEAD + lambda*LIVE 이므로 **clamp_lf 의 lambda = 1 이 운용점**이다.
       무효 조합(예: 코너는 케이블, 클램프는 CLOAD)은 상수 검증이 런타임 예외로 막는다.
@@ -191,8 +193,11 @@ CORNER_ANGLE_DEG = 28.6
 CASE = 'clamp_lf'   # 단일 케이스 (은퇴 이력: notes/history.md §19.35)
 
 _CASE_TABLE = {
-    #  [은퇴] 단일 케이스. 구 seed/control_none/paper_s1 의 결정 경위는 notes/history.md §19.35.
+    #  소케이블 라우트(구 seed 등)의 은퇴 경위는 notes/history.md §19.35.
     'clamp_lf':     dict(cables=False, clamps=True,  clamp_load='live', corner_dir='hf'),
+    #  corner_lf: 그리드·무클램프. base=코너 전량(DISP), LIVE=코너 프로브(PERTURBATION).
+    #    합성 씨드(코너 패밀리) 재료 — clamp_lf 의 lambda=1 운용점 회계가 아니다(lambda=프로브 배수).
+    'corner_lf':    dict(cables=False, clamps=False, clamp_load='none', corner_dir='hf'),
 }
 
 
@@ -936,7 +941,8 @@ def build_model(disp):
         u3=SET, ur1=SET, ur2=SET, ur3=SET
     )
     disp_a = disp
-    if HAS_CABLES or CORNER_DIR == 'paper45':
+    #   corner_lf 도 여기서 구동 BC 를 만든다 — 그리드·무클램프 모델의 base(전량 프리텐션).
+    if HAS_CABLES or CORNER_DIR == 'paper45' or CASE == 'corner_lf':
         # 변위 구동: 'cable' 은 케이블 끝단, 'paper45' 는 꼭짓점 강체패치 RP (논문 레시피).
         my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
                                 region=A2, u1=SET, u2=SET)
@@ -1044,7 +1050,8 @@ def build_model(disp):
     #   상수값만 비교하고 '사용 여부'는 보지 않는다). CLAMP_LOAD='live' 의 LIVE CLOAD 는
     #   위에서 이미 정의했으므로 여기서 건드리지 않는다.
     #   [함정] 라우트에 없는 BC 를 참조하면 KeyError 로 모델 생성이 죽는다(스텁 하네스가 적발).
-    if HAS_CABLES:
+    if HAS_CABLES or CASE == 'corner_lf':
+        #   corner_lf: 좌굴 스텝 값 = 프로브(PERTURBATION). 모드 형상은 크기에 불변, lambda 만 스케일.
         _ns = PATTERN_SIGN * PERTURBATION
         my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
             stepName='Step-Buckle', u1=_ns * cos_val, u2=-_ns * sin_val)
@@ -1078,12 +1085,15 @@ if ELEM_TAG is None:
 #   d_c_eff 도 이름에 넣는다 — CLAMP_PULL 을 CLI 로 바꿔 d_c 스윕을 하면 DISP 만으로는
 #   이름이 겹쳐 run_job_safely 가 직전 증거를 지운다(§11).
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
+#   새 케이스의 표기: base=전량 프리텐션(f100) / base 클램프 당김 없음(dc000). CASE 세그먼트가 달라 유일성은 보장.
+_f_tag = int(round(DEAD_FRAC * 100.0)) if CASE == 'clamp_lf' else 100
+_dc_tag = int(round(CLAMP_DC_EFF * 100.0)) if CASE == 'clamp_lf' else 0
 _rot_tag = '_rotfix' if CLAMP_RP_FIX_ROT else ''   # 스위치를 켜면 출력 이름이 갈린다
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
 JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s' % (int(round(x_c * 100.0)),
                                                        int(round(DISP * 1.0e6)),
-                                                       int(round(CLAMP_DC_EFF * 100.0)),
-                                                       int(round(DEAD_FRAC * 100.0)),
+                                                       _dc_tag,
+                                                       _f_tag,
                                                        ELEM_TAG, MESH_TAG, CASE, CLAMP_DIR,
                                                        _excl_tag, _rot_tag)
 
