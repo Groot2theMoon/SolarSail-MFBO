@@ -22,6 +22,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
                   (클램프 당김 전량, RP 구동)
     clamp_live_cb 위와 같되 전부 케이블 끝단 구동     클램프 프로브(코너 0 명시) 클램프 가족 ★ (HF 경로)
     corner_live_cb base 는 clamp_live_cb 와 **동일**  코너 프로브(클램프 0 명시) 코너 가족 ★ (HF 경로)
+    corner_live_rp 위와 같되 클램프 전달 = RP 직접    코너 프로브(클램프 0 명시) 대조: 클램프 케이블 제거
     clamp_lf_cb   clamp_lf + 클램프 당김을 케이블로   (1-DEAD_FRAC) x P          운용점 회계(λ=1=운용점)
     ⚠️ corner_lf/clamp_live 의 lambda 는 운용점 회계(위 clamp_lf 의 lambda=1)가 **아니다** —
        프로브 크기의 배수다. 모드 형상은 프로브 크기에 불변.
@@ -232,6 +233,12 @@ _CASE_TABLE = {
                           live_driver='clamp', clamp_cable=True),   # A: 클램프 가족 (HF 경로)
     'corner_live_cb': dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
                            live_driver='corner', clamp_cable=True),  # B: 코너 가족 (HF 경로)
+    #  corner_live_rp: [2026-10-11] 코너는 케이블(seed 의 검증된 경로) + **클램프는 RP 직접 구동**(클램프 케이블 없음).
+    #    근거: 문서 실측에서 클램프 케이블을 붙이면 SYSTEM 음수가 48 -> 888 로 폭증했고(§clamp-cable-driven-route),
+    #    클램프 RP 구동(clamp_lf 계열)은 5.6% 에서 4모드로 성공한 기록이 있다. pull=0 에서도 실패한
+    #    cb 라우트(음수 62)와의 차이가 **클램프 케이블뿐**인 대조 케이스다.
+    'corner_live_rp': dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
+                           live_driver='corner', clamp_cable=False),
     #  clamp_lf_cb: [2026-10-11] **HF 정합본** — 클램프 당김을 base(DEAD_FRAC 몫)까지 케이블로 전달한다.
     #    클램프가 base state 를 압축하므로 x_c 가 모드를 바꾼다(clamp_lf 의 회계 + HF 하중 경로).
     #    ⚠️ 위의 두 _cb 케이스는 클램프 당김이 base 에 **없다** — 구 스크립트가 CLOAD 를 Step-Buckle 에
