@@ -15,9 +15,11 @@ buckle_mirror_check.py — 좌굴 ODB의 미러(x -> 20-x) 대칭 진단.
 보조 검사
     모드1 ± 모드2 의 미러 잔차가 작으면 기저 선택 문제(대칭 기저), 크면 실제 비대칭이다.
 
-사용법 (Abaqus 머신, code 디렉터리, 잡 이름은 확장자 없이)
+사용법 (Abaqus 머신, code 디렉터리, job = cwd 상대 경로·확장자 없이)
     abaqus cae noGUI=buckle_mirror_check.py -- <job> [step]
-    예) abaqus cae noGUI=buckle_mirror_check.py -- Buckle_xc020_d018um_dc006_f020_s4_grid_clamp_lf_normal_ex210
+    예) abaqus cae noGUI=buckle_mirror_check.py -- buckle/Buckle_xc020_d018um_dc006_f020_s4_grid_clamp_lf_normal_ex210 Step-Buckle
+    ⚠️ buckle 산출물은 RUN_DIR_NAME='buckle' 아래에 쌓이므로 buckle/ 접두사가 필요하다
+       (openOdb(job + '.odb') 를 cwd 상대경로로 연다 — 접두사가 없으면 FileNotFound 로 죽는다).
 
 출력 판독
     기저 잔차/크기 ~ 0   -> 기저 대칭 (모드 쌍은 반드시 좌우 짝; 보이는 쪽 문제는 기저 회전)
