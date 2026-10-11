@@ -160,6 +160,9 @@ CABLE_RADIUS = 5.0e-4 # m
 CABLE_AREA = np.pi * (CABLE_RADIUS**2)
 LEN_TOP = 0.280 # m
 LEN_BOT = 0.689 # m
+CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이. HF(run_abaqus.py) 와 같아야 한다(검사기 SHARED 가 강제).
+#   ⚠️ connect_cable 의 길이 기본값은 **이름 기반**이라 'Cable_CL' 은 LEN_BOT(0.689) 를 쓴다 —
+#   클램프 케이블은 cable_len=CLAMP_CABLE_LEN 을 **명시**한다.
 
 # ---- 프리텐션 모드 (mode.py 와 동일하게 맞춘다) ----
 #   'corner2' = Top 정점 완전고정 + 아래 두 꼭짓점만 당김. mode.py 가 4개 전역 모드를 낸 설정.
@@ -226,6 +229,9 @@ HAS_CLAMPS = _ROUTE['clamps']       # 클램프 강체패치를 만드는가
 CLAMP_LOAD = _ROUTE['clamp_load']   # 'none' | 'live' (live = 클램프를 집중하중으로 LIVE 에)
 CORNER_DIR = _ROUTE['corner_dir']   # 'hf' | 'paper45'
 LIVE_DRIVER = _ROUTE.get('live_driver', 'corner')   # 'corner'(기존 케이스) | 'clamp'(clamp_live)
+#   clamp_cable: 클램프 하중을 **케이블 끝단**으로 전달하는가(HF 와 같은 하중 경로).
+#     False(기본) = 클램프 강체패치 RP 직접 구동(clamp_lf/clamp_live 의 현행 경로).
+HAS_CLAMP_CABLES = bool(_ROUTE.get('clamp_cable', False))
 
 
 def _require_constant(name, have, want):
@@ -266,6 +272,14 @@ CLEAN_PERTURBATION = True
 CLAMP_DIR = 'normal'
 if CLAMP_DIR not in ('normal', 'balanced', 'inward'):
     raise RuntimeError("CLAMP_DIR must be 'normal'|'balanced'|'inward' (got %r)" % (CLAMP_DIR,))
+#   클램프 케이블 라우트는 HF 케이블 방향('normal')에서만 정의된다 — 'balanced'/'inward' 는
+#   케이블 축 자체를 바꾸는 것이라 물리적 근거가 약하다(RP 직접구동 시절의 각도 조정 장치다).
+if HAS_CLAMP_CABLES and CLAMP_DIR != 'normal':
+    raise RuntimeError("CASE=%r (clamp_cable=True) 은 CLAMP_DIR='normal' 전용입니다 (현재 %r)."
+                       % (CASE, CLAMP_DIR))
+if HAS_CLAMP_CABLES and not HAS_CLAMPS:
+    raise RuntimeError("CASE=%r: clamp_cable=True 는 clamps=True 를 요구합니다 — RP_CL/CR 패치가 "
+                       "Tie 앵커다." % (CASE,))
 
 
 CLAMP_F0 = 1.0   # N — 구 CLOAD 라우트용. 현행 clamp_lf 는 변위 구동(§19):
@@ -814,6 +828,10 @@ def build_model(disp):
     if HAS_CABLES:
         p_cable_top = create_cable_part('Cable_Top', LEN_TOP)
         p_cable_bot = create_cable_part('Cable_Bot', LEN_BOT)
+    if HAS_CLAMP_CABLES:
+        #   HF(run_abaqus.py) 와 같은 부품·길이. 이름도 HF 와 동일하게 Cable_CL/Cable_CR.
+        p_cable_cl = create_cable_part('Cable_CL', CLAMP_CABLE_LEN)
+        p_cable_cr = create_cable_part('Cable_CR', CLAMP_CABLE_LEN)
 
     a = my_model.rootAssembly
     a.DatumCsysByDefault(CARTESIAN)
@@ -850,6 +868,13 @@ def build_model(disp):
         start_c1, end_c1 = connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))
         start_c2, end_c2 = connect_cable(a, 'Cable_Right', p_cable_bot, V2, (cos_val, -sin_val, 0.0))
         start_c3, end_c3 = connect_cable(a, 'Cable_Left', p_cable_bot, V3, (-cos_val, -sin_val, 0.0))
+    if HAS_CLAMP_CABLES:
+        #   방향 = CLAMP_DIR('normal' 전용 가드) = HF 와 같은 (∓1,+1)/√2.
+        #   cable_len 을 **명시**한다(이름기반 기본값이 'Cable_CL' -> LEN_BOT 이 되는 것을 회피).
+        start_cl, end_cl = connect_cable(a, 'Cable_CL', p_cable_cl, V_CL,
+                                         (DIR_CL[0], DIR_CL[1], 0.0), cable_len=CLAMP_CABLE_LEN)
+        start_cr, end_cr = connect_cable(a, 'Cable_CR', p_cable_cr, V_CR,
+                                         (DIR_CR[0], DIR_CR[1], 0.0), cable_len=CLAMP_CABLE_LEN)
 
     a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
     a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
@@ -864,6 +889,12 @@ def build_model(disp):
         my_model.Tie(name='Tie_Right', main=a.sets['RP_Right_Set'], secondary=start_c2,
                      positionToleranceMethod=COMPUTED)
         my_model.Tie(name='Tie_Left', main=a.sets['RP_Left_Set'], secondary=start_c3,
+                     positionToleranceMethod=COMPUTED)
+    if HAS_CLAMP_CABLES:
+        #   HF 와 같은 이름(Tie_CL/Tie_CR). main=RP(강체패치) <-> secondary=케이블 시작단.
+        my_model.Tie(name='Tie_CL', main=a.sets['RP_CL_Set'], secondary=start_cl,
+                     positionToleranceMethod=COMPUTED)
+        my_model.Tie(name='Tie_CR', main=a.sets['RP_CR_Set'], secondary=start_cr,
                      positionToleranceMethod=COMPUTED)
     a.regenerate()
 
@@ -998,10 +1029,13 @@ def build_model(disp):
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
                                 region=a.sets['RP_CR_Set'], u3=0, **_CLAMP_ROT_KW)
         #   크기 출처는 HF 와 동일: 꼭짓점 = DISP, 클램프 = CLAMP_PULL(= CLAMP_DC x DISP).
+        #   클램프 구동 대상: clamp_cable 이면 **케이블 끝단**(HF 와 같은 하중 경로), 아니면 패치 RP.
+        _tgt_cl = end_cl if HAS_CLAMP_CABLES else a.sets['RP_CL_Set']
+        _tgt_cr = end_cr if HAS_CLAMP_CABLES else a.sets['RP_CR_Set']
         _DRV = (('Disp_Control_Right', A2, cos_val, -sin_val, DISP),
                 ('Disp_Control_Left', A3, -cos_val, -sin_val, DISP),
-                ('Disp_Control_CL', a.sets['RP_CL_Set'], DIR_CL[0], DIR_CL[1], CLAMP_PULL),
-                ('Disp_Control_CR', a.sets['RP_CR_Set'], DIR_CR[0], DIR_CR[1], CLAMP_PULL))
+                ('Disp_Control_CL', _tgt_cl, DIR_CL[0], DIR_CL[1], CLAMP_PULL),
+                ('Disp_Control_CR', _tgt_cr, DIR_CR[0], DIR_CR[1], CLAMP_PULL))
         for _nm, _reg, _d1, _d2, _mag in _DRV:
             my_model.DisplacementBC(name=_nm, createStepName='Initial', region=_reg,
                                     u1=0.0, u2=0.0)
@@ -1036,10 +1070,13 @@ def build_model(disp):
         # clamp_live — base 는 **초기 인장만**(코너 전량, 클램프 당김 0 명시).
         #   좌굴 스텝의 패턴은 클램프 단독 — 합성 씨드(클램프 패밀리)용. lambda=프로브 배수.
         # =====================================================================
+        #   프로브 대상: clamp_cable 이면 케이블 끝단(HF 하중 경로), 아니면 패치 RP.
+        _ptgt_cl = end_cl if HAS_CLAMP_CABLES else a.sets['RP_CL_Set']
+        _ptgt_cr = end_cr if HAS_CLAMP_CABLES else a.sets['RP_CR_Set']
         my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial',
-                                region=a.sets['RP_CL_Set'], u1=0.0, u2=0.0)
+                                region=_ptgt_cl, u1=0.0, u2=0.0)
         my_model.DisplacementBC(name='Disp_Control_CR', createStepName='Initial',
-                                region=a.sets['RP_CR_Set'], u1=0.0, u2=0.0)
+                                region=_ptgt_cr, u1=0.0, u2=0.0)
         for _nm, _d1, _d2 in (('Disp_Control_CL', DIR_CL[0], DIR_CL[1]),
                               ('Disp_Control_CR', DIR_CR[0], DIR_CR[1])):
             #   base: 클램프 당김 0 을 생략하지 않고 **명시**(초기 인장만). 좌굴 스텝: 클램프 단독.
@@ -1055,6 +1092,12 @@ def build_model(disp):
                 stepName='Step-Buckle', u1=0.0, u2=0.0)
         print("%s [clamp_live] base=코너 %.4g m + 클램프 당김 0 / LIVE=클램프 %.4g m x DIR (프로브)"
               % (TAG, DISP, PERTURBATION))
+
+    if HAS_CLAMP_CABLES:
+        #   케이블 끝단의 면외 구속 — HF 의 BC_CL/BC_CR 과 같은 이름·역할.
+        #   RP 의 u3=0 은 케이스 분기(BC_Clamp_CL/CR)가 그대로 건다: 이름을 분리해 충돌을 피한다.
+        my_model.DisplacementBC(name='BC_CL', createStepName='Initial', region=end_cl, u3=0)
+        my_model.DisplacementBC(name='BC_CR', createStepName='Initial', region=end_cr, u3=0)
 
     # ---- Buckle 스텝: 논문 (c) 3변 u3=0 유지 + 클램프 구간은 면외 구속에서 제외(§9) ----
     _excl_edges = (aba_grid_mesh.clamp_exclude_labels(inst_memb, (V_CL, V_CR), CLAMP_EXCL_R)

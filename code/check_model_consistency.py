@@ -80,11 +80,14 @@ SHARED = [
     "initialInc=0.0001, minInc=1e-8, maxNumInc=1000",
     # ---- 초기응력 ----
     "sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0,",
+    # ---- 클램프 케이블 (buckle 이식 부품 — HF 에만 있던 것을 옮겼다) ----
+    "CLAMP_CABLE_LEN = 0.5",
 ]
 
 # 모드 소스(run_abaqus_mode.py)는 클램프가 없는 모델이므로 clamp_coord_* 정의만 제외한다.
+#   [2026-10-11] CLAMP_CABLE_LEN 도 제외한다 — 클램프 케이블은 HF(buckle 로 이식) 전용 부품이다.
 # 나머지는 전부 같아야 한다: *IMPERFECTION 은 노드 라벨로 매핑되기 때문.
-SHARED_MODE = [s for s in SHARED if 'clamp_coord' not in s]
+SHARED_MODE = [s for s in SHARED if 'clamp_coord' not in s and 'CLAMP_CABLE_LEN' not in s]
 
 # 모드 소스와 HF 가 '선언하면' 달라져도 되는 항목 = base state/스텝 물리 파라미터.
 #   이유: 모드 소스는 좌굴모드를 얻기 위해 base state 를 안정 영역에 둘 필요가 있다(사용자 튜닝).
