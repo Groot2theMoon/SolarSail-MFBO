@@ -196,7 +196,7 @@ CORNER_ANGLE_DEG = 28.6
 #         리터럴 문자열을 비교하므로 값을 dict 로 감추면 게이트가 깨진다. CASE 는 배선만
 #         고르고, 요구되는 상수 조합은 아래에서 **런타임 검증**한다(조용한 오답 금지).
 # ============================================================================
-CASE = 'clamp_lf'   # [2026-10-08] 은퇴 후 단일 케이스 (구: seed | control_none | paper_s1)
+CASE = 'clamp_lf'   # 단일 케이스 (은퇴 이력: notes/history.md §19.35)
 
 _CASE_TABLE = {
     #  [은퇴] 단일 케이스. 구 seed/control_none/paper_s1 의 결정 경위는 notes/history.md §19.35.
