@@ -135,8 +135,10 @@ BASE = 20.0   # m
 HEIGHT = 10.0 # m
 # 막 요소는 1차(S4/S3) 유지. 2차는 base state 를 더 나쁘게 만들어 기각됐다(§4).
 #   요소코드는 HF/mode 와 같아야 한다 — *IMPERFECTION 이 노드 라벨로 주입된다.
-ELEM_CODE_QUAD = S8R5         # 1차 셸(S4/S3). 막 계열(M3D4/M3D3)은 기각 — 재시도 금지(notes §4·§24).
-ELEM_CODE_TRI = STRI65          # 위와 같은 이유로 3절점 1차 셸
+ELEM_CODE_QUAD = S4         # 1차 셸(S4/S3). 막 계열(M3D4/M3D3)은 기각 — 재시도 금지(notes §4·§24).
+ELEM_CODE_TRI = S3          # 위와 같은 이유로 3절점 1차 셸
+#   [2026-10-11] 원격 커밋 c002371 의 S8R5/STRI65 실험값을 되돌렸다 — 격자 .inp 는 S4/S3 토폴로지이고
+#     HF/mode 와 요소코드가 같아야 한다(검사기 HF<->buckle 위반 2건). 실험값은 브랜치 win-knobs-20261011.
 
 # ---- 메쉬 종류 ----
 #   True = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201, 미러쌍 누락 0).
@@ -185,7 +187,7 @@ def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 # ---- 프리텐션 (CLI 두 번째 인자로 덮어쓴다) ----
 #   [mode 정합] mode.py 는 1.8e-5 m 를 쓴다. buckle 은 5e-5(=5e-6*10) 였다.
 #   이 차이가 클램프와 교란되어 '클램프가 원인'인지 판별할 수 없었다.
-DISP_GLOBAL = 5e-6    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점
+DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점 (원격 5e-6 실험 되돌림 — §19.38)
 
 # 코너 하중 각도 [deg] — CASE 가 요구한다('hf' = 28.6 = 우리 HF/케이블 방향, 'paper45' = 논문).
 CORNER_ANGLE_DEG = 28.6
@@ -1116,7 +1118,7 @@ def build_model(disp):
 #   산출물을 지워 직전 증거가 사라진다(§11).
 # ELEM_TAG 는 요소 상수에서 **유도**한다 — 하드코딩이면 요소를 바꿔도 잡 이름이 그대로여서
 #   '산출물 덮임 방지' 장치가 무력해진다(실측: S4 모델에 's4r' 이 박혀 있었다).
-ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', S8R5: 's8r5', STRI65: 'stri65'}.get(ELEM_CODE_QUAD)
+ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', M3D4: 'm3d4', M3D3: 'm3d3'}.get(ELEM_CODE_QUAD)
 if ELEM_TAG is None:
     raise RuntimeError('ELEM_TAG 를 유도할 수 없는 요소코드입니다: %r. 잡 이름이 케이스를 '
                        '구분하지 못하면 run_job_safely 가 직전 증거를 지운다.' % (ELEM_CODE_QUAD,))
