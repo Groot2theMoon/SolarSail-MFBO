@@ -201,7 +201,7 @@ CORNER_ANGLE_DEG = 28.6
 # 케이스 (CASE) — '무엇을 DEAD, 무엇을 LIVE 로 두는가'만 고른다.
 #   원칙: 수치는 모듈 최상위 리터럴 상수로 유지한다(check_model_consistency 의 SHARED 가 리터럴
 #   문자열을 비교한다). CASE 는 배선만 고르고, 요구 상수 조합은 아래에서 런타임 검증한다.
-CASE = 'clamp_live_cb'   # 현재 런 대상 — Stage B 클램프 가족(LIVE=클램프 단독, base=클램프+코너)
+CASE = 'corner_live_cb'   # 현재 런 대상 — Stage B 당김 사다리(코너 가족, LIVE=코너 단독; §19.43)
 
 _CASE_TABLE = {
     #  seed: [2026-10-11 복원] 꼭짓점을 케이블(T3D2)+Tie 로 잇고 **케이블 끝단**을 구동한다 —
