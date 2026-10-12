@@ -13,26 +13,13 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
         Step-Buckle             고유값 추출 (LIVE = perturbation 0.01 m)
     창은 N_EIG_BUCKLE / BUCKLE_VECTORS 상수로 정한다(요청 수 <= 실제 subspace 차원).
 
-케이스 (CASE 상수). 예전의 LOAD_MODE x CLAMP_MODE 조합 표면을 대체한다.
-    CASE          DEAD (base state)                 LIVE (lambda 의 대상)      답하는 질문
-    seed          코너 전량 DISP (케이블 끝단 구동)  코너 PERTURBATION(끝단)    케이블 라우트 corner 모드 — 전역 4모드 재현
-    clamp_lf      DEAD_FRAC x P + 클램프 u3=0       (1-DEAD_FRAC) x P          운용 램프의 좌굴 배수(lambda=1=운용점)
-    corner_lf     코너 전량 DISP, 클램프 없음        코너 PERTURBATION          그리드에서의 코너 하중 모드(합성 씨드 1/2)
-    clamp_live    base=코너+클램프 **둘 다** 구동     클램프 프로브(코너 0 명시) 클램프 가족 2모드 (RP 구동)
-                  (클램프 당김 전량, RP 구동)
-    clamp_live_cb 위와 같되 전부 케이블 끝단 구동     클램프 프로브(코너 0 명시) 클램프 가족 ★ (HF 경로)
-    corner_live_cb base 는 clamp_live_cb 와 **동일**  코너 프로브(클램프 0 명시) 코너 가족 ★ (HF 경로)
-    corner_live_rp 위와 같되 클램프 전달 = RP 직접    코너 프로브(클램프 0 명시) 대조: 클램프 케이블 제거
-    corner_live_nodes [B안] 클램프 = 노드집합 직접    코너 프로브(클램프 0 명시) 패치/Coupling/케이블 없음
-    clamp_live_nodes  [B안] 클램프 = 노드집합 직접    클램프 프로브(코너 0 명시) 클램프 가족 재료
-    clamp_lf_cb   clamp_lf + 클램프 당김을 케이블로   (1-DEAD_FRAC) x P          운용점 회계(λ=1=운용점)
-    ⚠️ corner_lf/clamp_live 의 lambda 는 운용점 회계(위 clamp_lf 의 lambda=1)가 **아니다** —
-       프로브 크기의 배수다. 모드 형상은 프로브 크기에 불변.
-      seed 는 케이블 3개(Cable_Top/Right/Left)를 Tie 로 꼭짓점 패치에 연결하고 끝단을 구동한다
-      — 이 케이스만 HAS_CABLES=True 이며 buckle<->mode 정합 계약의 적용 대상이다.
-      P = 꼭짓점 + 클램프 하중 세트(CORNER_F0 / CLAMP_F0). clamp_lf 는 케이블 0개다.
-      BUCKLING LOAD = DEAD + lambda*LIVE 이므로 **clamp_lf 의 lambda = 1 이 운용점**이다.
-      무효 조합(예: 코너는 케이블, 클램프는 CLOAD)은 상수 검증이 런타임 예외로 막는다.
+케이스 (CASE 상수) — 현행 **2개** (씨드 재료 전용).
+    CASE          DEAD (base state)                      LIVE (lambda 대상)     답하는 질문
+    seed          코너 전량 DISP (케이블 끝단 구동)       코너 PERTURBATION      꼭짓점 가족 모드(전역)
+    clamp_only    코너 당김(패치 RP) + 클램프 당김(케이블)  클램프 PERTURBATION    클램프 가족 모드(국소)
+    ⚠️ lambda 는 **프로브 크기의 배수**이며 운용점 회계가 아니다(모드 형상은 프로브 크기에 불변).
+    두 모델은 서로 다른 base state 를 가진다 — 씨드는 guidance 이고 x_c 정합만 필요하다(§19.50).
+    각 계열 상위 2모드를 combine_mode_tables.py 로 합성해 *IMPERFECTION(기하 섭동)으로 주입한다.
 
 사용법
     abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] [dead_frac]
@@ -207,63 +194,21 @@ CORNER_ANGLE_DEG = 28.6
 CASE = 'clamp_only'   # 현재 런 대상 — 클램프 케이블만 (사용자 제안, §19.50)
 
 _CASE_TABLE = {
-    #  seed: [2026-10-11 복원] 꼭짓점을 케이블(T3D2)+Tie 로 잇고 **케이블 끝단**을 구동한다 —
-    #    mode.py(ClampFree_Buckle) 와 같은 하중 경로. 원래 전역 4모드의 재현용(은퇴 경위 §19.35).
-    'seed':         dict(cables=True,  clamps=False, clamp_load='none', corner_dir='hf'),
-    'clamp_lf':     dict(cables=False, clamps=True,  clamp_load='live', corner_dir='hf'),
-    #  corner_lf: 그리드·무클램프. base=코너 전량(DISP), LIVE=코너 프로브(PERTURBATION).
-    #    합성 씨드(코너 패밀리) 재료 — clamp_lf 의 lambda=1 운용점 회계가 아니다(lambda=프로브 배수).
-    'corner_lf':    dict(cables=False, clamps=False, clamp_load='none', corner_dir='hf'),
-    #  clamp_live: base=초기 인장만(코너 전량, 클램프 당김 0 명시), LIVE=클램프 단독 프로브.
-    #    합성 씨드(클램프 패밀리) 재료. lambda=프로브 배수. live_driver='clamp' 가 배선을 가른다.
-    'clamp_live':   dict(cables=False, clamps=True,  clamp_load='base', corner_dir='hf',
-                         live_driver='clamp'),        # A 의 RP 판 (코너 구동 경로만 다름)
-    #  [2026-10-11 Stage B] 클램프 하중을 **케이블 끝단**으로 전달한다(HF run_abaqus.py 와 같은 하중
-    #    경로: Cable_CL/CR + Tie_CL/CR + 끝단 구동, CLAMP_CABLE_LEN=0.5).
-    #    격리 이유: 구 스크립트의 CLAMP_MODE='driven'(클램프 케이블)은 SYSTEM 음수 1256->888 /
-    #    CONVERGED=0 으로 3회 실패한 이력이 있다(references/clamp-cable-driven-route.md). 이번 조합은
-    #    격자 + 요청 100 + BC_Edges_Only_Z + 코너 케이블(검증됨) 이다.
-    #    clamp_live_cb: clamp_live 와 **단일변수**(클램프 전달 경로만 RP -> 케이블) — 진단 1순위.
-    #    clamp_cb:      HF 토폴로지(코너도 케이블 — seed 와 같은 경로) + 클램프 케이블.
-    #  [2026-10-11 설계 확정] base = **클램프 + 꼭짓점 둘 다** 구동해 도달하고, 좌굴 스텝의 LIVE 는
-    #    **한 가족만** 준다. 클램프 가족(A)과 코너 가족(B)을 **같은 base** 에서 각각 뽑아 2모드씩
-    #    합성한다(Δz = Σ ω_i φ_i). 두 가족 동시 섭동은 성공 기록이 없다.
-    #    clamp_load='base' = 클램프 당김 **전량**(CLAMP_PULL)을 base(GlobalTension)에 넣는다
-    #      -> 클램프가 base state 를 압축하므로 x_c 가 모드를 바꾼다(CLOAD 를 좌굴 스텝에만 둔 런의
-    #         '완주했지만 클램프 무효' 판정을 피하는 배선).
-    'clamp_live_cb': dict(cables=True,  clamps=True, clamp_load='base', corner_dir='hf',
-                          live_driver='clamp', clamp_cable=True),   # A: 클램프 가족 (HF 경로)
-    'corner_live_cb': dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
-                           live_driver='corner', clamp_cable=True),  # B: 코너 가족 (HF 경로)
-    #  corner_live_rp: [2026-10-11] 코너는 케이블(seed 의 검증된 경로) + **클램프는 RP 직접 구동**(클램프 케이블 없음).
-    #    근거: 문서 실측에서 클램프 케이블을 붙이면 SYSTEM 음수가 48 -> 888 로 폭증했고(§clamp-cable-driven-route),
-    #    클램프 RP 구동(clamp_lf 계열)은 5.6% 에서 4모드로 성공한 기록이 있다. pull=0 에서도 실패한
-    #    cb 라우트(음수 62)와의 차이가 **클램프 케이블뿐**인 대조 케이스다.
-    'corner_live_rp': dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
-                           live_driver='corner', clamp_cable=False),
-    #  [B안, 2026-10-11] 클램프를 **노드집합 직접 지정변위**로 — RP/Coupling/Tie/케이블 없음.
-    #    RP+Coupling 붙은 10개 설정이 전부 CONVERGED=0 이었다(§19.47). 여기서는 클램프가
-    #    'u1,u2 = DIR x 당김, u3 = 0' 인 이동 경계가 된다(국소 압축은 그대로).
-    'corner_live_nodes': dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
-                              live_driver='corner', clamp_drive='nodes'),
-    'clamp_live_nodes':  dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
-                              live_driver='clamp', clamp_drive='nodes'),
-    #  [2026-10-11 사용자 제안] **클램프 케이블만** 있는 모델 — 꼭짓점 케이블/클램프 RP 대신 코너는
-    #    강체패치 RP 로 구동한다(케이블 세트가 동시에 존재하지 않는다). 코너 케이블만 있는 `seed` 와
-    #    짝을 이뤄 "어느 케이블 조합이 선형모드 수렴을 깨는가"를 단일변수로 가른다.
-    #    base = 코너 당김(패치) + 클램프 당김(케이블). LIVE = 클램프 가족 프로브.
-    'clamp_only':       dict(cables=False, clamps=True, clamp_load='base', corner_dir='hf',
-                             live_driver='clamp', clamp_cable=True),
-    #    clamp_only_nodes: 같은 base 를 **노드구동(B안)** 으로 — 케이블이 아예 없어 가장 깨끗하다.
-    'clamp_only_nodes': dict(cables=False, clamps=True, clamp_load='base', corner_dir='hf',
-                             live_driver='clamp', clamp_drive='nodes'),
-    #  clamp_lf_cb: [2026-10-11] **HF 정합본** — 클램프 당김을 base(DEAD_FRAC 몫)까지 케이블로 전달한다.
-    #    클램프가 base state 를 압축하므로 x_c 가 모드를 바꾼다(clamp_lf 의 회계 + HF 하중 경로).
-    #    ⚠️ 위의 두 _cb 케이스는 클램프 당김이 base 에 **없다** — 구 스크립트가 CLOAD 를 Step-Buckle 에
-    #       둔 런을 '완주했지만 클램프 무효(base 압축 0.08 %, x_c 를 바꿔도 모드 불변)' 로 판정한 이력이
-    #       있다(references/clamp-cable-driven-route.md). 그 결론이 이 케이스다.
-    'clamp_lf_cb':   dict(cables=False, clamps=True, clamp_load='live', corner_dir='hf',
-                          clamp_cable=True),
+    #  [§19.60 정리] 씨드(imperfection) 재료는 **이 2개만** 필요하다. 나머지 10개 케이스
+    #  (clamp_lf, corner_lf, clamp_live, clamp_live_cb, corner_live_cb, corner_live_rp,
+    #   corner_live_nodes, clamp_live_nodes, clamp_only_nodes, clamp_lf_cb)는 공유 base 설계(§19.41)·
+    #  B안(§19.48)·RP 대조군의 진단용이었고, `clamp_only` 가 100/100 수렴(§19.52)하면서 역할이 끝났다.
+    #  각 케이스의 실패·성공 기록은 notes/history.md §19.40~§19.60 에 보존돼 있다.
+    #
+    #  seed       : 꼭짓점 케이블만(클램프 하드웨어 0). base=코너 전량 DISP(케이블 끝단 구동),
+    #               LIVE=코너 PERTURBATION. = 꼭짓점 가족 모드(전역 대형).
+    #  clamp_only : 클램프 케이블만(꼭짓점 케이블 0, 코너는 강체패치 RP 로 구동).
+    #               base=코너 당김 + 클램프 당김(케이블 전달), LIVE=클램프 PERTURBATION.
+    #               = 클램프 가족 모드(클램프 부근 국소, 쌍 축퇴).
+    'seed':       dict(cables=True,  clamps=False, clamp_load='none', corner_dir='hf',
+                       live_driver='corner'),
+    'clamp_only': dict(cables=False, clamps=True,  clamp_load='base', corner_dir='hf',
+                       live_driver='clamp', clamp_cable=True),
 }
 
 
@@ -1099,8 +1044,8 @@ def build_model(disp):
     #   corner_lf/clamp_live 도 여기서 구동 BC 를 만든다 — 새 케이스의 base(전량 프리텐션).
     #   ⚠️ 새 케이스를 추가하면 이 게이트에도 넣는다 — 빠뜨리면 Disp_Control_Right/Left 가
     #   만들어지지 않아 뒤에서 KeyError 로 죽는다(하네스가 잡는다. clamp_live_cb 에서 실제로 발생).
-    if HAS_CABLES or CORNER_DIR == 'paper45' or CASE in ('corner_lf', 'clamp_live', 'clamp_live_cb',
-                                                          'clamp_only', 'clamp_only_nodes'):
+    if CASE in ('seed', 'clamp_only'):   # [§19.60] 둘 다 코너 구동 경로가 필요하다
+                                         #   (seed=케이블 끝단 / clamp_only=강체패치 RP)
         # 변위 구동: 'cable' 은 케이블 끝단, 'paper45' 는 꼭짓점 강체패치 RP (논문 레시피).
         my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
                                 region=A2, u1=SET, u2=SET)
@@ -1269,7 +1214,7 @@ def build_model(disp):
     #   [함정] 라우트에 없는 BC 를 참조하면 KeyError 로 모델 생성이 죽는다(스텁 하네스가 적발).
     #   ⚠️ LIVE_DRIVER=='clamp' 는 코너를 좌굴 스텝에서 0 으로 두는 케이스다(clamp_live/clamp_cb) —
     #   여기서 덮어쓰면 코너 프로브가 함께 들어가 '클램프 단독' 이 깨진다.
-    if (HAS_CABLES or CASE == 'corner_lf') and LIVE_DRIVER != 'clamp':
+    if HAS_CABLES and LIVE_DRIVER != 'clamp':   # [§19.60] 코너 케이블이 있을 때만
         #   corner_lf: 좌굴 스텝 값 = 프로브(PERTURBATION). 모드 형상은 크기에 불변, lambda 만 스케일.
         _ns = PATTERN_SIGN * PERTURBATION
         my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
@@ -1305,14 +1250,12 @@ if ELEM_TAG is None:
 #   이름이 겹쳐 run_job_safely 가 직전 증거를 지운다(§11).
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
 #   새 케이스의 표기: base=전량 프리텐션(f100) / base 클램프 당김 없음(dc000). CASE 세그먼트가 달라 유일성은 보장.
-_f_tag = int(round(DEAD_FRAC * 100.0)) if CASE in ('clamp_lf', 'clamp_lf_cb') else 100
+_f_tag = 100                     # [§19.60] DEAD_FRAC 태그 제거(현행 2케이스는 항상 100)
 _dc_tag = (int(round(CLAMP_DC_EFF * 100.0))
-           if CASE in ('clamp_lf', 'clamp_lf_cb', 'clamp_live', 'clamp_live_cb', 'corner_live_cb',
-                       'corner_live_rp', 'corner_live_nodes', 'clamp_live_nodes',
-                       'clamp_only', 'clamp_only_nodes')
-           else 0)
+           if CASE in ('clamp_only',) else 0)   # [§19.60] 클램프가 있는 케이스만 dc 태그
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
-_live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE in ('clamp_live', 'clamp_live_cb', 'corner_live_cb', 'clamp_live_nodes', 'corner_live_nodes', 'corner_live_rp', 'clamp_only', 'clamp_only_nodes') else ''
+_live_tag = (('_plv%05d' % int(round(PERTURBATION * 1.0e5)))
+             if CASE in ('seed', 'clamp_only') else '')   # [§19.60] 둘 다 LIVE 프로브가 있다
 _rot_tag = '' if CLAMP_DRIVE == 'nodes' else ('_rotfix' if CLAMP_RP_FIX_ROT else '')   # 스위치를 켜면 출력 이름이 갈린다
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
 JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x_c * 100.0)),

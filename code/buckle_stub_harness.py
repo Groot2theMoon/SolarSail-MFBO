@@ -43,20 +43,9 @@ CUT_MARKER = 'print("=" * 78)'          # 실행 블록의 시작(소스에 두 
 # ⚠️ 값은 **파이썬 리터럴 그대로** 쓴다(문자열은 따옴표 포함) — 치환이 값을 그대로 끼워 넣는다.
 #    실측: 따옴표를 빼면 `PRETENSION_MODE = corner2` 가 되어 NameError 로 죽는다.
 CASE_CONSTANTS = {
-    'seed':         {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'control_none': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'clamp_lf':     {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'corner_lf':    {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'clamp_live':   {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'paper_s1':     {'PRETENSION_MODE': "'paper3'",  'CORNER_ANGLE_DEG': '45.0'},
-    'clamp_live_cb': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'corner_live_cb': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'corner_live_rp': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'corner_live_nodes': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'clamp_live_nodes':  {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'clamp_only':        {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'clamp_only_nodes':  {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'clamp_lf_cb':   {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    #  [§19.60 정리] 현행 씨드 재료 2케이스만.
+    'seed':       {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    'clamp_only': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
 }
 
 # ---------------------------------------------------------------------------
