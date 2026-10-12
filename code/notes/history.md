@@ -2931,3 +2931,56 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 
 [교훈] 가드는 **물리적 판정 기준**(개수 일치 + 각 노드의 거울 존재)으로 써야 한다. 좌표를 반올림해
   문자열처럼 비교하면 파서 정밀도(`%.10g`)에 따라 오탐이 난다. tol 을 인자로 열고 최악값을 로그에 남길 것.
+
+#### §19.60 run_abaqus_buckle.py **불필요 코드 전수조사** (2026-10-12, 목적 확정 후)
+
+[목적 확정] 씨드 = **`seed`(꼭짓점 케이블만) + `clamp_only`(클램프 케이블만)** 의 좌굴모드 2+2 합성.
+  `clamp_only` 가 100/100 수렴(§19.52)으로 성공했으므로 공유 base 설계(§19.41)·B안(§19.48)·RP 대조군은
+  전부 **역할 종료**다. 그 관점에서 미사용/불필요 항목을 기계적으로 색출했다(참조 수 실측).
+
+[표 A — 케이스 12개 중 필요 2 / 불필요 10]
+  ★필요 `seed`, `clamp_only`
+  불필요(진단 목적 종료): `clamp_lf`, `corner_lf`, `clamp_live`, `clamp_live_cb`, `corner_live_cb`,
+  `corner_live_rp`, `corner_live_nodes`, `clamp_live_nodes`, `clamp_only_nodes`, `clamp_lf_cb`
+  (각 케이스의 결과는 history §19.40~§19.50 에 남아 있으므로 코드 제거로 지식이 사라지지 않는다.)
+
+[표 B — 라우트 키/분기]
+  | 항목 | 필요성 | 근거 |
+  |---|---|---|
+  | `cables` | 필요 | seed=True / clamp_only=False |
+  | `clamps` | 필요 | seed=False / clamp_only=True |
+  | `clamp_load` = `'base'` | 필요 | clamp_only 가 base 에 클램프 당김 전량 |
+  | `clamp_load` = `'none'` | 필요 | seed |
+  | `clamp_load` = `'live'` | **불필요** | clamp_lf/clamp_lf_cb 전용 -> 분기 **41줄**(L1156~1196) |
+  | `clamp_cable` | 필요 | clamp_only=True (클램프 케이블) |
+  | `clamp_drive='nodes'` | **불필요** | B안 3케이스 전용 -> 분기 5줄 + `create_patch_nodeset()` 11줄 |
+  | `corner_dir='hf'` | 필요(전 케이스) | — |
+  | `corner_dir='paper45'` | **불필요** | 어떤 케이스도 안 씀 -> 분기 6줄 + L1279 6줄 |
+  | `live_driver='clamp'` / 기본 `'corner'` | 필요 | 두 가족 프로브 |
+  | `DEAD_FRAC` + CLI 5번째 인자 | **불필요** | `'live'` 분기 전용(정의 L362 + L510 + L1182, CLI 파서 문구) |
+  | `CORNER_F0` / `CLAMP_F0` | **불필요** | 구 CLOAD 회계용(주석에 "구 CLOAD 라우트용" 명시) — 단 결과 dict(L1475)에 보고됨 |
+  | `EIGENSOLVER_CONST`/`BUCKLE_BLOCK_SIZE`/`BUCKLE_MIN_EIGEN` | **불필요(도달 불가)** | `_EIGENSOLVER='LANCZOS'` 하드코딩 -> SUBSPACE 분기 미실행 |
+  | `CLAMP_MODE` | **불필요** | 문서 문구 1회만(코드 0) |
+
+[표 C — 상수 계약] checker `SHARED` 30항목(형상·물성·클램프 좌표·경계)은 **제거 금지**(HF↔buckle 계약).
+  `N_EIG_BUCKLE`/`BUCKLE_VECTORS`/`DISP_GLOBAL`/`CLAMP_DC`/`CLAMP_EXCL_R`/`CLAMP_CABLE_LEN`/`CORNER_ANGLE_DEG`/
+  `PRETENSION_MODE`/`SIGMA0`/`MODE_STABILIZATION`/`ELEM_CODE_*`/`USE_GRID_MESH` 등은 현행 유지.
+
+[표 D — 함수] `create_patch_nodeset()`(L810, nodes 전용)만 삭제 대상. 나머지 16개는 필요.
+  `judge_run()`(L1411)은 보조 판정(결과 요약) — 모드표 생성과 무관하지만 유지 권장.
+
+[표 E — 등록/게이트/문서 파급(제거 시 함께 손댈 곳)]
+  - checker: `_CABLE_CASES`(7) -> 2 (`seed`,`clamp_only`), `_KNOWN_CASES`(추가 튜플) 정리,
+    고아 등록 `control_none`(checker+harness)·`paper_s1`(harness) 제거.
+  - harness: `CASE_CONSTANTS` 10행 제거(고아 2개 포함).
+  - buckle 내부: `CASE in (...)` 게이트 4곳(L1102/1308/1310/1315), 태그 목록 `_dc_tag`/`_live_tag`,
+    docstring 케이스표(L16~40).
+  - 규모 추정: 표 A~D + 게이트/등록 합계 **약 250줄 / 전체 1524줄 ≈ 16%**.
+
+[⚠️ 위험 1건 — 숨은 의존] `LIVE_DRIVER = _ROUTE.get('live_driver', 'corner')`(L283). `seed` 행은
+  `live_driver` 키를 **주지 않으므로** 기본값이 곧 seed 의 물리(코너 프로브)를 결정한다. 기본값을 바꾸면
+  seed 가 조용히 달라진다 -> **seed 행에 `live_driver='corner'` 를 명시**하는 것이 옳다(1줄).
+
+[우선순위] ① seed 행에 live_driver 명시(위험 제거) ② 케이스 10개 + 게이트/등록/문서 정리
+  ③ `'live'` 분기 + DEAD_FRAC/F0 제거 ④ B안(nodes) 경로 제거 ⑤ paper45 + 도달 불가 고유솔버 분기 제거.
+  각 단계 1커밋 + 검사기/하네스 EXIT=0 확인.
