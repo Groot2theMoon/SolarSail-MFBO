@@ -531,7 +531,7 @@ IMPERFECTION_MODE = 'odb_table'   # 'odb_direct'(기본) | 'odb_table' | 'file'
 #   [2026-10-12] 설계점별 시드표 — 기본은 결정적 경로(seeds/modes_xc<NNN>_dc<NNN>.txt),
 #     실험은 env SOLARSAIL_MODE_TABLE 로 덮는다. 종전 상수 '..\modes_2p2.txt' 는 x_c=0.5 산출물
 #     하나만 가리켜, MFBO(x_c 스윕)에서 조용히 같은 시드를 재사용했다(계획 Q1=a / Q2=a).
-SEEDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), SEED_DIR_NAME)
+SEEDS_DIR = os.path.join(_HERE, SEED_DIR_NAME)   # [§19.73] cae noGUI 는 execfile 이라 __file__ 이 없다
 MODE_TABLE = seed_table_path(SEEDS_DIR, x_c, d_c, env=os.environ.get('SOLARSAIL_MODE_TABLE'))
 MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
 MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
@@ -555,7 +555,7 @@ if _SRC_ENV:
     #      실제로 존재하는 것을 쓴다. 절대경로면 그대로 통과한다.
     _srcdirs = []
     try:
-        _srcdirs.append(os.path.dirname(os.path.abspath(__file__)))      # code\
+        _srcdirs.append(_HERE)      # code\
     except Exception:
         pass
     _srcdirs.append(os.getcwd())                                         # 안전망
@@ -629,7 +629,7 @@ if IMPERFECTION_MODE == 'odb_table':
     #     판정: ① 표가 이 x_c/d_c 에서 나왔는가 ② 만든 뒤 buckle 소스가 바뀌지 않았는가
     #           ③ 소스 모드표가 그 뒤 바뀌지 않았는가.
     #     로직은 aba_imperfection.seed_gate(stdlib) — 단위시험 code/test_seed_path.py.
-    _buckle_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), BUCKLE_SCRIPT_NAME)
+    _buckle_script = os.path.join(_HERE, BUCKLE_SCRIPT_NAME)
     _gate_ok, _gate_why, _sinfo = seed_gate(x_c, d_c, MODE_TABLE, _buckle_script)
     emit("[SEED] x_c=%.4g d_c=%.4g table=%s" % (x_c, d_c, MODE_TABLE))
     emit("[SEED] 모드 %s / source_seed=%s / source_clamp=%s / 지문=%s"

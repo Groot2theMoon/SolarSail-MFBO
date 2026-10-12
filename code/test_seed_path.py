@@ -155,6 +155,15 @@ def main():
     check("LF 이름 d_c 로 구분", A.lf_odb_name(0.5, 0.5) != A.lf_odb_name(0.5, 0.6))
     check("구 고정명과 충돌 없음", A.lf_odb_name(0.5, 0.5) != 'LF_Analysis.odb')
 
+    print("--- 6b) run_abaqus.py 는 execfile 안전해야 (__file__ 금지) ---")
+    _here = os.path.dirname(os.path.abspath(__file__))
+    _lines = io.open(os.path.join(_here, 'run_abaqus.py'), encoding='utf-8').read().split('\n')
+    _i_def = next((k for k, l in enumerate(_lines) if l.startswith('def _resolve_here')), -1)
+    _i_here = next((k for k, l in enumerate(_lines) if l.startswith('_HERE = ')), -1)
+    _bad = [k + 1 for k, l in enumerate(_lines)
+            if 'abspath(__file__)' in l and not (_i_def < k < _i_here)]
+    check('abspath(__file__) 는 _resolve_here 안에만', not _bad, _bad)
+
     print("--- 6) run_abaqus.py 의 aba_imperfection import 이름 실재성 ---")
     here = os.path.dirname(os.path.abspath(__file__))
     raw = io.open(os.path.join(here, 'run_abaqus.py'), encoding='utf-8').read()
