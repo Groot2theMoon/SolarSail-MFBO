@@ -499,7 +499,7 @@ IMPERFECTION_NAME = 'ClampFree_Buckle'   # 모드 소스 잡 이름과 '같은' 
 IMPERFECTION_MODES = (1, 2, 3, 4)   # 기본 = 논문(Galhofo) 주입 모드 1~4.
 IMPERFECTION_MAX_MODES = 4          # 상한. 모드표에 있는 모드가 더 적으면 그만큼만 쓴다(아래에서 자동 조정).
                                     #  모드 3개를 주입한다(lambda1 탈락). 논문 lambda 스프레드 0.036% 라 모드 3.4 의 기여가 작다(§5a).
-IMPERFECTION_AMPL_T = 1.0    # 막 두께 배수. Galhofo 채택값은 0.10 t 이지만 우리는 1.0 을 쓴다.
+IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t 이지만 우리는 1.0 을 쓴다.
 #   [2026-10-06 실측] 0.10 이면 증분이 눌려 2215 증분 / 약 90 분이 걸린다. 1.0 이면 271 증분 / 11 분이다
 #   (HF_x025k). 진폭이 작으면 초기 결함이 약해 분기가 늦게 갈라지고 수렴이 어려워진다.
 #   진폭 민감도를 보려면 이 상수를 0.50 등으로 바꿔 재실행한다.
@@ -520,8 +520,8 @@ if MODE_SOURCE not in ('external', 'self'):
 # 임퍼펙션 주입 방식 — 모드 소스의 스텝 타입이 방식을 결정한다(§6).
 #   *BUCKLE   -> 'odb_direct'(기본). *BUCKLE 은 .fil 출력이 금지되므로 모드 프레임은 ODB 에만 있다.
 #   *FREQUENCY -> 'file' (.fil + *IMPERFECTION, FILE=).
-IMPERFECTION_MODE = 'odb_direct'   # 'odb_direct'(기본) | 'odb_table' | 'file'
-MODE_TABLE = os.path.join('..', 'modes_ClampFree_Buckle.txt')   # code\aba -> code\
+IMPERFECTION_MODE = 'odb_table'   # 'odb_direct'(기본) | 'odb_table' | 'file'
+MODE_TABLE = os.path.join('..', 'modes_2p2.txt')   # code\aba -> code\
 MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
 MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
 MODE_INSTANCE = 'MEMBRANE-1'                                    # 막 인스턴스 이름
