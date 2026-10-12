@@ -336,7 +336,8 @@ def main():
           % (_case, _cang, _dfr, _cf0))
     _CABLE_CASES = ('seed', 'control_none', 'clamp_live_cb', 'corner_live_cb', 'corner_live_rp',
                     'corner_live_nodes', 'clamp_live_nodes')
-    _KNOWN_CASES = _CABLE_CASES + ('clamp_lf', 'corner_lf', 'clamp_live', 'clamp_lf_cb', 'paper_s1')
+    _KNOWN_CASES = _CABLE_CASES + ('clamp_lf', 'corner_lf', 'clamp_live', 'clamp_lf_cb', 'paper_s1',
+                                    'clamp_only', 'clamp_only_nodes')
     if _case == '(없음)':
         # [2026-10-07] 여기서 **실패**시킨다. 경고만 찍으면 CASE 줄을 주석 처리한 옛 사본이
         #   PASS 로 통과한다(규칙 18: 문자열 존재 검사는 주석 처리된 쌍둥이에 만족한다).

@@ -54,6 +54,8 @@ CASE_CONSTANTS = {
     'corner_live_rp': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
     'corner_live_nodes': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
     'clamp_live_nodes':  {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    'clamp_only':        {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    'clamp_only_nodes':  {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
     'clamp_lf_cb':   {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
 }
 

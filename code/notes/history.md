@@ -2631,3 +2631,41 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [검증] py_compile OK / 검사기 PASS(HF↔buckle 30 · HF↔모드소스 27 · buckle↔모드소스 13, 위반 0) /
   하네스 `corner_live_nodes`·`clamp_live_nodes` EXIT=0(가드 통과) / B 배선 유지 확인
   (`BC_Clamp_CL` -> `Set(CL_Nodes)` u3=0, `RP_CL_Set`·`Tie`·`Cable` 0건).
+
+#### §19.50 사용자 제안 — **케이블 세트 분리** 모델(꼭짓점만 / 클램프만) (2026-10-11)
+
+[제안] "꼭짓점케이블 + 클램프케이블이 **동시에** 있어서 선형모드 수렴이 어렵다면, (꼭짓점 케이블만 있는
+  모델의 모드) + (클램프 케이블만 있는 모델의 모드) 를 합성하면?" — 즉 **한쪽 케이블 세트만** 가진 두 모델.
+
+[절반은 이미 성공] Model 1 = `seed`(꼭짓점 케이블만, 클램프 하드웨어 0) -> **4개 양수 전역모드** ✓ (§19.38).
+  즉 "케이블 세트를 하나로 줄이면 된다"의 절반은 이미 검증된 셈이다. 남은 절반 = 클램프만 있는 모델.
+
+[설계 변화 — 명시] 두 모델의 **base state 가 다르다**(같은 base 2+2 설계 -> "각 모델의 자기 base").
+  근거는 기존 합의: 씨드는 **guidance** 로 충분하고 `x_c` 정합만 필요(2026-10-08) + Galhofo 도 클램프 없는
+  모델의 모드를 클램프 모델에 주입했다. 가중치 ω 는 원래도 자유 노브(IMPERFECTION_AMPL_T)다.
+
+[구현] 새 케이스 2종 (rp / B안):
+  - `clamp_only`: `cables=False`(꼭짓점 케이블 0) + `clamp_cable=True` + `clamp_load='base'` + `live_driver='clamp'`.
+    base = 코너 당김은 **강체패치 RP**(케이블 없음)로, 클램프 당김은 **케이블**로 전달. LIVE = 클램프 프로브.
+  - `clamp_only_nodes`: 같은 base 를 **노드구동(B안)** 으로 — 케이블이 아예 없어 가장 깨끗하다.
+  - 가드 추가: `clamp_cable=True` 는 `clamp_drive='rp'` 에서만(케이블 Tie 의 앵커가 RP) — 위반 시 즉시 예외
+    (하네스가 EXIT=5 로 먼저 잡아 조합 오류를 조용한 KeyError 로 두지 않는다).
+  - 잡 이름: `..._clamp_only_normal_ex210_rotfix_plv01000` 78자 / `..._clamp_only_nodes...` 77자 (80자 이하 ✓).
+
+[이 실험이 가르는 것 — 단일변수 표]
+| 모델 | 꼭짓점 케이블 | 클램프 전달 | 결과 |
+|---|---|---|---|
+| `seed` | ✓ | (클램프 없음) | ✓ 4모드 양수 |
+| `corner_live_rp` | ✓ | RP | ✗ 122 |
+| `corner_live_cb` | ✓ | 케이블 | ✗ 62 |
+| **`clamp_only`** | ✗ (패치 구동) | **케이블** | ? |
+| **`clamp_only_nodes`** | ✗ | 노드구동(케이블 0) | ? |
+  -> `corner_live_rp`(122) 와 `clamp_only`(?) 의 차이 = **어느 쪽 케이블이 문제인가**.
+  -> `clamp_only_nodes` = 하드웨어 최저복잡도(케이블·RP·Coupling 0) = 성공 최유력 후보.
+
+[검증 (라이선스 0)] py_compile OK / 검사기 PASS / 하네스 `clamp_only`·`clamp_only_nodes` EXIT=0(잡이름 가드 통과) /
+  배선 실측: `clamp_only` = Disp_Control_Right base 1.58e-5(패치 RP 구동) + Disp_Control_CL base 클램프 당김
+  + Buckle 프로브 ±7.07e-3; `clamp_only_nodes` = `BC_Clamp_CL`->`Set(CL_Nodes)`, 케이블 0건.
+
+[다음] ① `clamp_only` 1런 -> ② `CASE=clamp_only_nodes` 1런 -> 성공한 모델의 상위 2모드 + `seed` 상위 2모드 = 2+2.
+  합성식은 그대로 Δz = Σ ω_i φ_i (각 모델의 자기 base 기준 모드).

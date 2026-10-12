@@ -204,7 +204,7 @@ CORNER_ANGLE_DEG = 28.6
 # 케이스 (CASE) — '무엇을 DEAD, 무엇을 LIVE 로 두는가'만 고른다.
 #   원칙: 수치는 모듈 최상위 리터럴 상수로 유지한다(check_model_consistency 의 SHARED 가 리터럴
 #   문자열을 비교한다). CASE 는 배선만 고르고, 요구 상수 조합은 아래에서 런타임 검증한다.
-CASE = 'corner_live_nodes'   # 현재 런 대상 — [B안] 클램프 노드집합 직접 구동 (§19.48)
+CASE = 'clamp_only'   # 현재 런 대상 — 클램프 케이블만 (사용자 제안, §19.50)
 
 _CASE_TABLE = {
     #  seed: [2026-10-11 복원] 꼭짓점을 케이블(T3D2)+Tie 로 잇고 **케이블 끝단**을 구동한다 —
@@ -248,6 +248,15 @@ _CASE_TABLE = {
                               live_driver='corner', clamp_drive='nodes'),
     'clamp_live_nodes':  dict(cables=True, clamps=True, clamp_load='base', corner_dir='hf',
                               live_driver='clamp', clamp_drive='nodes'),
+    #  [2026-10-11 사용자 제안] **클램프 케이블만** 있는 모델 — 꼭짓점 케이블/클램프 RP 대신 코너는
+    #    강체패치 RP 로 구동한다(케이블 세트가 동시에 존재하지 않는다). 코너 케이블만 있는 `seed` 와
+    #    짝을 이뤄 "어느 케이블 조합이 선형모드 수렴을 깨는가"를 단일변수로 가른다.
+    #    base = 코너 당김(패치) + 클램프 당김(케이블). LIVE = 클램프 가족 프로브.
+    'clamp_only':       dict(cables=False, clamps=True, clamp_load='base', corner_dir='hf',
+                             live_driver='clamp', clamp_cable=True),
+    #    clamp_only_nodes: 같은 base 를 **노드구동(B안)** 으로 — 케이블이 아예 없어 가장 깨끗하다.
+    'clamp_only_nodes': dict(cables=False, clamps=True, clamp_load='base', corner_dir='hf',
+                             live_driver='clamp', clamp_drive='nodes'),
     #  clamp_lf_cb: [2026-10-11] **HF 정합본** — 클램프 당김을 base(DEAD_FRAC 몫)까지 케이블로 전달한다.
     #    클램프가 base state 를 압축하므로 x_c 가 모드를 바꾼다(clamp_lf 의 회계 + HF 하중 경로).
     #    ⚠️ 위의 두 _cb 케이스는 클램프 당김이 base 에 **없다** — 구 스크립트가 CLOAD 를 Step-Buckle 에
@@ -280,6 +289,11 @@ HAS_CLAMP_CABLES = bool(_ROUTE.get('clamp_cable', False))
 #     'nodes'         = **이상화**: 노드집합에 u1/u2(당김)·u3=0(그립)을 직접 지정변위 — RP/Coupling/
 #                       Tie/케이블이 **없다**(near-zero 모드의 통로를 제거). 국소 압축은 그대로 생긴다.
 CLAMP_DRIVE = _ROUTE.get('clamp_drive', 'rp')
+#   클램프 케이블의 Tie 는 **RP 를 앵커**로 쓴다 -> 노드구동('nodes')과 양립 불가(케이스 조합 오류를
+#   조용한 KeyError 로 두지 않고 여기서 막는다).
+if HAS_CLAMP_CABLES and CLAMP_DRIVE != 'rp':
+    raise RuntimeError("[케이스] clamp_cable=True 는 clamp_drive='rp' 에서만 성립한다"
+                       " (클램프 케이블 Tie 의 앵커가 RP 다).")
 
 
 def _require_constant(name, have, want):
@@ -1066,7 +1080,8 @@ def build_model(disp):
     #   corner_lf/clamp_live 도 여기서 구동 BC 를 만든다 — 새 케이스의 base(전량 프리텐션).
     #   ⚠️ 새 케이스를 추가하면 이 게이트에도 넣는다 — 빠뜨리면 Disp_Control_Right/Left 가
     #   만들어지지 않아 뒤에서 KeyError 로 죽는다(하네스가 잡는다. clamp_live_cb 에서 실제로 발생).
-    if HAS_CABLES or CORNER_DIR == 'paper45' or CASE in ('corner_lf', 'clamp_live', 'clamp_live_cb'):
+    if HAS_CABLES or CORNER_DIR == 'paper45' or CASE in ('corner_lf', 'clamp_live', 'clamp_live_cb',
+                                                          'clamp_only', 'clamp_only_nodes'):
         # 변위 구동: 'cable' 은 케이블 끝단, 'paper45' 는 꼭짓점 강체패치 RP (논문 레시피).
         my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
                                 region=A2, u1=SET, u2=SET)
@@ -1274,10 +1289,11 @@ _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 
 _f_tag = int(round(DEAD_FRAC * 100.0)) if CASE in ('clamp_lf', 'clamp_lf_cb') else 100
 _dc_tag = (int(round(CLAMP_DC_EFF * 100.0))
            if CASE in ('clamp_lf', 'clamp_lf_cb', 'clamp_live', 'clamp_live_cb', 'corner_live_cb',
-                       'corner_live_rp', 'corner_live_nodes', 'clamp_live_nodes')
+                       'corner_live_rp', 'corner_live_nodes', 'clamp_live_nodes',
+                       'clamp_only', 'clamp_only_nodes')
            else 0)
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
-_live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE in ('clamp_live', 'clamp_live_cb', 'corner_live_cb', 'clamp_live_nodes', 'corner_live_nodes', 'corner_live_rp') else ''
+_live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE in ('clamp_live', 'clamp_live_cb', 'corner_live_cb', 'clamp_live_nodes', 'corner_live_nodes', 'corner_live_rp', 'clamp_only', 'clamp_only_nodes') else ''
 _rot_tag = '' if CLAMP_DRIVE == 'nodes' else ('_rotfix' if CLAMP_RP_FIX_ROT else '')   # 스위치를 켜면 출력 이름이 갈린다
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
 JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x_c * 100.0)),
