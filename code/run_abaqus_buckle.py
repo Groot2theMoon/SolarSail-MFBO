@@ -11,7 +11,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     clamp_only  DEAD 코너(패치 RP)+클램프(케이블) / LIVE 클램프    -> 클램프 가족(국소) 모드
     두 케이블 세트를 한 모델에 공존시키면 선형모드가 수렴하지 않는다(§19.46~19.47) -> 가족을 분리해
     각자 자기 base 에서 뽑고, 계열별 상위 2모드를 combine_mode_tables.py 로 합성한다.
-    ⚠️ lambda 는 프로브 크기의 배수(운용점 회계 아님 — 모드 형상은 크기에 불변).
+    lambda 는 프로브 크기의 배수(운용점 회계 아님 — 모드 형상은 크기에 불변).
 
 사용법  abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
     x_c            0.5 -> 좌(5,5) / 우(15,5). 안전대역 (0.03, 0.95) 밖이면 경고만.
@@ -20,7 +20,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     clamp_excl_r_m 클램프 반경 내 노드를 면외 구속에서 제외 [m]. 생략 = CLAMP_EXCL_R(0.21).
     CASE 와 창(N_EIG_BUCKLE / BUCKLE_VECTORS / BUCKLE_SOLVER)은 상수부에서 수정한다 — 값이 잡 이름에
     들어가 산출물이 안 덮인다. 요구 상수(PRETENSION_MODE / CORNER_ANGLE_DEG)가 어긋나면 즉시 예외.
-    ⚠️ 창 = 요청 수 > base 의 SYSTEM 음수 고유값 개수  AND  <= 실제 subspace 차원. 앞 조건을 어기면
+    창 = 요청 수 > base 의 SYSTEM 음수 고유값 개수  AND  <= 실제 subspace 차원. 앞 조건을 어기면
        첫 n 개가 전부 음수로 온다 — 그때는 모델이 아니라 창을 먼저 의심한다(창 값은 base 종속).
 
 산출물 (code/buckle/)  <job>.odb/.dat/.msg/.sta/.fil/... + <job>.diag.txt. 고유값 표는 .dat 의
