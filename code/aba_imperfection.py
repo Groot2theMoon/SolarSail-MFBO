@@ -408,3 +408,141 @@ def job_completed_from_logs(job_name):
         if ('THE ANALYSIS HAS BEEN COMPLETED' in t) or ('HAS COMPLETED SUCCESSFULLY' in t):
             return True
     return False
+
+
+# =====================================================================
+# 설계점별 시드표 (2026-10-12) — x_c/d_c 로 표 경로를 결정하고, 지문으로 드리프트를 막는다.
+#   HF(run_abaqus.py) 와 make_seed.py 가 **같은 규칙**을 써야 하므로 stdlib 전용인 여기에 둔다.
+#   결정 근거: code/notes/plan-hf-seed-pipeline-2026-10-12.md (Q1=a, Q2=a, Q3=b)
+# =====================================================================
+BUCKLE_FINGERPRINT_KEYS = FINGERPRINT_KEYS + (
+    'THICKNESS', 'USE_GRID_MESH', 'CLAMP_DC', 'CLAMP_CABLE_LEN', 'CLAMP_EXCL_R',
+    'CLAMP_DIR', 'BUCKLE_SOLVER', 'CORNER_ANGLE_DEG')
+BUCKLE_SCRIPT_NAME = 'run_abaqus_buckle.py'
+SEED_DIR_NAME = 'seeds'
+
+
+def seed_table_name(x_c, d_c, prefix='modes'):
+    """설계점 -> 시드표 파일명. dc 는 백분율로 자른다(0.0556 -> 006; HF 잡 이름과 같은 규칙)."""
+    return '%s_xc%03d_dc%03d.txt' % (prefix, int(round(x_c * 100.0)), int(round(d_c * 100.0)))
+
+
+def seed_table_path(seeds_dir, x_c, d_c, env=None):
+    """시드표 절대경로. env(SOLARSAIL_MODE_TABLE)가 있으면 그것이 이긴다(실험용 오버라이드)."""
+    if env:
+        return os.path.abspath(env)
+    return os.path.join(seeds_dir, seed_table_name(x_c, d_c))
+
+
+def buckle_fingerprint(script_path, keys=BUCKLE_FINGERPRINT_KEYS):
+    """buckle 스크립트의 모델 상수 지문(16자). 못 읽으면 None."""
+    return model_fingerprint(script_path, keys)[0]
+
+
+def file_token(path):
+    """파일 내용 sha1 앞 16자. 없으면 None."""
+    try:
+        h = hashlib.sha1()
+        with open(path, 'rb') as f:
+            for chunk in iter(lambda: f.read(65536), b''):
+                h.update(chunk)
+        return h.hexdigest()[:16]
+    except Exception:
+        return None
+
+
+def canon_seed_inputs(x_c, d_c, buckle_fp, seed_sha, clamp_sha):
+    """지문 입력의 정본 문자열 — HF 와 make_seed 가 **같은 문자열**을 만들어야 한다."""
+    return 'x_c=%.4f|d_c=%.5f|buckle=%s|seed=%s|clamp=%s' % (
+        float(x_c), float(d_c), buckle_fp or 'none', seed_sha or 'none', clamp_sha or 'none')
+
+
+def seed_fingerprint(x_c, d_c, buckle_fp, seed_sha, clamp_sha):
+    return hashlib.sha1(canon_seed_inputs(x_c, d_c, buckle_fp, seed_sha, clamp_sha)
+                        .encode('utf-8')).hexdigest()[:16]
+
+
+def seed_header_lines(x_c, d_c, buckle_fp, seed_tbl, seed_modes, clamp_tbl, clamp_modes,
+                      step='Step-Buckle', instance='MEMBRANE-1'):
+    """합성 시드표 맨 앞에 붙일 헤더 줄들. (지문, [줄...]) 반환."""
+    seed_sha = file_token(seed_tbl)
+    clamp_sha = file_token(clamp_tbl)
+    fp = seed_fingerprint(x_c, d_c, buckle_fp, seed_sha, clamp_sha)
+    return fp, [
+        '# FINGERPRINT sha1=%s src=%s' % (fp, BUCKLE_SCRIPT_NAME),
+        '# SEED x_c=%g d_c=%g buckle_fp=%s fingerprint=%s'
+        % (float(x_c), float(d_c), buckle_fp or 'none', fp),
+        '# SOURCE seed=%s seed_sha=%s modes=%s'
+        % (os.path.basename(seed_tbl), seed_sha or 'none', seed_modes),
+        '# SOURCE clamp=%s clamp_sha=%s modes=%s'
+        % (os.path.basename(clamp_tbl), clamp_sha or 'none', clamp_modes),
+        '# STEP %s' % step,
+        '# INSTANCE %s' % instance,
+    ]
+
+
+def read_seed_header(table_path):
+    """시드표 헤더(# 의 k=v 토큰)를 dict 로. 'MODE ' 줄을 만나면 멈춘다. 없으면 {}."""
+    out = {}
+    try:
+        with open(table_path, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                s = line.strip()
+                if not s:
+                    continue
+                if not s.startswith('#'):
+                    break
+                body = s.lstrip('#').strip()
+                if body.upper().startswith('MODE '):
+                    break
+                for tok in body.split():
+                    if '=' in tok:
+                        k, v = tok.split('=', 1)
+                        out.setdefault(k.strip(), v.strip())
+    except Exception:
+        return {}
+    return out
+
+
+def seed_gate(x_c, d_c, table_path, buckle_script, keys=BUCKLE_FINGERPRINT_KEYS):
+    """이 시드표가 **이 설계점·이 buckle 소스**와 맞는가. (ok, 사유, 헤더dict) 반환.
+
+    차단 사유는 사람이 읽고 바로 조치할 수 있게 쓴다(재생성 명령은 호출자가 붙인다).
+    """
+    info = read_seed_header(table_path)
+    if not info:
+        return False, '헤더를 읽지 못함(구버전 표이거나 파일 없음)', info
+    if 'x_c' not in info or 'fingerprint' not in info:
+        return False, '헤더에 x_c/fingerprint 가 없음(구버전 표)', info
+    try:
+        _xc = float(info['x_c'])
+        _dc = float(info['d_c']) if 'd_c' in info else float('nan')
+    except ValueError:
+        return False, '헤더의 x_c/d_c 를 숫자로 읽지 못함', info
+    if abs(_xc - float(x_c)) > 1e-9:
+        return False, 'x_c 불일치(표 %.4f vs 런 %.4f)' % (_xc, float(x_c)), info
+    if _dc == _dc and abs(_dc - float(d_c)) > 5e-4:          # nan 은 비교하지 않는다
+        return False, 'd_c 불일치(표 %.5f vs 런 %.5f)' % (_dc, float(d_c)), info
+    _now = buckle_fingerprint(buckle_script, keys)
+    if _now != (info.get('buckle_fp') or None):
+        return False, ('buckle 소스가 표 생성 이후 바뀜(현재 %s vs 표 %s) -> 재생성 필요'
+                       % (_now, info.get('buckle_fp'))), info
+    _exp = seed_fingerprint(_xc, _dc, info.get('buckle_fp'),
+                            info.get('seed_sha'), info.get('clamp_sha'))
+    if _exp != info.get('fingerprint'):
+        return False, ('지문 재계산 불일치(%s vs 표 %s) -> 표가 손상/수정됨'
+                       % (_exp, info.get('fingerprint'))), info
+    #   [2026-10-12] 소스 모드표가 표 생성 뒤 바뀌면(재추출했는데 재합성 안 함) 조용히 낡은 표를 쓴다.
+    #   같은 폴더에 소스가 남아 있으면 지금 해시와 대조한다(없으면 건너뜀 — 이동/삭제는 정상 흐름).
+    _tdir = os.path.dirname(os.path.abspath(table_path))
+    for _k in ('seed', 'clamp'):
+        _nm, _sha = info.get(_k), info.get(_k + '_sha')
+        if not (_nm and _sha):
+            continue
+        _p = os.path.join(_tdir, _nm)
+        if os.path.exists(_p):
+            _cur = file_token(_p)
+            if _cur != _sha:
+                return False, ('소스 모드표 %s 가 표 생성 이후 바뀜(%s vs %s) -> 재합성 필요'
+                               % (_nm, _cur, _sha)), info
+    return True, 'OK', info

@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""설계점 시드표 경로/지문 순수함수 단위시험 — Abaqus 불필요(라이선스 0).
+
+    python3 test_seed_path.py        # PASS/FAIL, 실패 시 EXIT=1
+
+검증 대상은 `aba_imperfection.py` 의 설계점 시드 API(2026-10-12)다.
+계획: code/notes/plan-hf-seed-pipeline-2026-10-12.md
+"""
+import io
+import os
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import aba_imperfection as A                                                   # noqa: E402
+
+FAIL = []
+N = [0]
+
+
+def check(name, cond, detail=''):
+    N[0] += 1
+    ok = bool(cond)
+    print("  %-4s %s%s" % ('OK' if ok else 'FAIL', name,
+                           ('   <- ' + str(detail)) if (detail and not ok) else ''))
+    if not ok:
+        FAIL.append(name)
+
+
+def _write(path, text):
+    with io.open(path, 'w', encoding='utf-8') as f:
+        f.write(text)
+
+
+def main():
+    tmp = tempfile.mkdtemp(prefix='seedpath_')
+
+    print("--- 1) 파일명 규칙 ---")
+    check('name 0.5/0.0556 -> xc050_dc006',
+          A.seed_table_name(0.5, 0.0556) == 'modes_xc050_dc006.txt',
+          A.seed_table_name(0.5, 0.0556))
+    check('name 0.25/0.1 -> xc025_dc010',
+          A.seed_table_name(0.25, 0.1) == 'modes_xc025_dc010.txt',
+          A.seed_table_name(0.25, 0.1))
+    check('name 0.3/0.5 -> xc030_dc050',
+          A.seed_table_name(0.3, 0.5) == 'modes_xc030_dc050.txt',
+          A.seed_table_name(0.3, 0.5))
+
+    print("--- 2) 경로 · env 우선 ---")
+    check('path 기본 = seeds/modes_xc050_dc006.txt',
+          A.seed_table_path(tmp, 0.5, 0.0556) == os.path.join(tmp, 'modes_xc050_dc006.txt'),
+          A.seed_table_path(tmp, 0.5, 0.0556))
+    check('path env 오버라이드 우선',
+          A.seed_table_path(tmp, 0.5, 0.0556, env='other/t.txt') == os.path.abspath('other/t.txt'))
+
+    print("--- 3) 지문 민감도 ---")
+    f0 = A.seed_fingerprint(0.5, 0.0556, 'abc', 's1', 'c1')
+    check('지문 결정적', f0 == A.seed_fingerprint(0.5, 0.0556, 'abc', 's1', 'c1'))
+    check('지문 16자', len(f0) == 16, f0)
+    check('지문 x_c 민감', f0 != A.seed_fingerprint(0.6, 0.0556, 'abc', 's1', 'c1'))
+    check('지문 d_c 민감', f0 != A.seed_fingerprint(0.5, 0.10, 'abc', 's1', 'c1'))
+    check('지문 buckle 민감', f0 != A.seed_fingerprint(0.5, 0.0556, 'XYZ', 's1', 'c1'))
+    check('지문 소스표 민감', f0 != A.seed_fingerprint(0.5, 0.0556, 'abc', 's2', 'c1'))
+
+    print("--- 4) buckle 소스 지문(상수 드리프트 감지) ---")
+    sc = os.path.join(tmp, 'fake_buckle.py')
+    base = ("SIGMA0 = 700.0\nTHICKNESS = 5.0e-6\nUSE_GRID_MESH = True\nCLAMP_DC = 0.0556\n"
+            "N_EIG_BUCKLE = 10\nBUCKLE_VECTORS = 25\n")
+    _write(sc, base)
+    b1 = A.buckle_fingerprint(sc)
+    check('buckle 지문 생성(16자)', b1 and len(b1) == 16, b1)
+    _write(sc, base.replace('BUCKLE_VECTORS = 25', 'BUCKLE_VECTORS = 26'))
+    check('buckle 지문 값변경 감지', A.buckle_fingerprint(sc) != b1)
+    _write(sc, base)
+    check('buckle 지문 복원 시 동일', A.buckle_fingerprint(sc) == b1)
+
+    print("--- 5) 헤더 왕복 + 게이트 ---")
+    seed_t = os.path.join(tmp, 'modes_seed.txt')
+    clamp_t = os.path.join(tmp, 'modes_clamp_xc050.txt')
+    _write(seed_t, 'MODE 1\n1 1.0\nMODE 2\n1 -1.0\n')
+    _write(clamp_t, 'MODE 1\n1 1.0\n')
+    fp, hdr = A.seed_header_lines(0.5, 0.0556, b1, seed_t, '1,2', clamp_t, '1')
+    tbl = os.path.join(tmp, 'modes_xc050_dc006.txt')
+    _write(tbl, '\n'.join(hdr) + '\nMODE 1\n1 1.0\nMODE 2\n1 -1.0\n')
+    check('헤더에 지문 기록', fp in '\n'.join(hdr))
+    check('table_fingerprint 호환(기존 리더)', A.table_fingerprint(tbl) == fp,
+          A.table_fingerprint(tbl))
+    ok, why, info = A.seed_gate(0.5, 0.0556, tbl, sc)
+    check('게이트 통과', ok, why)
+    check('헤더 x_c 읽기', info.get('x_c') == '0.5', info.get('x_c'))
+    check('헤더 source 표 이름', info.get('seed') == 'modes_seed.txt', info.get('seed'))
+    ok2, why2, _ = A.seed_gate(0.6, 0.0556, tbl, sc)
+    check('게이트 x_c 불일치 차단', (not ok2) and ('x_c' in why2), why2)
+    ok3, why3, _ = A.seed_gate(0.5, 0.10, tbl, sc)
+    check('게이트 d_c 불일치 차단', (not ok3) and ('d_c' in why3), why3)
+    _write(sc, base.replace('N_EIG_BUCKLE = 10', 'N_EIG_BUCKLE = 11'))
+    ok4, why4, _ = A.seed_gate(0.5, 0.0556, tbl, sc)
+    check('게이트 buckle 드리프트 차단', (not ok4) and ('바뀜' in why4), why4)
+    _write(sc, base)
+    # 소스 표가 바뀌면(내용 변경) 지문 재계산이 어긋나야 한다
+    _write(seed_t, 'MODE 1\n1 2.0\nMODE 2\n1 -1.0\n')
+    ok5, why5, _ = A.seed_gate(0.5, 0.0556, tbl, sc)
+    check('게이트 소스표 변조 차단', (not ok5) and ('modes_seed.txt' in why5), why5)
+    # 구버전 표(헤더 없음)
+    old = os.path.join(tmp, 'old.txt')
+    _write(old, 'MODE 1\n1 1.0\n')
+    ok6, why6, _ = A.seed_gate(0.5, 0.0556, old, sc)
+    check('게이트 구버전표 차단', not ok6, why6)
+
+    print()
+    if FAIL:
+        print("RESULT: FAIL %d / %d — %s" % (len(FAIL), N[0], ', '.join(FAIL)))
+        return 1
+    print("RESULT: PASS %d/%d" % (N[0], N[0]))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
