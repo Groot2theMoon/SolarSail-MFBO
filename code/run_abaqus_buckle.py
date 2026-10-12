@@ -101,51 +101,38 @@ _HERE = _resolve_here()
 #     (a) *IMPERFECTION, FILE=... 이 stale .fil 을 읽을 수 있다
 #     (b) .dat/.msg/.sta 진단 로그가 어느 해석 것인지 구분되지 않는다
 RUN_DIR_NAME = "buckle"
-NUMCPUS = 4               # run_abaqus_new.py 와 동일
+NUMCPUS = 4
 _RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_RUN)
 print("%s _HERE = %s" % (TAG, _HERE))
 print("%s _RUN  = %s" % (TAG, _RUN))
 
-# aba_grid_mesh: BC 노드셋 헬퍼만 쓴다(clamp_exclude_labels/boundary_node_labels/make_set).
-#   격자는 이제 사용 중이다: USE_GRID_MESH=True -> aba_grid_mesh.import_grid_part
-#   (.inp -> PartFromInputFile). fill_part 는 Part.addNodes 가 없어 폐기했다(§19.15).
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
-import aba_grid_mesh                                                            # noqa: E402
+import aba_grid_mesh                                                           
 
-
-
-# ============================================================================
-# 모델 상수 — run_abaqus_new.py 의 HF 모델과 같은 값이어야 한다.
-#   검사: python code/check_model_consistency.py
-# ============================================================================
 MODEL_PREFIX = 'SailModel_Buckle'
 INSTANCE_NAME = 'MEMBRANE-1'
 
 BASE = 20.0   # m
 HEIGHT = 10.0 # m
-# 막 요소는 1차(S4/S3) 유지. 2차는 base state 를 더 나쁘게 만들어 기각됐다(§4).
-#   요소코드는 HF/mode 와 같아야 한다 — *IMPERFECTION 이 노드 라벨로 주입된다.
 ELEM_CODE_QUAD = S4         # 1차 셸(S4/S3). 막 계열(M3D4/M3D3)은 기각 — 재시도 금지(notes §4·§24).
 ELEM_CODE_TRI = S3          # 위와 같은 이유로 3절점 1차 셸
-#   [2026-10-11] 원격 커밋 c002371 의 S8R5/STRI65 실험값을 되돌렸다 — 격자 .inp 는 S4/S3 토폴로지이고
-#     HF/mode 와 요소코드가 같아야 한다(검사기 HF<->buckle 위반 2건). 실험값은 브랜치 win-knobs-20261011.
 
 # ---- 메쉬 종류 ----
 #   True = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201, 미러쌍 누락 0).
 #           논문 Table A.1 토폴로지 일치. 자유 메쉬와 달리 좌우대칭이라 한쪽에만 모드가 생기지 않는다.
 #   False = 자유 메쉬(약 1.82만 요소, 구 경로).
 USE_GRID_MESH = True
-#   orphan(격자) 경로는 **한 이름이 노드용/요소용을 겸할 수 없다**(2026-10-07 실측):
-#     입력 처리기 오류: ***ERROR: Unknown part instance node set MEMBRANE-1.ALL
+#   orphan(격자) 경로는 한 이름이 노드용/요소용을 겸할 수 없다:
+#     입력 처리기 오류: ERROR: Unknown part instance node set MEMBRANE-1.ALL
 #                       NODE SET ASSEMBLY_MEMBRANE-1_ALL HAS NOT BEEN DEFINED
-#     All      = **절점**집합 -> 변위 BC(BC_Stabilize_Z 등).  free 경로에서는 면집합이라 겸용 가능.
-#     All_Elem = **요소**집합 -> 섹션 할당 + 초기응력(Stress).  free 경로에서는 All 그대로 쓴다.
+#     All      = 절점집합 -> 변위 BC(BC_Stabilize_Z 등).  free 경로에서는 면집합이라 겸용 가능.
+#     All_Elem = 요소집합 -> 섹션 할당 + 초기응력(Stress).  free 경로에서는 All 그대로 쓴다.
 _ALL_ELEM = 'All_Elem' if USE_GRID_MESH else 'All'
 
-SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
+SEED_DIV = 200.0 
 THICKNESS = 5.0e-6
 
 # ---- 케이블 (mode.py / HF 와 동일) ----
@@ -154,19 +141,12 @@ CABLE_AREA = np.pi * (CABLE_RADIUS**2)
 LEN_TOP = 0.280 # m
 LEN_BOT = 0.689 # m
 CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이. HF(run_abaqus.py) 와 같아야 한다(검사기 SHARED 가 강제).
-#   ⚠️ connect_cable 의 길이 기본값은 **이름 기반**이라 'Cable_CL' 은 LEN_BOT(0.689) 를 쓴다 —
-#   클램프 케이블은 cable_len=CLAMP_CABLE_LEN 을 **명시**한다.
-
-# ---- 프리텐션 모드 (mode.py 와 동일하게 맞춘다) ----
-#   'corner2' = Top 정점 완전고정 + 아래 두 꼭짓점만 당김. mode.py 가 4개 전역 모드를 낸 설정.
-#   'paper3'  = 꼭짓점 3개를 모두 당김(논문 좌굴모델). mode.py 실측: 양수 2개/0개.
-#   이것이 mode.py 와의 마지막 비(非)클램프 차이였다 — buckle 은 3꼭짓점 구동이었다.
 PRETENSION_MODE = 'corner2'
 if PRETENSION_MODE not in ('corner2', 'paper3'):
     raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
 DISP_TOP_OVER_CORNER = 1.4142135623   # Top 케이블 구동량 = 코너 당김 x 이 값(√2)
 
-CLAMP_EXCL_R = 0.21   # m — 클램프 패치 노드를 경계 u3 구속에서 **뺀다**.
+CLAMP_EXCL_R = 0.21   # m — 클램프 패치 노드를 경계 u3 구속에서 뺀다.
 #   CLAMP_EXCL_R > 0 인 이유: 클램프 패치 노드는 Coupling 으로 RP(u3=0)에 묶여 있어, 같은
 #   노드에 BC_Edges_Only_Z(u3=0)이 겹치면 Abaqus 가 이중 구속으로 죽는다(.dat FTL).
 #   격자 메쉬는 경계 노드가 규칙적으로 놓여 패치가 그 노드들을 확실히 잡는다(자유 메쉬는 잠복).
@@ -181,25 +161,15 @@ def clamp_coord_L(x): return (10-10*x, 10-10*x, 0)
 def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 
 # ---- 프리텐션 (CLI 두 번째 인자로 덮어쓴다) ----
-#   [mode 정합] mode.py 는 1.8e-5 m 를 쓴다. buckle 은 5e-5(=5e-6*10) 였다.
-#   이 차이가 클램프와 교란되어 '클램프가 원인'인지 판별할 수 없었다.
-DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점 (원격 5e-6 실험 되돌림 — §19.38)
+DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점
 
-# 코너 하중 각도 [deg] — 전 케이스가 'hf'(28.6 = 우리 HF/케이블 방향). [§19.60] 'paper45' 경로 제거.
+# 코너 하중 각도 [deg] — 전 케이스가 'hf'(28.6 = 우리 HF/케이블 방향).
 CORNER_ANGLE_DEG = 28.6
 
 # 케이스 (CASE) — '무엇을 DEAD, 무엇을 LIVE 로 두는가'만 고른다.
-#   원칙: 수치는 모듈 최상위 리터럴 상수로 유지한다(check_model_consistency 의 SHARED 가 리터럴
-#   문자열을 비교한다). CASE 는 배선만 고르고, 요구 상수 조합은 아래에서 런타임 검증한다.
 CASE = 'clamp_only'   # 현재 런 대상 — 클램프 케이블만 (사용자 제안, §19.50)
 
 _CASE_TABLE = {
-    #  [§19.60 정리] 씨드(imperfection) 재료는 **이 2개만** 필요하다. 나머지 10개 케이스
-    #  (clamp_lf, corner_lf, clamp_live, clamp_live_cb, corner_live_cb, corner_live_rp,
-    #   corner_live_nodes, clamp_live_nodes, clamp_only_nodes, clamp_lf_cb)는 공유 base 설계(§19.41)·
-    #  B안(§19.48)·RP 대조군의 진단용이었고, `clamp_only` 가 100/100 수렴(§19.52)하면서 역할이 끝났다.
-    #  각 케이스의 실패·성공 기록은 notes/history.md §19.40~§19.60 에 보존돼 있다.
-    #
     #  seed       : 꼭짓점 케이블만(클램프 하드웨어 0). base=코너 전량 DISP(케이블 끝단 구동),
     #               LIVE=코너 PERTURBATION. = 꼭짓점 가족 모드(전역 대형).
     #  clamp_only : 클램프 케이블만(꼭짓점 케이블 0, 코너는 강체패치 RP 로 구동).
@@ -226,12 +196,7 @@ HAS_CLAMPS = _ROUTE['clamps']       # 클램프 강체패치를 만드는가
 CLAMP_LOAD = _ROUTE['clamp_load']   # 'none' | 'live' (live = 클램프를 집중하중으로 LIVE 에)
 CORNER_DIR = _ROUTE['corner_dir']   # 모든 현행 케이스가 'hf'(28.6도)
 LIVE_DRIVER = _ROUTE.get('live_driver', 'corner')   # 'corner'(기존 케이스) | 'clamp'(clamp_live)
-#   clamp_cable: 클램프 하중을 **케이블 끝단**으로 전달하는가(HF 와 같은 하중 경로).
-#     False(기본) = 클램프 강체패치 RP 직접 구동(clamp_lf/clamp_live 의 현행 경로).
 HAS_CLAMP_CABLES = bool(_ROUTE.get('clamp_cable', False))
-#   [§19.60 제거] clamp_drive='nodes'(B안: 노드집합 직접 구동) 경로는 clamp_only 가 RP 경로로
-#   100/100 수렴(§19.52)하면서 역할이 끝나 제거했다. 기록은 history §19.48~§19.50.
-
 
 def _require_constant(name, have, want):
     """케이스가 요구하는 상수 조합. 무효 조합은 조용한 오답 대신 즉시 예외로 막는다."""
@@ -240,44 +205,22 @@ def _require_constant(name, have, want):
                            "  -> 상수부를 고치거나 CASE 를 바꾸세요." % (CASE, name, want, have))
 
 
-#   paper_s1 은퇴(2026-10-08) -> 단일 조건. 되살릴 때는 paper3 / 45.0 분기도 함께 복원한다.
 _require_constant('PRETENSION_MODE', PRETENSION_MODE, 'corner2')
 _require_constant('CORNER_ANGLE_DEG', CORNER_ANGLE_DEG, 28.6)
 
 CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c).
-#   [실측] 이 비율이 '모드가 존재하는 창' 안의 값이다 — 5.6%: 4모드 정상 /
-#   50%·100%: THE EIGENVALUES CANNOT BE FOUND(음수 고유값 234개, 대각 24528개).
-#   f 를 0.5/0.10/0.05 로 낮춰도 실패한다 -> 클램프가 큰 기저에는 선형 좌굴모드가 없다.
-#   CLI 3번째 인자로 덮을 수 있고, 잡 이름 dc%03d 가 이 값을 인코딩한다(0.0556 -> dc006).
 
-CLAMP_RP_FIX_ROT = False   # True 면 클램프 RP 의 **회전 3성분도** 고정한다(패치 기울기 차단).
-#   [2026-10-11 §19.45 -> §19.51 **되돌림**] True 로 올려 시험했으나 효과가 **미미**했다:
-#     제외 OFF 에서 132 -> 122 (Δ10, 케이블 제거와 교락) / 제외 ON 에서 62 -> 122 (교락, 악화).
-#   즉 **단독 효과가 측정된 적이 없고**, HF 원본은 RP 회전이 자유다(HF 배선과 동일이 기본).
-#   `corner_live_cb` 62런(= rotfix False)과 **단일변수 대조**를 유지하려면 False 가 맞다.
-#   -> 잡 이름의 `_rotfix` 태그도 사라진다(케이블 조합 차이만 남는다).
-#   현행은 RP 의 u3 만 고정 -> 강체패치가 **기울 수 있다**(회전 자유). 그 틈이 클램프 옆
-#   국소 면외모드의 통로가 된다(§19.12). 실제 클램프는 패치 방향을 잡아 주므로 회전 고정이
-#   더 물리적일 수 있다. 기본 False = HF 배선과 동일(출력 이름이 _rotfix 로 갈린다).
+CLAMP_RP_FIX_ROT = False   
 _CLAMP_ROT_KW = dict(ur1=0.0, ur2=0.0, ur3=0.0) if CLAMP_RP_FIX_ROT else {}
-
-# ---- CLEAN_PERTURBATION ----
-#   True = 좌굴 스텝에서 구속집합을 바꾸지 않는다(자유경계 u3=0 은 Initial 에서, BC_Stabilize_Z 는
-#   생성 안 함). 선형 섭동 스텝에서 **새 구속의 반력·구속 해제의 스프링백은 하중**이라 LIVE 패턴을
-#   오염시킨다 — 실측: lambda 가 f 에 따라 부호까지 뒤집혔다(+8.2e-3 @f=0.5 / -0.16 @f=0.25).
-#   False = 종전 배선(비교/복구용).
 CLEAN_PERTURBATION = True
 
 # ---- 클램프 당김 방향 (CLAMP_DIR) ----
 #   normal(기본, HF 와 동일 부품 형상): CL=(-1,+1)/√2, CR=(+1,+1)/√2, 크기 CLAMP_PULL=d_c x DISP.
 #     힘평형은 아니다 — 남는 y 불평형(-4.5e-6 m)을 Top 고정이 반력으로 흡수한다.
 #   balanced: 같은 방향, 크기만 힘평형으로(d_c_eff=√2*sin 28.6도=0.677). along/inward 는 미시험·기각.
-#   상세 계산과 기각 근거: notes/history.md §12.
 CLAMP_DIR = 'normal'
 if CLAMP_DIR not in ('normal', 'balanced', 'inward'):
     raise RuntimeError("CLAMP_DIR must be 'normal'|'balanced'|'inward' (got %r)" % (CLAMP_DIR,))
-#   클램프 케이블 라우트는 HF 케이블 방향('normal')에서만 정의된다 — 'balanced'/'inward' 는
-#   케이블 축 자체를 바꾸는 것이라 물리적 근거가 약하다(RP 직접구동 시절의 각도 조정 장치다).
 if HAS_CLAMP_CABLES and CLAMP_DIR != 'normal':
     raise RuntimeError("CASE=%r (clamp_cable=True) 은 CLAMP_DIR='normal' 전용입니다 (현재 %r)."
                        % (CASE, CLAMP_DIR))
@@ -285,8 +228,6 @@ if HAS_CLAMP_CABLES and not HAS_CLAMPS:
     raise RuntimeError("CASE=%r: clamp_cable=True 는 clamps=True 를 요구합니다 — RP_CL/CR 패치가 "
                        "Tie 앵커다." % (CASE,))
 
-
-#   [§19.60 제거] CLAMP_F0 / CORNER_F0 / DEAD_FRAC 는 clamp_lf 계열('live' 분기) 전용이었다.
 
 # ---- 스텝 체인: GlobalTension 하나에 꼭짓점 + 클램프를 모두 넣는다 ----
 #   Step-GlobalTension = 꼭짓점+클램프 (DEAD = base state) / Step-Buckle = 고유값 (LIVE = perturbation).
