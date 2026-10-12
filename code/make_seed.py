@@ -47,11 +47,27 @@ def sh(cmd, dry=False, cwd=HERE):
         return 0, ''
     p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True,
                        encoding='utf-8', errors='replace')
+    out = (p.stdout or '')
+    #   `abaqus python` 런처는 스크립트가 예외로 죽어도 rc=0 을 돌려줄 때가 있다(실측) ->
+    #   종료코드를 믿지 않고 **산출물로 검증**한다. 그래서 자식 출력 꼬리는 항상 보여준다.
+    tail = [l for l in out.strip().splitlines() if l.strip()][-6:]
+    for l in tail:
+        print("  | %s" % l)
     if p.returncode != 0:
         print("  !!! exit=%d" % p.returncode)
-        print((p.stdout or '')[-1500:])
         print((p.stderr or '')[-800:])
-    return p.returncode, (p.stdout or '')
+    return p.returncode, out
+
+
+def _need(path, what):
+    """산출물 검증 — rc 가 아니라 파일로 판정한다."""
+    if not os.path.exists(path):
+        raise SystemExit("[make_seed] %s 가 만들어지지 않았습니다 -> %s\n"
+                         "  (위에 찍힌 자식 출력의 마지막 줄을 보세요. 경로 규약/스펙 형식 문제일 수 있습니다.)"
+                         % (what, path))
+    if os.path.getsize(path) == 0:
+        raise SystemExit("[make_seed] %s 가 비어 있습니다 -> %s" % (what, path))
+    print("  [ok] %s (%d bytes)" % (what, os.path.getsize(path)))
 
 
 def buckle_disp():
@@ -151,8 +167,8 @@ def main(argv=None):
         odb, _job = expected_odb(a.x_c, disp, 0.0, 'seed', a.excl)
         rc, _ = sh('abaqus python aba_mode_from_odb.py "%s" Step-Buckle "%s" %d'
                    % (odb, seed_tbl, BUCKLE_MODES), a.dry_run, cwd=HERE)
-        if rc:
-            return rc
+        if not a.dry_run:
+            _need(seed_tbl, 'seed 가족 모드표')
     else:
         print("\n[1/3] seed 가족 표 있음 — 건너뜀 (%s)" % os.path.basename(seed_tbl))
 
@@ -167,25 +183,26 @@ def main(argv=None):
         odb, _job = expected_odb(a.x_c, disp, a.d_c, 'clamp_only', a.excl)
         rc, _ = sh('abaqus python aba_mode_from_odb.py "%s" Step-Buckle "%s" %d'
                    % (odb, clamp_tbl, CLAMP_MODES), a.dry_run, cwd=HERE)
-        if rc:
-            return rc
+        if not a.dry_run:
+            _need(clamp_tbl, 'clamp 가족 모드표')
     else:
         print("      clamp 표 있음 — 건너뜀 (%s)" % os.path.basename(clamp_tbl))
 
     # ---- 3) 합성 + 헤더 ----
     print("\n[3/3] 합성 2+2 + 설계점 헤더")
     if a.dry_run:
+        _rel_d = lambda p: os.path.relpath(p, HERE)
         print("  $ abaqus python combine_mode_tables.py \"%s\" 1.0:\"%s\":1,2 1.0:\"%s\":1,2"
-              % (out_tbl, seed_tbl, clamp_tbl))
+              % (out_tbl, _rel_d(seed_tbl), _rel_d(clamp_tbl)))
         print("  [header] %s" % (A.seed_header_lines(
             a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_SCRIPT),
             seed_tbl, '1,2', clamp_tbl, '1,2')[1],))
         print("\n[make_seed] dry-run 종료 — 파일을 만들지 않았다.")
         return 0
+    _rel = lambda p: os.path.relpath(p, HERE)          # '1.0:seeds/x.txt:1,2' — 드라이브 콜론 회피
     rc, _ = sh('abaqus python combine_mode_tables.py "%s" 1.0:"%s":1,2 1.0:"%s":1,2'
-               % (out_tbl, seed_tbl, clamp_tbl), False, cwd=HERE)
-    if rc:
-        return rc
+               % (out_tbl, _rel(seed_tbl), _rel(clamp_tbl)), False, cwd=HERE)
+    _need(out_tbl, '합성 시드표')
 
     fp, hdr = A.seed_header_lines(a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_SCRIPT),
                                   seed_tbl, '1,2', clamp_tbl, '1,2')

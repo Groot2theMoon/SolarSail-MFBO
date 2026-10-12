@@ -73,9 +73,18 @@ def read_table(path):
 
 
 def parse_spec(spec):
-    """'w:table:1,2' -> (w, table, [modes])"""
+    """'w:table:1,2' -> (w, table, [modes]).
+
+    [2026-10-12] `rsplit(':', 2)` 를 쓴다 — Windows 절대경로의 드라이브 콜론(`C:\...`)을
+    경로 안에 그대로 두기 위해서다. `split(':', 2)` 는 '1.0:C:\a\b.txt:1,2' 에서 테이블을
+    'C' 로 잘라 조용히(런처에 따라 rc=0 으로) 실패했다(실측).
+    """
     try:
-        w_s, table, m_s = spec.split(':', 2)
+        #   가중치는 첫 콜론 앞, 모드목록은 마지막 콜론 뒤 — 가운데(경로)에는 콜론이 있어도 된다.
+        #   (Windows 드라이브 'C:' 를 경로 안에 그대로 두기 위한 규칙. `split(':',2)`/`rsplit(':',2)`
+        #    둘 다 드라이브 콜론에서 깨진다 — 실측.)
+        w_s, rest = spec.split(':', 1)
+        table, m_s = rest.rsplit(':', 1)
         w = float(w_s)
         modes = [int(x) for x in m_s.replace(' ', '').split(',') if x]
     except Exception:

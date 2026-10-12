@@ -3157,3 +3157,22 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   HF 는 LF ODB 를 **읽기만** 한다(eval_abaqus.py:1478 의 `get_lf(args[-3])`). 그래서 mfbo 의 선행
   LF 는 필수다(짝 지표를 함께 얻는 이득도 있다 — HF 1회가 데이터 2행).
 [남은 것] 사용자 머신의 옛 `code/aba/LF_Analysis.odb` 는 이제 참조되지 않는다(삭제 가능).
+
+#### §19.67 make_seed 첫 실런 실패 -> 3중 수정 (2026-10-12)
+
+[증상] 사용자 런: ① seed 가족 ✓ ② clamp 가족 ✓ ③ **합성에서 `FileNotFoundError:
+  seeds/modes_xc050_dc050.txt`** — 출력이 안 만들어졌는데 `!!! exit=` 도 안 찍혔다(=rc 0).
+[원인 3건]
+  1. **드라이브 콜론 충돌** — make_seed 가 합성 스펙에 **절대경로**(`1.0:C:\...\modes_seed.txt:1,2`)를
+     넣었고 `parse_spec` 이 `split(':', 2)` 라 테이블을 `'C'` 로 잘랐다. -> 스펙은 **상대경로**로 넘기고,
+     파서는 **첫 콜론=가중치 / 마지막 콜론=모드목록**(`split(':',1)` + `rsplit(':',1)`)으로 고쳤다.
+     (`rsplit(':',2)` 도 드라이브 콜론에서 깨진다 — 회귀 테스트가 잡았다.)
+  2. **`abaqus python` 의 rc 를 믿었다** — 스크립트가 예외로 죽어도 rc=0 이 돌아와 make_seed 가
+     실패를 못 봤다. -> 종료코드 대신 **산출물로 검증**(`_need()`: 존재 + 비어있지 않음)하고,
+     자식 stdout 꼬리 6줄을 항상 찍는다.
+  3. **검증 시점** — 실패가 `body = io.open(out_tbl...)`(헤더 삽입 직전)에서야 드러나 원인이 흐려졌다.
+     -> 각 단계 직후(모드표 추출 뒤 포함) `_need()` 로 즉시 확인.
+[검증] py_compile · `test_seed_path.py` **36/36 PASS**(§8 `parse_spec` 3항목 신규: 상대 / Windows 절대 /
+  유닉스 절대) · `static_leak_check` 이상 없음 · 검사기 PASS. dry-run 표시도 상대경로 스펙으로 통일.
+[다음] 재실행하면 ①·② 는 캐시로 건너뛰고 ③(합성)만 다시 돈다 — `python make_seed.py --x_c 0.5 --d_c 0.5`
+  (또는 `abaqus python make_seed.py --x_c 0.5 --d_c 0.5`; 둘 다 동작한다).

@@ -109,6 +109,18 @@ def main():
     ok6, why6, _ = A.seed_gate(0.5, 0.0556, old, sc)
     check('게이트 구버전표 차단', not ok6, why6)
 
+    print("--- 8) combine_mode_tables.parse_spec (드라이브 콜론 회귀) ---")
+    try:
+        import combine_mode_tables as CMT
+        check('상대경로 스펙', CMT.parse_spec('1.0:seeds/a.txt:1,2') == (1.0, 'seeds/a.txt', [1, 2]),
+              CMT.parse_spec('1.0:seeds/a.txt:1,2'))
+        check('Windows 절대경로 스펙', CMT.parse_spec(r'1.0:C:\x\a.txt:1,2') == (1.0, r'C:\x\a.txt', [1, 2]),
+              CMT.parse_spec(r'1.0:C:\x\a.txt:1,2'))
+        check('유닉스 절대경로 스펙', CMT.parse_spec('0.5:/tmp/a.txt:3') == (0.5, '/tmp/a.txt', [3]),
+              CMT.parse_spec('0.5:/tmp/a.txt:3'))
+    except ImportError as e:
+        check('combine_mode_tables import', False, e)
+
     print("--- 7) 설계점 태그 · LF 산출물 이름 (§19.66) ---")
     check("point_tag(0.5, 0.5)", A.point_tag(0.5, 0.5) == '_xc050_dc050', A.point_tag(0.5, 0.5))
     check("point_tag(0.25, 0.0556)", A.point_tag(0.25, 0.0556) == '_xc025_dc006', A.point_tag(0.25, 0.0556))
