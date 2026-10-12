@@ -4,7 +4,8 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
 삼각 막(20x10 m, t=5e-6) + 꼭짓점 강체패치 3 + 클램프 강체패치 2(x_c), 균일 격자(10,201 노드).
 스텝 2개: Step-GlobalTension(DEAD = base state) / Step-Buckle(LIVE = 고유값, PERTURBATION 0.01 m).
 뽑은 모드는 HF 포스트버클링의 초기결함(기하 섭동) 씨드다 — guidance 이고 x_c 정합만 필요하다.
-수치 상수는 HF(run_abaqus.py)·mode 와 같아야 한다(check_model_consistency.py 가 강제).
+수치 상수는 HF(run_abaqus.py)와 같아야 한다 — check_model_consistency.py 의 HF↔buckle 계약이
+강제한다(buckle↔mode 비교는 §19.64 은퇴).
 
 케이스 (CASE, 현행 2개 — 씨드 재료 전용)
     seed        DEAD 코너 전량 DISP(케이블 끝단) / LIVE 코너      -> 꼭짓점 가족(전역) 모드
@@ -123,7 +124,7 @@ CABLE_RADIUS = 5.0e-4 # m
 CABLE_AREA = np.pi * (CABLE_RADIUS**2)
 LEN_TOP = 0.280 # m
 LEN_BOT = 0.689 # m
-CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이. HF(run_abaqus.py) 와 같아야 한다(검사기 SHARED 가 강제).
+CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이(HF 와 같아야 한다 — 검사기 HF↔buckle 계약).
 PRETENSION_MODE = 'corner2'
 if PRETENSION_MODE not in ('corner2', 'paper3'):
     raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
@@ -134,7 +135,7 @@ CLAMP_EXCL_R = 0.21   # m — 클램프 패치 노드를 경계 u3 구속에서 
 #   노드에 BC_Edges_Only_Z(u3=0)이 겹치면 Abaqus 가 이중 구속으로 죽는다(.dat FTL).
 #   격자 메쉬는 경계 노드가 규칙적으로 놓여 패치가 그 노드들을 확실히 잡는다(자유 메쉬는 잠복).
 #   물리 변화는 없다 — 제외 노드는 Coupling(u3=0)으로 그대로 면외 고정이다.
-#   0.0 으로 두면 check_model_consistency 가 실패한다(이중 구속 게이트). CLI 4번째 인자로 덮는다.
+#   0.0 으로 두면 검사기의 이중구속 검사(check_clamp_edge_overlap)가 실패한다. CLI 4번째 인자로 덮는다.
 
 V1 = (BASE/2.0, HEIGHT, 0.0) # Top
 V2 = (BASE, 0.0, 0.0)        # Right

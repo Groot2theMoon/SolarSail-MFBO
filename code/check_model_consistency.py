@@ -100,24 +100,13 @@ SHARED_MODE = [s for s in SHARED if 'clamp_coord' not in s and 'CLAMP_CABLE_LEN'
 #   DISP/SIGMA0/PERTURBATION/안정화/프리텐션모드/케이블 이 전부 달랐기 때문이다.
 #   그래서 buckle 을 mode.py(ClampFree_Buckle)에 맞추고 클램프만 차이로 남겼다.
 #   => 이 목록이 그 계약이다. 여기가 깨지면 '클램프만 다르다'는 전제가 무너진다.
-SHARED_BUCKLE_MODE = [
-    "DISP_GLOBAL = 1.8e-5",
-    "SIGMA0 = 700.0",
-    "PERTURBATION = 0.01",
-    "MODE_STABILIZATION = 0.0005",
-    "PRETENSION_MODE = 'corner2'",
-    "DISP_TOP_OVER_CORNER = 1.4142135623",
-    "PATTERN_SIGN = 1.0",
-    "CABLE_RADIUS = 5.0e-4",
-    "CABLE_AREA = np.pi * (CABLE_RADIUS**2)",
-    "LEN_TOP = 0.280",
-    "LEN_BOT = 0.689",
-    #   [2026-10-07] 200/500 -> 10/20. 실측: vectors=500 을 요청해도 subspace 가 14 로
-    #   줄어들어 200 개는 원리적으로 못 찾는다. 요청 수 <= 실제 subspace 차원이 조건이다.
-    #   [2026-10-11] 케이블 라우트 복원과 함께 100/250 으로 되돌린다 (음수 클러스터 통과).
-    "N_EIG_BUCKLE = 100",
-    "BUCKLE_VECTORS = 250",
-]
+#   [§19.64 은퇴] SHARED_BUCKLE_MODE(buckle<->mode 13항목) 는 제거했다 — 사용자 결정:
+#   씨드는 'guidance' 이고 buckle 은 MFBO 이관 뒤 클램프 가족 재추출용으로만 쓰므로
+#   mode 스크립트와 창/상수를 같게 묶을 이유가 없다(창은 base 종속: 요청 수 > 그 base 의
+#   음수 개수, <= subspace 차원). HF<->buckle(SHARED) 계약은 그대로 유지된다.
+#   되살리려면 git 이력의 이 리스트를 참고(항목: DISP_GLOBAL/SIGMA0/PERTURBATION/
+#   MODE_STABILIZATION/PRETENSION_MODE/DISP_TOP_OVER_CORNER/PATTERN_SIGN/CABLE_RADIUS/
+#   CABLE_AREA/LEN_TOP/LEN_BOT/N_EIG_BUCKLE/BUCKLE_VECTORS).
 
 DECLARABLE = [
     # [2026-09-28] DISP_GLOBAL 은 여기서 검사하지 않는다: 운용점은 **의도적으로 분기**한 값이다
@@ -261,56 +250,10 @@ def main():
 
     print()
     print()
-    print("--- 좌굴 스크립트(run_abaqus_buckle.py) <-> 모드 소스(run_abaqus_mode.py) ---")
-    print("    클램프만 다른 상태로 비교하려면 이 값들이 같아야 한다(2026-10-06 계약).")
+    print("--- 좌굴 스크립트 <-> 모드 소스 비교: [§19.64 은퇴] ---")
+    print("    (buckle 은 HF 임퍼펙션 씨드 전용 — mode 스크립트와 상수를 묶지 않는다."
+          " 창 값은 base 종속이다.)")
     bad6 = []
-    for k in SHARED_BUCKLE_MODE:
-        nk = norm(k)
-        ib, ic = nk in b, nk in c
-        if not (ib and ic):
-            bad6.append(k)
-        print("  %-5s buckle=%-6s mode=%-6s  %s"
-              % ("OK" if (ib and ic) else "!!!", ib, ic, k[:58]))
-
-    # ------------------------------------------------------------------
-    # [2026-10-07] PATTERN_SIGN 은 '선언'만 보면 부족하다 — 실제로 곱해지는지 본다.
-    #   mode.py 는 PATTERN_SIGN * PERTURBATION * ... 로 섭동을 주는데, buckle 은
-    #   PATTERN_SIGN 을 선언만 하고 곱하지 않았다. 값이 1.0 일 때는 수치가 같아
-    #   드러나지 않지만, -1.0 등으로 바꾸면 두 스크립트가 조용히 갈라진다.
-    #   [2026-10-07 보강] 케이스마다 LIVE 크기가 다르다(paper_s1 은 논문 크기를 쓴다).
-    #   리터럴 1종만 보면 **정당한 케이스 추가를 위반으로 잡는다**(실측: paper45 분기를 넣자
-    #   이 규칙이 위반 1건을 냈다). 그래서 서명된 크기 목록을 허용하고, 대신
-    #   **서명 없이 크기를 대입하는 줄**이 있으면 위반으로 센다(느슨해지는 게 아니라 촘촘해진다).
-    _SIGNED_MAGS = ("PERTURBATION", "PAPER_S1_LIVE_M")
-    _pat_use_b = sum(1 for s in _SIGNED_MAGS if norm("PATTERN_SIGN * " + s) in b)
-    _pat_use_c = 1 if norm("PATTERN_SIGN * PERTURBATION") in c else 0
-    with open(BUCKLE, encoding='utf-8') as _f:
-        _rawb_sig = _f.read()
-    _unsigned = []
-    for _ln in _rawb_sig.splitlines():
-        _code = _ln.split('#')[0]
-        if '=' not in _code:
-            continue
-        # 규칙의 범위를 좁힌다: **크기를 그대로 별칭에 넣는 줄**(name = PERTURBATION)만 잡는다.
-        #   `CLAMP_PERT = PERTURBATION * CLAMP_DC_EFF` 처럼 '크기 x 계수' 로 중간값을 만드는 줄은
-        #   정당하다(PATTERN_SIGN 은 그 중간값을 쓰는 자리에서 곱해진다) — 실측으로 이 오탐 2건을 봤다.
-        _rhs = _code.split('=', 1)[1].strip()
-        if _rhs in _SIGNED_MAGS and 'PATTERN_SIGN' not in _code:
-            _unsigned.append(_code.strip())
-    print()
-    print("--- PATTERN_SIGN 이 실제로 섭동에 곱해지는지 (선언만으로는 부족) ---")
-    print("  %-4s %-22s %s" % ('OK' if _pat_use_b else '!!!', 'run_abaqus_buckle.py',
-                               '%d/%d종 서명 사용 %s'
-                               % (_pat_use_b, len(_SIGNED_MAGS), _SIGNED_MAGS)))
-    print("  %-4s %-22s %s" % ('OK' if _pat_use_c else '!!!', 'run_abaqus_mode.py',
-                               '%d/1종 서명 사용 (PATTERN_SIGN * PERTURBATION)' % _pat_use_c))
-    for _u in _unsigned:
-        print("  !!!  서명 없는 LIVE 크기 대입: %s" % _u)
-    if not _pat_use_b or not _pat_use_c:
-        bad6.append("PATTERN_SIGN 사용(PATTERN_SIGN * PERTURBATION)")
-        print("    -> 한쪽만 곱하면 PATTERN_SIGN != 1.0 에서 두 모델이 갈라진다.")
-    if _unsigned:
-        bad6.append("서명 없는 LIVE 크기 대입 %d줄" % len(_unsigned))
 
     # ------------------------------------------------------------------
     # [2026-10-07] 케이스 계약 — '클램프만 다르다'는 정합은 케이블 라우트 + 클램프 구속만인
@@ -328,36 +271,28 @@ def main():
     bad7 = []
     _case = _bconst(r"^CASE\s*=\s*'([^']+)'")
     _cang = _bconst(r"^CORNER_ANGLE_DEG\s*=\s*([0-9.eE+-]+)")
-    _dfr = _bconst(r"^DEAD_FRAC\s*=\s*([0-9.eE+-]+)")
-    _cf0 = _bconst(r"^CORNER_F0\s*=\s*([0-9.eE+-]+)")
     print()
     print("--- 하중 케이스 (buckle 단독 상수) ---")
-    print("  run_abaqus_buckle.py  CASE = %s   CORNER_ANGLE_DEG = %s   DEAD_FRAC = %s   CORNER_F0 = %s"
-          % (_case, _cang, _dfr, _cf0))
+    print("  run_abaqus_buckle.py  CASE = %s   CORNER_ANGLE_DEG = %s" % (_case, _cang))
     _CABLE_CASES = ('seed',)   # [§19.60] 꼭짓점 케이블이 있는 케이스(코너 케이블 계약 대상)
     _KNOWN_CASES = _CABLE_CASES + ('clamp_only',)   # [§19.60] 현행 2케이스
     if _case == '(없음)':
         # [2026-10-07] 여기서 **실패**시킨다. 경고만 찍으면 CASE 줄을 주석 처리한 옛 사본이
         #   PASS 로 통과한다(규칙 18: 문자열 존재 검사는 주석 처리된 쌍둥이에 만족한다).
         bad7.append('CASE 를 읽지 못함(구버전 사본이거나 주석 처리됨)')
-        print("  !!!  CASE 를 읽지 못했습니다 — buckle<->mode 계약의 적용 범위를 판정할 수 없다.")
+        print("  !!!  CASE 를 읽지 못했습니다 — 어떤 모델이 만들어질지 판정할 수 없다.")
     elif _case not in _KNOWN_CASES:
         bad7.append('알 수 없는 CASE=%s' % _case)
         print("  !!!  CASE='%s' 는 알려진 케이스가 아니다(%s)."
               % (_case, '|'.join(_KNOWN_CASES)))
     elif _case in _CABLE_CASES:
-        print("  OK   CASE='%s' — 위 buckle<->mode 정합 계약이 그대로 성립한다." % _case)
-    elif _case in ('clamp_lf', 'corner_lf', 'clamp_live', 'clamp_lf_cb'):
-        print("  WARN CASE='%s' — 코너 케이블 0개(전부 집중하중/클램프만 케이블). "
-              "buckle<->mode 계약은 적용 대상이 아니다." % _case)
-        print("       판정은 모드 형상(면외 비율 / 압축영역 분포 / x_c 이동)으로 한다.")
-        if _dfr == '(없음)':
-            bad7.append('clamp_lf 인데 DEAD_FRAC 를 읽지 못함')
-            print("  !!!  DEAD_FRAC 를 읽지 못했습니다 — clamp_lf 는 DEAD/LIVE 배분이 필수다.")
+        print("  OK   CASE='%s' — 꼭짓점 케이블 라우트(코너 케이블 계약 대상)." % _case)
     else:
-        print("  WARN CASE='paper_s1' — 논문 baseline 재현용. 정합 계약 대상 아님.")
-        if _cang == '(없음)':
-            bad7.append('paper_s1 인데 CORNER_ANGLE_DEG 를 읽지 못함')
+        print("  OK   CASE='%s' — 클램프 케이블 라우트(코너 케이블 계약 대상 아님)." % _case)
+        print("       판정은 모드 형상(면외 비율 / 압축영역 분포 / x_c 이동)으로 한다.")
+    if _cang == '(없음)':
+        bad7.append('CORNER_ANGLE_DEG 를 읽지 못함')
+        print("  !!!  CORNER_ANGLE_DEG 를 읽지 못했습니다 — 28.6 도 계약을 판정할 수 없다.")
 
     print("--- 좌굴 스크립트에 HF/LF 전용이 섞여 있지 않은지 (0 이어야 정상) ---")
     bad2 = []
@@ -409,16 +344,15 @@ def main():
 
     print()
     print("=" * 74)
-    if bad or bad2 or bad3 or bad4 or bad5 or bad6 or bad7:
+    if bad or bad2 or bad3 or bad4 or bad5 or bad7:
         print("RESULT: !!! 불일치 (HF↔buckle 위반 %d / buckle 역할위반 %d / 디렉터리 위반 %d"
-              " / HF↔모드소스 위반 %d / 모드소스 역할위반 %d / buckle↔모드소스 위반 %d"
-              " / CASE 계약 위반 %d)"
-              % (len(bad), len(bad2), len(bad3), len(bad4), len(bad5), len(bad6), len(bad7)))
+              " / HF↔모드소스 위반 %d / 모드소스 역할위반 %d / CASE 계약 위반 %d)"
+              % (len(bad), len(bad2), len(bad3), len(bad4), len(bad5), len(bad7)))
         print("        모드 노드가 어긋나면 *IMPERFECTION 이 조용히 실패한다.")
         print("        한쪽을 고쳤으면 다른 쪽도 같이 고쳐라.")
         return 1
-    print("RESULT: PASS — HF↔buckle %d / HF↔모드소스 %d / buckle↔모드소스 %d 항목 일치, "
-          "역할 분리 위반 0건" % (len(SHARED), len(SHARED_MODE), len(SHARED_BUCKLE_MODE)))
+    print("RESULT: PASS — HF↔buckle %d / HF↔모드소스 %d 항목 일치, 역할 분리 위반 0건"
+          " (buckle↔모드소스 비교는 §19.64 은퇴)" % (len(SHARED), len(SHARED_MODE)))
     print("=" * 74)
     return 0
 
