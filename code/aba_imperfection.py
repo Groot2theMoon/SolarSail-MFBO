@@ -72,7 +72,7 @@ def model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
         try:
             fh = open(source_path, 'r', encoding='utf-8', errors='replace')
         except TypeError:                      # encoding 인자를 모르는 파이썬 폴백
-            fh = open(source_path, 'r')
+            fh = open(source_path, 'r', encoding='utf-8', errors='replace')
         with fh as f:
             for line in f.read().splitlines():
                 code = line.split('#')[0].strip()
@@ -99,7 +99,7 @@ def model_fingerprint_line(source_path):
 def table_fingerprint(table_path):
     """모드표 헤더에서 지문을 읽는다. 없으면 None(모드 데이터 행을 만나면 중단)."""
     try:
-        with open(table_path, 'r') as f:
+        with open(table_path, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
                 s = line.strip()
                 if s.startswith(FINGERPRINT_PREFIX):
@@ -150,7 +150,7 @@ def _count_from_msg(text):
 def count_modes(dat_path=None, msg_path=None):
     """소스 좌굴 런의 모드 개수. (.dat MODE NO 표 우선, 없으면 .msg 폴백) -> int."""
     if dat_path and os.path.exists(dat_path):
-        with open(dat_path, "r", errors="replace") as f:
+        with open(dat_path, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
         if parse_eigenvalues is not None:
             vals = parse_eigenvalues(text)
@@ -160,7 +160,7 @@ def count_modes(dat_path=None, msg_path=None):
         if n:
             return n
     if msg_path and os.path.exists(msg_path):
-        with open(msg_path, "r", errors="replace") as f:
+        with open(msg_path, "r", encoding="utf-8", errors="replace") as f:
             return _count_from_msg(f.read())
     return 0
 
@@ -185,7 +185,7 @@ def load_mode_table(path, modes=(1, 2, 3, 4)):
     want = set(int(m) for m in modes)
     table = {}
     cur = None
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             s = line.strip()
             if not s or s.startswith('#'):
@@ -222,7 +222,7 @@ def mode_table_info(path):
     info = {}
     if not os.path.exists(path):
         return info
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             s = line.strip()
             if not s.startswith('#'):
@@ -360,7 +360,7 @@ def verify_inp_element_types(inp_path, want_codes):
     """
     counts, cur = {}, None
     try:
-        with open(inp_path, 'r', errors='replace') as f:
+        with open(inp_path, 'r', encoding='utf-8', errors='replace') as f:
             for line in f:
                 if line.startswith('*'):
                     if line.startswith('*Element, type='):
@@ -401,7 +401,7 @@ def job_completed_from_logs(job_name):
     """
     for f in (job_name + '.msg', job_name + '.sta'):
         try:
-            with open(f, 'r', errors='replace') as fh:
+            with open(f, 'r', encoding='utf-8', errors='replace') as fh:
                 t = fh.read()
         except Exception:
             continue

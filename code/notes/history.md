@@ -3236,3 +3236,22 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   검사기 PASS.
 [다음] 재실행하면 ② 는 **dc000** 태그 ODB 를 찾는다 — §19.52 의 그 ODB 가 남아 있으면 **잡 생략**
   (즉시 추출), 없으면 ~40초 런. 나오는 2모드가 곧 §19.52 에서 확인한 λ 1.09865e-04 계열이다.
+
+#### §19.71 파일 읽기에도 인코딩을 선언한다 (§19.68 의 거울상) (2026-10-12)
+
+[증상] 그 런은 ②(λ 1.098650e-04 x2 = §19.52 그 값)와 ③(합성표 919,605 bytes, 내부 검증 통과)까지
+  전부 성공했는데, 마지막 **검증 단계**에서 죽었다:
+  `make_seed.py:244 load_mode_table` -> `UnicodeDecodeError: 'cp949' codec can't decode byte 0x81`.
+  즉 **파일은 이미 다 만들어졌고, 읽는 쪽이 인코딩을 선언하지 않아** Windows 기본(cp949)으로 열다
+  UTF-8 한글 주석에서 깨졌다. §19.68 은 stdout(파이프) 문제였고 이건 file I/O 문제 — 같은 병의 반대편.
+[중요] `load_mode_table` 은 **HF(run_abaqus.py)도 쓰는 함수**다. 이걸 안 고쳤으면 HF 가 시드표를
+  읽다 똑같이 죽었을 것이므로, 이 실패는 오히려 제때 드러난 것이다.
+[수정] 텍스트 open 11곳에 `encoding='utf-8'`(+`errors='replace'`) 명시:
+  `aba_imperfection.py`(load_mode_table/mode_table_info/table_fingerprint/count_modes/verify_inp.../
+  job_completed_from_logs/model_fingerprint 폴백), `combine_mode_tables.py`(read_table + **쓰기**),
+  `run_abaqus.py`(`_available_mode_numbers`). 쓰기도 UTF-8 로 고정해 읽기/쓰기가 같은 규약을 쓴다.
+[검증] py_compile · `test_seed_path.py` **39/39 PASS** — §10 신규: **로케일을 C(PYTHONUTF8=0)로 강제한
+  서브프로세스에서 UTF-8 한글 주석이 있는 모드표를 읽는다**(리눅스에서 Windows cp949 상황 재현).
+  `static_leak_check` 이상 없음 · 검사기 PASS.
+[교훈] Windows 에서 텍스트 I/O 는 **항상** 인코딩을 명시한다 — 쓰기(cp949 로 쓰면 나중에 UTF-8
+  리더가 깨진다), 읽기, stdout(파이프) 세 곳 전부.

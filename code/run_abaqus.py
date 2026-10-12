@@ -590,7 +590,7 @@ def _available_mode_numbers(path):
     nums = []
     if not os.path.exists(path):
         return nums
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             s = line.strip()
             if not s or s.startswith('#'):

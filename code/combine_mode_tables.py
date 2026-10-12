@@ -39,7 +39,7 @@ def read_table(path):
     if not os.path.exists(path):
         raise SystemExit("[합성] 소스 표가 없습니다: %s" % path)
     table, meta, cur = {}, {}, None
-    with open(path, 'r') as f:
+    with open(path, 'r', encoding='utf-8', errors='replace') as f:
         for line in f:
             s = line.strip()
             if not s:
@@ -129,7 +129,7 @@ def main(argv):
     _i0 = mode_table_info(specs[0][1]) or {}
     _src_txt = " + ".join("%s[%s]" % (os.path.basename(t), ','.join(str(x) for x in m))
                           for (_w, t, m) in specs)
-    with open(out_path, 'w') as f:
+    with open(out_path, 'w', encoding='utf-8') as f:
         f.write("# combiner=combine_mode_tables.py\n")
         f.write("# source=combined: %s\n" % _src_txt)
         f.write("# step=%s\n" % (_i0.get('step', 'Step-Buckle')))

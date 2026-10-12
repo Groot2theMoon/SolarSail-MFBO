@@ -10,6 +10,7 @@
 import io
 import os
 import re
+import subprocess
 import sys
 import tempfile
 
@@ -108,6 +109,18 @@ def main():
     _write(old, 'MODE 1\n1 1.0\n')
     ok6, why6, _ = A.seed_gate(0.5, 0.0556, old, sc)
     check('게이트 구버전표 차단', not ok6, why6)
+
+    print("--- 10) 로케일 C(cp949 상당)에서도 UTF-8 모드표를 읽는가 (§19.71) ---")
+    _d = tempfile.mkdtemp(prefix='utf8tab_')
+    _p = os.path.join(_d, 't.txt')
+    _write(_p, '# 헤더 — 한글 주석\nMODE 1\n1 1.0\n2 -0.5\n')
+    _code = ("import sys,aba_imperfection as A;"
+             "t=A.load_mode_table(r'%s',(1,));print(sorted(t.keys()),len(t[1]))" % _p)
+    _r = subprocess.run([sys.executable, '-c', _code], capture_output=True, text=True,
+                        env=dict(os.environ, LC_ALL='C', LANG='C', PYTHONUTF8='0'),
+                        cwd=os.path.dirname(os.path.abspath(__file__)))
+    check('locale=C 에서 UTF-8 모드표 읽기', _r.returncode == 0 and '[1] 2' in (_r.stdout or ''),
+          (_r.stderr or '')[-140:])
 
     print("--- 9) 자식 프로세스 인코딩 고정 (§19.68) ---")
     try:
