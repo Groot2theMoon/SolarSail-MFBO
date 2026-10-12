@@ -3013,3 +3013,26 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [줄수] `run_abaqus_buckle.py` **1524 → 1345줄** (-179줄, 약 -12%).
 [남은 후보(별건)] `run_abaqus.py` 기본 모드소스 상수(`ClampFree_Buckle.odb`/`modes_ClampFree_Buckle.txt`)는
   이제 기본값 경로로만 남아 있다 — 프로덕션 HF 라 이번 범위에서 제외했다.
+
+#### §19.62 상수 블록 재점검 — 무효 잔재 제거 (rotfix·CLAMP_DIR 분기) (2026-10-12)
+
+[조사] §19.60 후 남은 상수 블록(_ROUTE/가드/CLAMP_DIR/솔버/PERTURBATION 등)을 다시 실측한 결과:
+
+| 항목 | 판정 | 근거 |
+|---|---|---|
+| `CLAMP_RP_FIX_ROT` + `_CLAMP_ROT_KW` + `_CLAMP_ROT_KW_USE` | **제거** | §19.45 에서 켜 봤다가 §19.51 에서 되돌림(False) -> **항상 빈 dict = 순수 잔재**. 클램프 RP BC 에 아무것도 안 들어간다(HF 와 동일 배선) |
+| `CLAMP_DIR` 의 `'inward'`/`'along'`/`'balanced'` 분기 + 그 가드 2개 | **제거** | `CLAMP_DIR='normal'` 고정 -> 도달 불가(주석 스스로 "미시험·기각"). `DIR_CL/DIR_CR` 은 분기 없이 직접 세팅 |
+| `_rot_tag`(이름 토큰 `_rotfix`) | **제거** → `''` | 위 rotfix 제거에 따름 |
+| `CLAMP_LOAD`/`LIVE_DRIVER` 주석의 `'live'`/`clamp_live` | **수정** | 제거된 케이스·분기를 가리키던 낡은 설명 |
+| `CLAMP_DIR` 상수 자체 | 유지 | 잡 이름 토큰(L1145)·로그(L483)·JSON(L1297)에 쓰인다 |
+| `CLEAN_PERTURBATION` | 유지 | 실제 분기 2곳(L964 `if not`, L1086 `if`)에서 사용. False 는 종전 배선 비교/복구용 |
+| `BUCKLE_SOLVER`/`EIGENSOLVER_CONST`/`BUCKLE_MAXITER`/`BUCKLE_BLOCK_SIZE`/`BUCKLE_MIN_EIGEN`/`BUCKLE_MAX_EIGEN` | 유지 | **둘 다 살아 있다**(§19.61 정정). 현행 `'SUBSPACE'` + LANCZOS 대안 + `BUCKLE_MAX_EIGEN` 은 `_eig.update` 에서 사용 |
+| `SPREAD_MIN_PCT`/`U3_FRAC_MIN`/`CLAMP_ZONE_R`/`BASE_STATE_STEP` | 유지 | `judge_run`/base_state_probe 가 사용(보조 판정) |
+| `CORNER_DIR` | 유지(단일값) | 로그·JSON 기록용. 제어 흐름엔 안 쓰이지만 케이스 정체성을 남긴다 |
+| `PRETENSION_MODE`/`CORNER_ANGLE_DEG` | 유지 | `_require_constant` 계약 + checker SHARED + harness |
+| `SIGMA0`/`MODE_STABILIZATION`/`PATTERN_SIGN`/`_LAUNCHER_WORDS`/`PERTURBATION`/`N_EIG_BUCKLE`/`BUCKLE_VECTORS`/`CLAMP_DC` | 유지 | 전부 사용 + 일부는 HF↔buckle SHARED 계약 |
+| `HAS_CLAMP_CABLES and not HAS_CLAMPS` 가드 | 유지 | 현행 2케이스에선 발화 불가하지만 케이스 행 오류를 막는 런타임 계약 |
+
+[검증] py_compile OK / 검사기 PASS(HF↔buckle 30 · HF↔모드소스 27 · buckle↔모드소스 13, 위반 0) /
+  하네스 `seed`·`clamp_only` EXIT=0. **제거분은 모두 무효 경로라 동작 동일**(rotfix 는 no-op, CLAMP_DIR 분기는 도달 불가).
+[줄수] 1345 -> **1318줄** (누적 1524 -> 1318 = **-206줄, 약 -13.5%**).

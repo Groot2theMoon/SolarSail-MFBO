@@ -210,20 +210,15 @@ _require_constant('CORNER_ANGLE_DEG', CORNER_ANGLE_DEG, 28.6)
 
 CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c).
 
-CLAMP_RP_FIX_ROT = False   
-_CLAMP_ROT_KW = dict(ur1=0.0, ur2=0.0, ur3=0.0) if CLAMP_RP_FIX_ROT else {}
+#   [§19.62] CLAMP_RP_FIX_ROT / _CLAMP_ROT_KW 제거 — 항상 no-op(history §19.45·§19.51).
 CLEAN_PERTURBATION = True
 
 # ---- 클램프 당김 방향 (CLAMP_DIR) ----
 #   normal(기본, HF 와 동일 부품 형상): CL=(-1,+1)/√2, CR=(+1,+1)/√2, 크기 CLAMP_PULL=d_c x DISP.
 #     힘평형은 아니다 — 남는 y 불평형(-4.5e-6 m)을 Top 고정이 반력으로 흡수한다.
-#   balanced: 같은 방향, 크기만 힘평형으로(d_c_eff=√2*sin 28.6도=0.677). along/inward 는 미시험·기각.
+#   [§19.62] balanced/along/inward 는 기각(§12) -> 'normal' 고정. 상세: notes/history.md §12.
 CLAMP_DIR = 'normal'
-if CLAMP_DIR not in ('normal', 'balanced', 'inward'):
-    raise RuntimeError("CLAMP_DIR must be 'normal'|'balanced'|'inward' (got %r)" % (CLAMP_DIR,))
-if HAS_CLAMP_CABLES and CLAMP_DIR != 'normal':
-    raise RuntimeError("CASE=%r (clamp_cable=True) 은 CLAMP_DIR='normal' 전용입니다 (현재 %r)."
-                       % (CASE, CLAMP_DIR))
+#   [§19.62] 'balanced'/'inward'/'along' 은 미시험·기각 -> 방향 가드 제거('normal' 고정).
 if HAS_CLAMP_CABLES and not HAS_CLAMPS:
     raise RuntimeError("CASE=%r: clamp_cable=True 는 clamps=True 를 요구합니다 — RP_CL/CR 패치가 "
                        "Tie 앵커다." % (CASE,))
@@ -400,23 +395,8 @@ sin_val = float(np.sin(angle_rad))
 
 # 클램프 당김 단위벡터 (DIR_CL = 좌측 클램프, DIR_CR = 우측 클램프)
 _s2 = 2.0 ** 0.5
-if CLAMP_DIR == 'inward':
-    DIR_CL, DIR_CR = (+1.0, 0.0), (-1.0, 0.0)   # 사선변 안쪽 수평 -> y 성분 0
-elif CLAMP_DIR == 'along':
-    # 접선(변을 따라 코너 쪽) — 클램프가 사선변을 **인장**한다. 두 클램프 모두 아래-바깥으로
-    #   당기므로 꼭짓점 케이블 당김과 **같은 부호**다(현행 'normal' 은 위-바깥 = 반대 부호).
-    DIR_CL, DIR_CR = (-1.0 / _s2, -1.0 / _s2), (+1.0 / _s2, -1.0 / _s2)
-else:
-    DIR_CL, DIR_CR = (-1.0 / _s2, +1.0 / _s2), (+1.0 / _s2, +1.0 / _s2)
-
-# 'balanced': 클램프 y합 + 꼭짓점 y합 = 0 이 되도록 크기를 맞춘다 (Top 반력 0).
-#   꼭짓점 y합 = -2*DISP*sin(theta)  이므로  2*CLAMP_PULL*DIR_y = 2*DISP*sin(theta).
-if CLAMP_DIR == 'balanced':
-    _theta = np.deg2rad(angle_deg)
-    CLAMP_PULL = DISP * np.sin(_theta) / DIR_CL[1]
-    CLAMP_PERT = PERTURBATION * np.sin(_theta) / DIR_CL[1]
-    print("%s [balanced] CLAMP_PULL %.4e -> %.4e m (d_c_eff=%.4f)"
-          % (TAG, DISP * CLAMP_DC, CLAMP_PULL, CLAMP_PULL / DISP))
+#   [§19.62] 'normal' 고정 -> 분기 없이 직접 세팅(HF 와 같은 방향).
+DIR_CL, DIR_CR = (-1.0 / _s2, +1.0 / _s2), (+1.0 / _s2, +1.0 / _s2)
 
 print("%s x_c=%g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
 print("%s d_c_eff=%.4f (CLAMP_PULL=%.4e, CLAMP_PERT=%.4e)  CLAMP_EXCL_R=%.4f m"
@@ -839,7 +819,6 @@ def build_model(disp):
             return end_cl if side == 'CL' else end_cr
         return a.sets['RP_CL_Set' if side == 'CL' else 'RP_CR_Set']
 
-    _CLAMP_ROT_KW_USE = _CLAMP_ROT_KW   # [§19.60] nodes 경로 제거 -> 항상 적용
 
     if HAS_CABLES:
         A1, A2, A3 = end_c1, end_c2, end_c3
@@ -966,9 +945,9 @@ def build_model(disp):
     #   clamp_load='live' (clamp_lf): 꼭짓점·클램프를 DEAD_FRAC / (1-DEAD_FRAC) 로 나눈다 = 운용점 회계.
     if CLAMP_LOAD == 'base':
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                                region=_clamp_target('CL'), u3=0, **_CLAMP_ROT_KW_USE)
+                                region=_clamp_target('CL'), u3=0)
         my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
-                                region=_clamp_target('CR'), u3=0, **_CLAMP_ROT_KW_USE)
+                                region=_clamp_target('CR'), u3=0)
         _btgt_cl = _clamp_target('CL')
         _btgt_cr = _clamp_target('CR')
         for _nm, _rg, _d1, _d2 in (('Disp_Control_CL', _btgt_cl, DIR_CL[0], DIR_CL[1]),
@@ -1077,7 +1056,7 @@ _dc_tag = (int(round(CLAMP_DC_EFF * 100.0))
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
 _live_tag = (('_plv%05d' % int(round(PERTURBATION * 1.0e5)))
              if CASE in ('seed', 'clamp_only') else '')   # [§19.60] 둘 다 LIVE 프로브가 있다
-_rot_tag = ('_rotfix' if CLAMP_RP_FIX_ROT else '')   # 스위치를 켜면 출력 이름이 갈린다
+_rot_tag = ''                     # [§19.62] rotfix 기계장치 제거 -> 이름 토큰 없음
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
 JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x_c * 100.0)),
                                                        int(round(DISP * 1.0e6)),
