@@ -22,7 +22,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     각 계열 상위 2모드를 combine_mode_tables.py 로 합성해 *IMPERFECTION(기하 섭동)으로 주입한다.
 
 사용법
-    abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] [dead_frac]
+    abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
         x_c            클램프 위치 파라미터. 0.5 -> 좌(5,5) / 우(15,5)
         disp_m         GlobalTension 코너 당김 [m]. 생략하면 DISP_GLOBAL (1.8e-5).
         clamp_pull_m   클램프 당김 [m]. 생략하면 disp_m * CLAMP_DC.
@@ -43,7 +43,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     <job>.odb / .dat / .msg / .sta / .fil / .diag.txt
     job 이름은 인자+요소+클램프모드에서 자동 생성한다: Buckle_xc<NNN>_d<NNN>um_<elem>_<clamp>
       (예: Buckle_xc050_d0050um_s4r_driven) — 케이스가 바뀌어도 산출물이 서로 덮이지 않는다.
-    CASE / CORNER_F0 / CLAMP_F0 / DEAD_FRAC 는 상단 상수.
+    CASE 는 상단 상수(현행 seed / clamp_only).
     고유값 표는 .dat 의 MODE NO / EIGENVALUE 블록에 있고, 스크립트가 콘솔에도 덤프한다.
 
 HF 에서 모드를 쓸 때 — 경로 주의 (HF 잡의 작업 디렉터리는 code/aba 다)
@@ -294,20 +294,7 @@ if HAS_CLAMP_CABLES and not HAS_CLAMPS:
                        "Tie 앵커다." % (CASE,))
 
 
-CLAMP_F0 = 1.0   # N — 구 CLOAD 라우트용. 현행 clamp_lf 는 변위 구동(§19):
-#   (lambda 가 전체 배수를 흡수한다) 절대값 자체는 결과를 바꾸지 않는다. 비율 CLAMP_F0/CORNER_F0
-#   을 로그에 찍는다.
-
-# ---- 꼭짓점 CLOAD 크기 [N] (CASE='clamp_lf') ----
-#   실측 RF(꼭짓점 케이블 3개 반력, DISP_GLOBAL=1.8e-5): 0.03032 / 0.03032 / 0.02903 N
-#   => 약 0.03 N. 'cable' 라우트의 프리텐션과 같은 크기에서 출발한다.
-CORNER_F0 = 0.03
-
-# ---- DEAD/LIVE 배분 (CASE='clamp_lf') ----
-DEAD_FRAC = 0.5   # [-] 프리텐션 단계가 운용 하중 세트 P 의 어느 비율까지 올리는가.
-#   [실측] f 창: 0.018 -> 무응력 퇴화(음수 126) / 0.900 -> 개시 초과(음수 671) / 0.5 -> 정상.
-#   즉 '응력이 살아 있고 개시 앞'인 f 가 필요하다.
-#   자기일관성 검증: 개시 = f + (1-f)*lambda1*운용 은 f 와 무관해야 한다. lambda=1 <=> 운용점 도.
+#   [§19.60 제거] CLAMP_F0 / CORNER_F0 / DEAD_FRAC 는 clamp_lf 계열('live' 분기) 전용이었다.
 
 # ---- 스텝 체인: GlobalTension 하나에 꼭짓점 + 클램프를 모두 넣는다 ----
 #   Step-GlobalTension = 꼭짓점+클램프 (DEAD = base state) / Step-Buckle = 고유값 (LIVE = perturbation).
@@ -386,11 +373,9 @@ def _is_launcher_token(tok):
 
 
 def parse_args(argv):
-    """맨 뒤의 숫자 1~5개를 <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] [dead_frac] 로 읽는다.
+    """맨 뒤의 숫자 1~4개를 <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] 로 읽는다.
 
-    dead_frac 을 주면 DEAD_FRAC(기저 상태가 운용 세트의 몇 %까지 올라가는가)을 덮는다.
-    x_c 스윕에서 필요하다: 개시(좌굴) 하중비는 x_c 마다 다르므로 x_c=0.5 에서 통한 0.5 가
-    다른 x_c 에서는 **개시 위**가 되어 고유값 추출이 실패한다(§19.24).
+    [§19.60] dead_frac(5번째) 인자는 clamp_lf 계열('live' 분기) 전용이어서 제거했다.
 
     조용한 치환 금지: 개수가 맞지 않거나 숫자가 아닌 토큰을 만나면 추측하지 않고
     사용법과 argv 전문을 찍고 예외로 끝낸다.
@@ -431,11 +416,10 @@ def parse_args(argv):
     return (nums[0],
             (nums[1] if len(nums) > 1 else None),
             (nums[2] if len(nums) > 2 else None),
-            (nums[3] if len(nums) > 3 else None),
-            (nums[4] if len(nums) > 4 else None))
+            (nums[3] if len(nums) > 3 else None))
 
 
-x_c, _disp_arg, _clamp_arg, _excl_arg, _dead_arg = parse_args(sys.argv)
+x_c, _disp_arg, _clamp_arg, _excl_arg = parse_args(sys.argv)
 DISP = DISP_GLOBAL if _disp_arg is None else _disp_arg
 # 클램프 법선 당김 — 기본은 코너 당김과 같은 비율(A-route 의 d_c), CLI 3번째 인자로 직접 지정 가능.
 #   예: -- 0.5 0 5e-5  -> 코너 미구동 + 클램프만 5e-5 m (클램프 단독 구동 진단)
@@ -448,11 +432,6 @@ if _excl_arg is not None:
     if CLAMP_EXCL_R < 0.0:
         raise RuntimeError('CLAMP_EXCL_R=%r < 0' % (CLAMP_EXCL_R,))
 CLAMP_DC_EFF = CLAMP_PULL / DISP if DISP > 0.0 else 0.0
-#   DEAD_FRAC (5번째 인자) — 기저 상태의 하중비. 창이 좁다: 0.018 -> 무응력 퇴화 /
-#   0.5 는 x_c=0.5(개시 61%)에서만 성공, 0.35·0.65 에서는 개시 위라 추출 실패. 스윕은 x_c 별로 낮춘다.
-#   => f 는 [조건화될 만큼 크고 개시 아래일 만큼 작은] 창에서 고른다.
-if _dead_arg is not None:
-    DEAD_FRAC = float(_dead_arg)
 CLAMP_PERT = PERTURBATION * CLAMP_DC_EFF   # 좌굴 스텝 클램프 섭동 [m]
 
 if not (0.03 <= x_c <= 0.95):
@@ -1098,56 +1077,6 @@ def build_model(disp):
                 stepName='Step-Buckle', u1=_p * _d1, u2=_p * _d2)
         print("%s [%s] base=코너 %.4g m + 클램프 %.4g m(전량) / LIVE=%s 가족 프로브 %.4g m"
               % (TAG, CASE, DISP, CLAMP_PULL, LIVE_DRIVER, PERTURBATION))
-    elif CLAMP_LOAD == 'live':
-        # =====================================================================
-        # clamp_lf — 꼭짓점과 클램프를 prescribed 변위로 구동한다.
-        #   이 저장소에서 **완주한** 구동 경로는 prescribed 변위 BC 뿐이다(HF/케이블/모드소스 모두
-        #   Disp_Control_* + setValuesInStep). CLOAD 는 완주 기록이 없고 CAE 도 스텝 간 하중 수정을
-        #   거부했다. 회계: DEAD=base state(GlobalTension) / LIVE=좌굴 스텝 -> lambda=1 이 운용점.
-        # =====================================================================
-        my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                                region=_clamp_target('CL'), u3=0, **_CLAMP_ROT_KW_USE)
-        my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
-                                region=_clamp_target('CR'), u3=0, **_CLAMP_ROT_KW_USE)
-        #   크기 출처는 HF 와 동일: 꼭짓점 = DISP, 클램프 = CLAMP_PULL(= CLAMP_DC x DISP).
-        #   클램프 구동 대상: clamp_cable 이면 **케이블 끝단**(HF 와 같은 하중 경로), 아니면 패치 RP.
-        _tgt_cl = _clamp_target('CL')
-        _tgt_cr = _clamp_target('CR')
-        _DRV = (('Disp_Control_Right', A2, cos_val, -sin_val, DISP),
-                ('Disp_Control_Left', A3, -cos_val, -sin_val, DISP),
-                ('Disp_Control_CL', _tgt_cl, DIR_CL[0], DIR_CL[1], CLAMP_PULL),
-                ('Disp_Control_CR', _tgt_cr, DIR_CR[0], DIR_CR[1], CLAMP_PULL))
-        for _nm, _reg, _d1, _d2, _mag in _DRV:
-            my_model.DisplacementBC(name=_nm, createStepName='Initial', region=_reg,
-                                    u1=0.0, u2=0.0)
-        for _nm, _reg, _d1, _d2, _mag in _DRV:
-            # DEAD = DEAD_FRAC x P — base state. 0 을 생략하지 않고 **명시**한다.
-            my_model.boundaryConditions[_nm].setValuesInStep(
-                stepName='Step-GlobalTension',
-                u1=DEAD_FRAC * _mag * _d1, u2=DEAD_FRAC * _mag * _d2)
-            # LIVE = (1-DEAD_FRAC) x P — 남은 하중(운용점까지의 나머지)을 패턴으로 준다.
-            #   [실측 확정] *BUCKLE 의 LIVE 는 '그 스텝에 지정한 값'이며 이전 스텝과의 차분이 아니다.
-            #   증거: 스텝 값을 2배로 하니 lambda 가 정확히 절반(4모드 전부), 모드 형상은 불변.
-            #   => lambda x (좌굴 스텝 값) = 좌굴까지의 추가 변위(불변량), 총 구동 = DEAD + lambda*LIVE.
-            #   setValuesInStep 은 '그 스텝의 총값'을 대체하므로 lambda=1 이 운용점(설계 의도).
-            my_model.boundaryConditions[_nm].setValuesInStep(
-                stepName='Step-Buckle',
-                u1=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _mag * _d1,
-                u2=PATTERN_SIGN * (1.0 - DEAD_FRAC) * _mag * _d2)
-        print("%s [clamp_lf] 변위 구동: 꼭짓점 %.4g m + 클램프 %.4g m (CLAMP_DC=%.3g, 비율 %.3g)"
-              % (TAG, DISP, CLAMP_PULL, CLAMP_DC, (CLAMP_PULL / DISP) if DISP else 0.0))
-        print("%s [clamp_lf] DEAD_FRAC=%.4g -> DEAD=%.4g x P (GlobalTension) / "
-              "LIVE=%.4g x P x PATTERN_SIGN(%+.2g) (Buckle)  => lambda=1 이 운용점"
-              % (TAG, DEAD_FRAC, DEAD_FRAC, 1.0 - DEAD_FRAC, PATTERN_SIGN))
-    elif HAS_CLAMPS:
-        # 구속만 (CLAMP_LOAD='none'): 패치 RP 의 면외(u3)만 막고 in-plane 은 자유. 하중 없음.
-        my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
-                                region=_clamp_target('CL'), u3=0, **_CLAMP_ROT_KW_USE)
-        my_model.DisplacementBC(name='BC_Clamp_CR', createStepName='Initial',
-                                region=_clamp_target('CR'), u3=0, **_CLAMP_ROT_KW_USE)
-
-    if LIVE_DRIVER == 'clamp':
-        #   클램프 가족 런: LIVE = 클램프 단독 프로브. base 는 CLAMP_LOAD 가 정한다
         #   ('base' = 당김 전량 -- 위 분기에서 이미 배선 / 'none' = 당김 0 -- 여기서 배선).
         if CLAMP_LOAD == 'none':
             #   프로브 대상: clamp_cable 이면 케이블 끝단(HF 하중 경로), 아니면 패치 RP.
@@ -1414,8 +1343,7 @@ try:
     _row = {
         'ts': _dt.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
         'case': CASE, 'x_c': x_c, 'DISP': DISP, 'CLAMP_DC': CLAMP_DC,
-        'DEAD_FRAC': DEAD_FRAC, 'CLAMP_DIR': CLAMP_DIR,
-        'CORNER_F0': CORNER_F0, 'CLAMP_F0': CLAMP_F0,
+        'CLAMP_DIR': CLAMP_DIR,
         'clamp_load': CLAMP_LOAD, 'corner_dir': CORNER_DIR,
         'window': [N_EIG_BUCKLE, BUCKLE_VECTORS], 'PERTURBATION': PERTURBATION,
         'ELEM_TAG': ELEM_TAG, 'job': JOB_NAME,
