@@ -123,6 +123,22 @@ def get_abaqus(new_x, new_s):
             print("!!! HF prerequisite LF run produced no LF_Analysis.odb - aborting this HF point.")
             return FAIL, FAIL
 
+        #   [2026-10-12 계획 T8] HF 임퍼펙션 시드는 설계점 (x_c, d_c) 마다 달라진다.
+        #   표 경로는 run_abaqus.py 가 결정적으로 조립하므로(seeds/modes_xc<NNN>_dc<NNN>.txt)
+        #   여기서는 **없을 때만** 만든다(같은 점 재방문 비용 0). 실패하면 HF 를 돌리지 않는다.
+        _seed_script = os.path.join(_HERE, "make_seed.py")
+        _seed_tbl = os.path.join(_HERE, "seeds", "modes_xc%03d_dc%03d.txt"
+                                 % (int(round(x1 * 100.0)), int(round(x2 * 100.0))))
+        if not os.path.exists(_seed_tbl):
+            print(f"--- Building HF seed table [x_c={x1:.4f} d_c={x2:.4f}] ---")
+            _sr = subprocess.run(f'python3 "{_seed_script}" --x_c {x1} --d_c {x2}',
+                                 shell=True, check=False, capture_output=True, text=True,
+                                 cwd=_HERE)
+            if not os.path.exists(_seed_tbl):
+                print("!!! HF seed table generation failed - aborting this HF point.")
+                print((_sr.stdout or "")[-800:])
+                return FAIL, FAIL
+
     print(f"--- Running Abaqus [{mode_str}] x1: {x1:.6f} x2: {x2:.6f} ---")
     
     try:
