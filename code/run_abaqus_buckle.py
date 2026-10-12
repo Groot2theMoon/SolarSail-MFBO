@@ -933,16 +933,34 @@ def build_model(disp):
 
     # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5) — 동일
     #   CLAMP_MODE='none' 이면 패치를 아예 만들지 않는다 (논문 재현 기준선 P0).
+    #   [2026-10-12 §19.58] 클램프 패치 반경 0.2 -> **0.21**.
+    #   이유: 격자 간격 0.1 은 이진수로 정확하지 않아 **거리가 정확히 0.2 인 노드**에서 좌우 계산값이
+    #   마지막 비트에서 갈린다(실측 L 6개 / R 7개). 그 1개 차이가 클램프 하중 전달을 비대칭으로 만들어
+    #   **양쪽 클램프 부근 최소 주응력 분포가 달라졌다**(사용자 관측). 0.21 은 노드 거리 목록
+    #   (0, 0.1, 0.1414, 0.2, 0.2236) 사이에 있어 x_c 0.2~0.8 전부에서 8/8 대칭이며(실측),
+    #   CLAMP_EXCL_R=0.21 과 같아져 제외가 패치를 온전히 덮는다(이중 구속 게이트도 그대로 통과).
     if not HAS_CLAMPS:
         rp_cl_obj = rp_cr_obj = None
     elif CLAMP_DRIVE == 'nodes':
         #   [B안] 강체패치를 만들지 않는다 — 노드셋만(RP/Coupling/Tie/케이블 전부 없음).
         rp_cl_obj = rp_cr_obj = None
-        create_patch_nodeset(a, inst_memb, 'CL', V_CL, radius=0.2)
-        create_patch_nodeset(a, inst_memb, 'CR', V_CR, radius=0.2)
+        create_patch_nodeset(a, inst_memb, 'CL', V_CL, radius=0.21)
+        create_patch_nodeset(a, inst_memb, 'CR', V_CR, radius=0.21)
     else:
-        rp_cl_obj, rp_cl_reg = create_rigid_patch(a, inst_memb, 'CL', V_CL, radius=0.2)
-        rp_cr_obj, rp_cr_reg = create_rigid_patch(a, inst_memb, 'CR', V_CR, radius=0.2)
+        rp_cl_obj, rp_cl_reg = create_rigid_patch(a, inst_memb, 'CL', V_CL, radius=0.21)
+        rp_cr_obj, rp_cr_reg = create_rigid_patch(a, inst_memb, 'CR', V_CR, radius=0.21)
+    if HAS_CLAMPS:
+        _cl = aba_grid_mesh.patch_coords_from_set(a.sets['CL_Nodes'])
+        _cr = aba_grid_mesh.patch_coords_from_set(a.sets['CR_Nodes'])
+        if _cl is None or _cr is None:
+            print("%s [대칭] 경고: 이 실행환경은 Set 노드좌표 API 가 없어 클램프 패치 좌우 대칭 "
+                  "검사를 건너뜁니다(실모델에서는 수행됨 — 스텁 하네스 전용 경고)." % (TAG,))
+        else:
+            _ok, _msg = aba_grid_mesh.patch_nodes_mirror_ok(_cl, _cr)
+            if not _ok:
+                raise RuntimeError("[클램프 패치 대칭] %s — 좌우 클램프 부근 응력이 달라진다(§19.58)."
+                                   % _msg)
+            print("%s [대칭] 클램프 패치 미러검사 %s" % (TAG, _msg))
 
     # 케이블 연결: 정점은 위로, 두 아래 모서리는 각 케이블 축(28.6도) 방향 — mode.py 와 동일
     if HAS_CABLES:

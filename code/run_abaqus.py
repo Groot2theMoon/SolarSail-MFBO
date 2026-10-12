@@ -951,8 +951,21 @@ if NO_CLAMP:
     emit("[run_abaqus] NO_CLAMP=True : 클램프(cable_CL/CR + 강체패치 + BC) 없이 모델링 (대조 실험)")
     rp_cl_obj = rp_cr_obj = rp_cl_reg = rp_cr_reg = None
 else:
-    rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=0.2)
-    rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=0.2)
+    #   [2026-10-12 §19.58] 0.2 -> 0.21: 거리 0.2 노드에서 부동소수 경계로 좌우 패치 노드 수가
+    #   달라져(L6/R7) 클램프 부근 최소 주응력이 비대칭이었다. 0.21 은 8/8 대칭(실측)이고
+    #   CLAMP_EXCL_R 과 같아 제외가 패치를 덮는다. 빌드 시점에 대칭을 강제 검사한다.
+    rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=0.21)
+    rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=0.21)
+    _clm = aba_grid_mesh.patch_coords_from_set(a.sets['CL_Nodes'])
+    _crm = aba_grid_mesh.patch_coords_from_set(a.sets['CR_Nodes'])
+    if _clm is None or _crm is None:
+        print("[대칭] 경고: Set 노드좌표 API 없음 -> 클램프 패치 좌우 대칭 검사 건너뜀(스텁 전용 경고).")
+    else:
+        _okm, _msgm = aba_grid_mesh.patch_nodes_mirror_ok(_clm, _crm)
+        if not _okm:
+            raise RuntimeError("[클램프 패치 대칭] %s — 좌우 클램프 부근 응력이 달라진다(§19.58)."
+                               % _msgm)
+        print("[대칭] 클램프 패치 미러검사 %s" % _msgm)
 
 # 케이블 연결
 # V1(Top): 위로 (0, 1)

@@ -526,6 +526,17 @@ def check_clamp_edge_overlap():
 
         def _d2(p, q):
             return (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2
+        #   [2026-10-12 §19.58] 좌/우 패치 노드가 **미러쌍인지**도 본다. 패치 구체 반경이 노드
+        #   거리(0.2)와 겹치면 부동소수 경계로 한쪽만 노드를 더 잡아(L6/R7) 클램프 부근 최소
+        #   주응력이 비대칭이 된다 — 실제로 그 버그가 있었고 반경을 0.21 로 옮겨 고쳤다.
+        _L = [(nd[0], nd[1]) for nd in nodes if _d2((nd[0], nd[1]), cl) <= pat_r * pat_r]
+        _R = [(nd[0], nd[1]) for nd in nodes if _d2((nd[0], nd[1]), cr) <= pat_r * pat_r]
+        _okm, _msgm = aba_grid_mesh.patch_nodes_mirror_ok(_L, _R)
+        print("    x_c=%.1f : 클램프 패치 좌우 대칭 %s — %s"
+              % (xc, "OK" if _okm else "FAIL", _msgm))
+        if not _okm:
+            print("       -> 패치 반경을 노드 거리 목록(0.1/0.1414/0.2/0.2236) 사이 값으로 (예: 0.21).")
+            return False
         hit = 0
         for nd in nodes:
             x, y = nd[0], nd[1]

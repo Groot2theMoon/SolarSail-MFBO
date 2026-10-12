@@ -131,6 +131,47 @@ def generate_grid(base=20.0, height=10.0, seed_div=200.0):
     return nodes, s4, s3
 
 
+def patch_coords_from_set(aset):
+    """Abaqus Set 에서 [(x, y)] 를 뽑는다. 스텁/미지원 API 면 **None**(호출자가 경고).
+
+    스텁 하네스의 Set 은 .nodes 가 iterable 이 아니다('Obj' object is not iterable 실측).
+    실모델에서는 MeshNodeArray 가 오고 각 노드에 .coordinates 가 있다.
+    """
+    nds = getattr(aset, 'nodes', None)
+    if nds is None:
+        return None
+    out = []
+    try:
+        for nd in nds:
+            c = getattr(nd, 'coordinates', None)
+            if c is None:
+                return None
+            out.append((float(c[0]), float(c[1])))
+    except TypeError:
+        return None
+    return out or None
+
+
+def patch_nodes_mirror_ok(nodes_L, nodes_R, axis=10.0):
+    """좌/우 패치 노드 집합이 미러쌍인지 검사 -> (ok, msg).
+
+    [2026-10-12 §19.58] `getByBoundingSphere(radius=0.2)` 는 **거리가 정확히 0.2 인 노드**에서
+    부동소수 경계에 걸려 좌우 개수가 달라진다(실측: 클램프 L 6개 / R 7개 -> 양쪽 클램프 부근
+    최소 주응력 분포가 달랐다). 반경을 0.21 로 옮겨 회피했지만 메쉬/반경이 바뀌면 재발하므로
+    빌드 시점에 검사한다.
+    """
+    def key(p):
+        return (round(p[0], 9), round(p[1], 9))
+    SL = set(key(p) for p in nodes_L)
+    SR = set(key(p) for p in nodes_R)
+    SLm = set((round(2.0 * axis - p[0], 9), round(p[1], 9)) for p in nodes_L)   # 거울: x -> 2*axis-x
+    if len(SL) != len(SR):
+        return False, "노드 수가 다름: L %d개 / R %d개" % (len(SL), len(SR))
+    if SLm != SR:
+        return False, "미러 불일치 %d개 (L %d개 / R %d개)" % (len(SLm ^ SR), len(SL), len(SR))
+    return True, "OK (노드 %d개씩)" % len(SL)
+
+
 def grid_report(base=20.0, height=10.0, seed_div=200.0):
     """격자 통계 + 검증 요약을 문자열로 돌려준다 (로그/검증용)."""
     nodes, s4, s3 = generate_grid(base, height, seed_div)
