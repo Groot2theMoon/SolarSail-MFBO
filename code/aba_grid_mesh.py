@@ -152,7 +152,7 @@ def patch_coords_from_set(aset):
     return out or None
 
 
-def patch_nodes_mirror_ok(nodes_L, nodes_R, axis=10.0):
+def patch_nodes_mirror_ok(nodes_L, nodes_R, axis=10.0, tol=1.0e-6):
     """좌/우 패치 노드 집합이 미러쌍인지 검사 -> (ok, msg).
 
     [2026-10-12 §19.58] `getByBoundingSphere(radius=0.2)` 는 **거리가 정확히 0.2 인 노드**에서
@@ -160,16 +160,24 @@ def patch_nodes_mirror_ok(nodes_L, nodes_R, axis=10.0):
     최소 주응력 분포가 달랐다). 반경을 0.21 로 옮겨 회피했지만 메쉬/반경이 바뀌면 재발하므로
     빌드 시점에 검사한다.
     """
-    def key(p):
-        return (round(p[0], 9), round(p[1], 9))
-    SL = set(key(p) for p in nodes_L)
-    SR = set(key(p) for p in nodes_R)
-    SLm = set((round(2.0 * axis - p[0], 9), round(p[1], 9)) for p in nodes_L)   # 거울: x -> 2*axis-x
+    #   [2026-10-12 §19.59] **관용 비교**로 바꿨다. Abaqus 가 .inp 에서 파싱한 좌표는 생성기의
+    #   값과 마지막 자리가 다를 수 있어(정밀도) 엄격 반올림 비교는 과민했다(실측: L8/R8 인데 불일치 8).
+    #   물리적으로 중요한 것은 (a) 개수 일치 (b) 각 L 노드의 거울이 tol 안에 존재 하는 두 가지다.
+    tol = float(tol)
+    SL = list(nodes_L)
+    SR = list(nodes_R)
     if len(SL) != len(SR):
         return False, "노드 수가 다름: L %d개 / R %d개" % (len(SL), len(SR))
-    if SLm != SR:
-        return False, "미러 불일치 %d개 (L %d개 / R %d개)" % (len(SLm ^ SR), len(SL), len(SR))
-    return True, "OK (노드 %d개씩)" % len(SL)
+    _worst, _pair = 0.0, None
+    for p in SL:
+        mx, my = 2.0 * axis - p[0], p[1]
+        best = min(((mx - q[0]) ** 2 + (my - q[1]) ** 2) ** 0.5 for q in SR) if SR else 1e9
+        if best > _worst:
+            _worst, _pair = best, (p, (mx, my))
+    if _worst > tol:
+        return False, ("최악 거울오차 %.3e m > tol %.1e (L %d개 / R %d개) 예: L%s 의 거울 %s"
+                       % (_worst, tol, len(SL), len(SR), _pair[0], _pair[1]))
+    return True, "OK (노드 %d개씩, 최악 거울오차 %.2e m)" % (len(SL), _worst)
 
 
 def grid_report(base=20.0, height=10.0, seed_div=200.0):
