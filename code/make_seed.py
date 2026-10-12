@@ -13,7 +13,8 @@
     ④ 검증(노드 수·모드 수·peak|u3|) + seeds/<표>.meta.txt
 
 설계 결정 (code/notes/plan-hf-seed-pipeline-2026-10-12.md)
-    Q1=a  클램프 당김을 HF 의 d_c 에 맞춘다 -> clamp_pull = disp × d_c
+    Q1=a -> §19.69 에서 **부분 철회**: HF d_c 는 표 이름/헤더(짝 규약)에만 쓰고,
+          시드 클램프 당김은 **고정 5.56%**(--seed-clamp-dc)로 뽑는다(d_c=0.5 급에서 모드 0개 실측).
     Q2=a  지문 불일치는 HF 가 **제출 전 중단**한다(이 스크립트는 지문을 표 머리에 새긴다)
     Q3=b  CASE 전환은 소스 패치 - run_abaqus_buckle.py 의 `CASE = '...'` 줄을 잠시 바꾸고
           **finally 에서 원문 바이트로 복원**한다(실패해도 남기지 않는다)
@@ -145,6 +146,9 @@ def main(argv=None):
     ap.add_argument('--disp', type=float, default=None,
                     help='buckle 코너 당김 [m]. 생략하면 run_abaqus_buckle.py 의 DISP_GLOBAL')
     ap.add_argument('--excl', type=float, default=0.21)
+    ap.add_argument('--seed-clamp-dc', type=float, default=0.0556, dest='seed_clamp_dc',
+                    help='[§19.69] 시드 클램프 당김 비율. HF 의 d_c 와 분리한다 - d_c=0.5 급에서는 '
+                         '클램프 base 가 퇴화해 선형모드가 0개 나온다(실측). 알려진 성공 창은 5.56%%.')
     ap.add_argument('--force', action='store_true', help='캐시 무시하고 재생성')
     ap.add_argument('--dry-run', action='store_true', help='명령만 출력(라이선스 0)')
     ap.add_argument('--refresh-seed-family', action='store_true',
@@ -152,15 +156,19 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     disp = a.disp if a.disp is not None else buckle_disp()
-    pull = disp * a.d_c
+    pull = disp * a.d_c                        # HF 와 짝지을 설계점 값(표 이름/헤더에 쓴다)
+    pull_seed = disp * a.seed_clamp_dc         # 시드 클램프 당김 - 고정 비율(§19.69)
     seed_tbl = os.path.join(SEEDS_DIR, 'modes_seed.txt')
-    clamp_tbl = os.path.join(SEEDS_DIR, A.seed_table_name(a.x_c, a.d_c, prefix='modes_clamp'))
+    clamp_tbl = os.path.join(SEEDS_DIR, A.seed_table_name(a.x_c, a.seed_clamp_dc, prefix='modes_clamp'))
     out_tbl = A.seed_table_path(SEEDS_DIR, a.x_c, a.d_c)
     if not a.dry_run:
         os.makedirs(SEEDS_DIR, exist_ok=True)
 
-    print("[make_seed] x_c=%.4g d_c=%.5g disp=%.4g clamp_pull=%.4g excl=%.3g" %
+    print("[make_seed] x_c=%.4g d_c(HF)=%.5g disp=%.4g clamp_pull(HF)=%.4g excl=%.3g" %
           (a.x_c, a.d_c, disp, pull, a.excl))
+    print("[make_seed] 시드 클램프 비율=%.4g -> clamp_pull(시드)=%.4g m "
+          "(HF d_c 와 분리 - 비율이 크면 클램프 base 가 퇴화해 모드 0개)"
+          % (a.seed_clamp_dc, pull_seed))
     print("[make_seed] seed  표 = %s" % seed_tbl)
     print("[make_seed] clamp 표 = %s" % clamp_tbl)
     print("[make_seed] 합성  표 = %s" % out_tbl)
@@ -188,16 +196,16 @@ def main(argv=None):
     # ---- 2) clamp 가족 (x_c·d_c 의존) ----
     print("\n[2/3] clamp 가족 (클램프 케이블만) - x_c·d_c 의존")
     if a.force or not os.path.exists(clamp_tbl):
-        odb, _job = expected_odb(a.x_c, disp, a.d_c, 'clamp_only', a.excl)
+        odb, _job = expected_odb(a.x_c, disp, a.seed_clamp_dc, 'clamp_only', a.excl)
         if os.path.exists(odb) and not a.force:
             print("      buckle 산출물 있음 - 잡 생략 (%s)" % os.path.basename(odb))
         else:
             with CasePatch('clamp_only', a.dry_run):
                 rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g %g %g'
-                           % (a.x_c, disp, pull, a.excl), a.dry_run, cwd=HERE)
+                           % (a.x_c, disp, pull_seed, a.excl), a.dry_run, cwd=HERE)
                 if rc:
                     return rc
-            odb, _job = expected_odb(a.x_c, disp, a.d_c, 'clamp_only', a.excl)
+            odb, _job = expected_odb(a.x_c, disp, a.seed_clamp_dc, 'clamp_only', a.excl)
         rc, _ = sh('abaqus python aba_mode_from_odb.py "%s" Step-Buckle "%s" %d'
                    % (odb, clamp_tbl, CLAMP_MODES), a.dry_run, cwd=HERE)
         if not a.dry_run:

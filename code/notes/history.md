@@ -3196,3 +3196,24 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [덤] `make_seed.py` 가 **buckle ODB 도 캐시**한다(있으면 잡 생략) — 표만 지우고 다시 돌릴 때 1~2분 절약.
 [검증] py_compile · `test_seed_path.py` **38/38 PASS**(§9 신규 2항목: 자식에 PYTHONIOENCODING 전달 ·
   자식이 em-dash 를 출력해도 정상 종료) · `static_leak_check` 이상 없음 · 검사기 PASS · dry-run 확인.
+
+#### §19.69 시드 클램프 비율을 HF d_c 와 분리 (Q1=a 부분 철회) (2026-10-12)
+
+[증상] `python make_seed.py --x_c 0.5 --d_c 0.5` 의 ②에서 clamp 모드표 실패:
+  `... Step-Buckle : 프레임 1개 (요청 2모드)` / `λ 출처=odb.frameValue: 0.000000e+00` /
+  `양수 λ 모드가 없다 -> 좌굴모드가 수렴하지 않았다`.
+[판정] **"음수 모드를 무시하고 쓰자" 는 이 경우에 적용 불가** — 음수 모드가 있는 게 아니라
+  **모드가 0개**다(프레임 1개 = 기저 프레임뿐). 그 ODB 에는 꺼낼 모드가 아예 없다.
+  원인은 사용자 자신의 기록과 일치한다: 클램프 당김이 9e-6(설계 d_c=0.5)이면 base state 의 음수
+  고유값이 ~1377 이고 `THE EIGENVALUES CANNOT BE FOUND` 로 **모드 0개**. 알려진 성공 창은 **5.6%**
+  (`CLAMP_DC=0.0556`) 뿐이며 50%/100% 는 실패한다(§2 규칙·§19.52 실측).
+  일반 원칙으로도 λ<0 모드는 **하중 역방향**에서 좌굴하는 모드라 "이 하중의 좌굴모드"는 아니다 —
+  guidance 씨드로 형상만 쓰는 건 가능하지만, 양수 모드를 주는 창이 실측으로 존재하므로 그쪽이 우선.
+[수정] `make_seed.py` 에 `--seed-clamp-dc`(기본 **0.0556**) 신설:
+  - HF 의 d_c 는 **표 이름/헤더(짝 규약)** 에만 쓰고, 시드 클램프 당김은 고정 5.56% 로 뽑는다.
+  - clamp 표 이름도 시드 비율 기준(`modes_clamp_xc<NNN>_dc006.txt`) -> HF d_c 가 바뀌어도 **재사용**된다
+    (씨드는 guidance 라 x_c 만 맞으면 된다 — §19.50).
+  - 합성표 이름은 종전대로 HF d_c 포함(`modes_xc050_dc050.txt`) — 게이트가 HF 의 d_c 와 대조한다.
+[검증] py_compile · dry-run 확인(`시드 클램프 비율=0.0556 -> clamp_pull(시드)=1.001e-06 m`) ·
+  `test_seed_path.py` 38/38 · `static_leak_check` 이상 없음.
+[다음] 재실행하면 ① skip / ② 는 **dc006 태그의 새 buckle 런**(~40초, 5.56% 당김) → 2모드 → ③ 합성.
