@@ -492,18 +492,6 @@ _COMPLETION_STRINGS = ('HAS COMPLETED SUCCESSFULLY', 'THE ANALYSIS HAS BEEN COMP
 
 
 def job_completed_ok(job_name):
-    """R-12: .sta/.msg 의 완주 문자열로 완주를 판정한다.
-
-    odb 파일 존재만 보면 '중도 중단된 odb'를 성공으로 오판한다
-    (2026-09-21 사례: HF_Postbuckle.odb 는 존재하나 Step-Postbuckle 프레임 0개).
-
-    완주 문자열은 두 가지다. 좌굴 스텝은 증분 블록이 없어 .sta 에
-    'THE ANALYSIS HAS COMPLETED SUCCESSFULLY' 를 남기지 않고 .msg 에
-    'THE ANALYSIS HAS BEEN COMPLETED' 만 남긴다 -> 한 문자열만 보면 성공한
-    좌굴 잡을 '중도 중단 의심'으로 잘못 보고한다 (실측 2026-09-22: 좌굴형
-    .msg + .sta 조합에서 False, 이 스크립트의 α 요약표 '완주판정' 열이 전부 False).
-    중단된 잡은 'HAS NOT BEEN COMPLETED' 이므로 두 문자열 어느 것과도 일치하지 않는다.
-    """
     for ext in ('sta', 'msg'):
         fn = '%s.%s' % (job_name, ext)
         if os.path.exists(fn):
@@ -515,11 +503,6 @@ def job_completed_ok(job_name):
 
 
 def msg_cause_from_text(msg_text, sta_text='', limit=8):
-    """실패한 잡의 원인 줄을 뽑는다. **순수 함수** — 합성 .msg/.sta 로 Abaqus 없이 검증한다.
-
-    왜: 원인은 .msg 에만 있는데 예전에는 '실패 원인 미상' 만 찍혀 왕복이 늘었다.
-    ***ERROR 를 WARNING 보다 우선한다(원인에 가깝다). ERROR 가 없으면 .sta 마지막 줄로 대체한다.
-    """
     _keys = ('***ERROR', 'TOO MANY ATTEMPTS', 'HAS NOT BEEN COMPLETED',
              'THE EIGENVALUES CANNOT BE FOUND', 'HAS BEEN TERMINATED',
              'NUMERICAL SINGULARITY', 'EXCESSIVE DISTORTION', '***WARNING')
@@ -545,7 +528,7 @@ def msg_cause_from_text(msg_text, sta_text='', limit=8):
 
 
 def print_failure_cause(job_name, limit=8):
-    """실패 원인을 콘솔에 찍는다. .msg 원문은 ASCII 라 **콘솔 한글 깨짐과 무관하게** 읽힌다."""
+    """실패 원인을 콘솔에 찍는다. .msg 원문은 ASCII 라 콘솔 한글 깨짐과 무관하게 읽힌다."""
     _read = {}
     for _ext in ('msg', 'sta'):
         _fn = '%s.%s' % (job_name, _ext)
@@ -616,8 +599,6 @@ def report_job(job_name):
     if len(out) == 1:
         out.append('(no .msg/.dat found — the job died before writing them)')
 
-    # 파일을 **먼저** 쓴다. 콘솔 출력은 예외로 프로세스가 죽으면 버퍼가 flush 되지 않고
-    #   사라진다 — 그러면 사용자에게 남는 것이 없다(Status=None 사례에서 실제로 겪었다).
     dst = os.path.join(_RUN, '%s.diag.txt' % job_name)
     import io as _io
     with _io.open(dst, 'w', encoding='utf-8', errors='replace') as f:
@@ -686,7 +667,7 @@ def connect_cable(a, name, part, sail_corner, vector_dir, radius=1e-4, cable_len
 
 
 def build_model(disp):
-    """run_abaqus_new.py 의 모델 생성을 '케이블만 제외' 하고 재현한다."""
+    """run_abaqus_new.py 의 모델 생성을 '케이블만 제외' 하고 재현"""
     global my_model
     model_name = MODEL_PREFIX
     if model_name in mdb.models:
@@ -699,24 +680,17 @@ def build_model(disp):
     mat.Elastic(table=((2.5e9, 0.34),))
     my_model.HomogeneousShellSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)   # 1차 셸 섹션(막 계열 기각)
 
-    # 케이블 재질 (Kevlar) — mode.py 와 동일. 클램프와 무관하게 케이블 경로를 복원한다.
     mat_cable = my_model.Material(name='Kevlar')
     mat_cable.Elastic(table=((62.0e9, 0.36),))
     my_model.TrussSection(name='Section-Cable', material='Kevlar', area=CABLE_AREA)
 
     # 파트 생성: 멤브레인 — 동일
     if USE_GRID_MESH:
-        # 격자: `.inp` 로 **orphan mesh part** 를 import 한다.
-        #   Part.addNodes / addElements / deleteMesh 는 odb.Part 전용이라 mdb Part 에는 없다
-        #   (실측 AttributeError 2026-10-06/07). CAE 스크립트로 격자를 넣는 경로는
-        #   mdb.models[].PartFromInputFile 뿐이다.
+        # 격자: `.inp` 로 orphan mesh part를 import 한다.
         p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
             my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV)
         print("%s [mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
               % (TAG, _nn, _n4, _n3, _n4 + _n3))
-        #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
-        #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
-        #   orphan mesh 는 요소/절점 겸용 집합이 없다 -> 두 개를 만든다.
         p.Set(elements=p.elements, name='All_Elem')      # 섹션 할당 + 초기응력(요소)
         p.Set(nodes=p.nodes, name='All')                 # 변위 BC 용(절점) — 이름 'All' 유지
         p.SectionAssignment(region=p.sets['All_Elem'], sectionName='Section-Membrane')
@@ -764,19 +738,12 @@ def build_model(disp):
         p.generateMesh()
         a.regenerate()
 
-    # 꼭짓점 RP — 동일 (radius=0.2)
+    # 꼭짓점 RP (radius=0.2)
     rp1_obj, rp1_reg = create_rigid_patch(a, inst_memb, 'Top', V1, radius=0.2)
     rp2_obj, rp2_reg = create_rigid_patch(a, inst_memb, 'Right', V2, radius=0.2)
     rp3_obj, rp3_reg = create_rigid_patch(a, inst_memb, 'Left', V3, radius=0.2)
 
-    # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5) — 동일
-    #   CLAMP_MODE='none' 이면 패치를 아예 만들지 않는다 (논문 재현 기준선 P0).
-    #   [2026-10-12 §19.58] 클램프 패치 반경 0.2 -> **0.21**.
-    #   이유: 격자 간격 0.1 은 이진수로 정확하지 않아 **거리가 정확히 0.2 인 노드**에서 좌우 계산값이
-    #   마지막 비트에서 갈린다(실측 L 6개 / R 7개). 그 1개 차이가 클램프 하중 전달을 비대칭으로 만들어
-    #   **양쪽 클램프 부근 최소 주응력 분포가 달라졌다**(사용자 관측). 0.21 은 노드 거리 목록
-    #   (0, 0.1, 0.1414, 0.2, 0.2236) 사이에 있어 x_c 0.2~0.8 전부에서 8/8 대칭이며(실측),
-    #   CLAMP_EXCL_R=0.21 과 같아져 제외가 패치를 온전히 덮는다(이중 구속 게이트도 그대로 통과).
+    # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5)
     if not HAS_CLAMPS:
         rp_cl_obj = rp_cr_obj = None
     else:
@@ -795,7 +762,7 @@ def build_model(disp):
                                    % _msg)
             print("%s [대칭] 클램프 패치 미러검사 %s" % (TAG, _msg))
 
-    # 케이블 연결: 정점은 위로, 두 아래 모서리는 각 케이블 축(28.6도) 방향 — mode.py 와 동일
+    # 케이블 연결: 정점은 위로, 두 아래 모서리는 각 케이블 축(28.6도) 방향
     if HAS_CABLES:
         start_c1, end_c1 = connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))
         start_c2, end_c2 = connect_cable(a, 'Cable_Right', p_cable_bot, V2, (cos_val, -sin_val, 0.0))
@@ -811,7 +778,7 @@ def build_model(disp):
     a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
     a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
     a.Set(name='RP_Left_Set', referencePoints=(a.referencePoints[rp3_obj.id],))
-    if HAS_CLAMPS:   # [§19.60] nodes 경로 제거 -> RP 세트는 클램프가 있으면 항상 만든다
+    if HAS_CLAMPS:
         a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
         a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
     # Tie (RP <-> 케이블 시작단) — mode.py 와 동일. cload 라우트에는 케이블이 없다.
@@ -927,11 +894,7 @@ def build_model(disp):
         u3=SET, ur1=SET, ur2=SET, ur3=SET
     )
     disp_a = disp
-    #   corner_lf/clamp_live 도 여기서 구동 BC 를 만든다 — 새 케이스의 base(전량 프리텐션).
-    #   ⚠️ 새 케이스를 추가하면 이 게이트에도 넣는다 — 빠뜨리면 Disp_Control_Right/Left 가
-    #   만들어지지 않아 뒤에서 KeyError 로 죽는다(하네스가 잡는다. clamp_live_cb 에서 실제로 발생).
-    if CASE in ('seed', 'clamp_only'):   # [§19.60] 둘 다 코너 구동 경로가 필요하다
-                                         #   (seed=케이블 끝단 / clamp_only=강체패치 RP)
+    if CASE in ('seed', 'clamp_only'):
         # 변위 구동: 케이블 끝단(seed) 또는 꼭짓점 강체패치 RP(clamp_only).
         my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
                                 region=A2, u1=SET, u2=SET)
@@ -947,9 +910,6 @@ def build_model(disp):
             u1=-disp_a * cos_val,
             u2=-disp_a * sin_val
         )
-    # 'cload' 라우트용 꼭짓점 하중은 아래 CLAMP_MODE 분기에서 일괄 생성한다 — 여기서 또 만들면
-    #   같은 이름이 두 스텝에 등록되어 최종값이 0 이 된다(스텁 하네스로 적발).
-    # [paper3] 꼭짓점도 케이블 축(+y)으로 당긴다(corner2 는 BC_Anchor_Top 고정 유지).
     if PRETENSION_MODE == 'paper3':
         my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
             stepName='Step-GlobalTension',
@@ -960,10 +920,6 @@ def build_model(disp):
     print("%s 프리텐션 = %s : 아래 %.4e m%s"
           % (TAG, PRETENSION_MODE, disp_a, _top_note))
     # ---- 하중/구속 배선 ----
-    #   clamp_load='base' (설계 확정 2026-10-11): base = 클램프 + 꼭짓점 **둘 다** 구동해 운용 기저에
-    #     도달하고, 좌굴 스텝의 LIVE 는 live_driver 가 고른 **한 가족만** 준다. 두 런의 base 가 동일하므로
-    #     각각 2모드를 뽑아 합성(Δz = Σ ω_i φ_i)할 수 있다.
-    #   clamp_load='live' (clamp_lf): 꼭짓점·클램프를 DEAD_FRAC / (1-DEAD_FRAC) 로 나눈다 = 운용점 회계.
     if CLAMP_LOAD == 'base':
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
                                 region=_clamp_target('CL'), u3=0, **_CLAMP_ROT_KW_USE)
@@ -975,10 +931,10 @@ def build_model(disp):
                                    ('Disp_Control_CR', _btgt_cr, DIR_CR[0], DIR_CR[1])):
             my_model.DisplacementBC(name=_nm, createStepName='Initial',
                                     region=_rg, u1=0.0, u2=0.0)
-            #   DEAD = 클램프 당김 **전량**을 base 에 넣는다(생략 금지 — 클램프 압축이 base 에 들어간다).
+            #   DEAD = 클램프 당김 전량을 base 에 넣는다(생략 금지 — 클램프 압축이 base 에 들어간다).
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-GlobalTension', u1=_d1 * CLAMP_PULL, u2=_d2 * CLAMP_PULL)
-            #   LIVE = 이 가족이 프로브 대상일 때만; 아니면 **0 명시**.
+            #   LIVE = 이 가족이 프로브 대상일 때만; 아니면0 명시.
             _p = PATTERN_SIGN * PERTURBATION if LIVE_DRIVER == 'clamp' else 0.0
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-Buckle', u1=_p * _d1, u2=_p * _d2)
@@ -1041,16 +997,7 @@ def build_model(disp):
             region=a.sets['All_Edges_NoClamp'],
             u3=0
         )
-
-    # ---- Buckle 스텝의 perturbation (케이블 라우트 전용) ----
-    #   PATTERN_SIGN 을 여기에도 곱한다. mode.py 는 곱하는데 buckle 은
-    #   빠져 있어 PATTERN_SIGN 이 1.0 을 벗어나면 두 스크립트가 조용히 갈라졌다(검사기는
-    #   상수값만 비교하고 '사용 여부'는 보지 않는다). CLAMP_LOAD='live' 의 LIVE CLOAD 는
-    #   위에서 이미 정의했으므로 여기서 건드리지 않는다.
-    #   [함정] 라우트에 없는 BC 를 참조하면 KeyError 로 모델 생성이 죽는다(스텁 하네스가 적발).
-    #   ⚠️ LIVE_DRIVER=='clamp' 는 코너를 좌굴 스텝에서 0 으로 두는 케이스다(clamp_live/clamp_cb) —
-    #   여기서 덮어쓰면 코너 프로브가 함께 들어가 '클램프 단독' 이 깨진다.
-    if HAS_CABLES and LIVE_DRIVER != 'clamp':   # [§19.60] 코너 케이블이 있을 때만
+    if HAS_CABLES and LIVE_DRIVER != 'clamp':
         #   corner_lf: 좌굴 스텝 값 = 프로브(PERTURBATION). 모드 형상은 크기에 불변, lambda 만 스케일.
         _ns = PATTERN_SIGN * PERTURBATION
         my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
@@ -1059,21 +1006,15 @@ def build_model(disp):
             stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
     return model_name
 
-# job 이름에 요소 태그 + 클램프 모드를 넣는다. 같은 이름이면 run_job_safely 가 stale
-#   산출물을 지워 직전 증거가 사라진다(§11).
-# ELEM_TAG 는 요소 상수에서 **유도**한다 — 하드코딩이면 요소를 바꿔도 잡 이름이 그대로여서
-#   '산출물 덮임 방지' 장치가 무력해진다(실측: S4 모델에 's4r' 이 박혀 있었다).
 ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', M3D4: 'm3d4', M3D3: 'm3d3'}.get(ELEM_CODE_QUAD)
 if ELEM_TAG is None:
     raise RuntimeError('ELEM_TAG 를 유도할 수 없는 요소코드입니다: %r. 잡 이름이 케이스를 '
                        '구분하지 못하면 run_job_safely 가 직전 증거를 지운다.' % (ELEM_CODE_QUAD,))
-#   d_c_eff 도 이름에 넣는다 — CLAMP_PULL 을 CLI 로 바꿔 d_c 스윕을 하면 DISP 만으로는
-#   이름이 겹쳐 run_job_safely 가 직전 증거를 지운다(§11).
+
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
-#   새 케이스의 표기: base=전량 프리텐션(f100) / base 클램프 당김 없음(dc000). CASE 세그먼트가 달라 유일성은 보장.
-_f_tag = 100                     # [§19.60] DEAD_FRAC 태그 제거(현행 2케이스는 항상 100)
+_f_tag = 100
 _dc_tag = (int(round(CLAMP_DC_EFF * 100.0))
-           if CASE in ('clamp_only',) else 0)   # [§19.60] 클램프가 있는 케이스만 dc 태그
+           if CASE in ('clamp_only',) else 0)
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
 _live_tag = (('_plv%05d' % int(round(PERTURBATION * 1.0e5)))
              if CASE in ('seed', 'clamp_only') else '')   # [§19.60] 둘 다 LIVE 프로브가 있다
@@ -1085,8 +1026,6 @@ JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x
                                                        _f_tag,
                                                        ELEM_TAG, MESH_TAG, CASE, CLAMP_DIR,
                                                        _excl_tag, _rot_tag, _live_tag)
-#   [2026-10-11 §19.49] Abaqus 는 잡 이름 **80자 한계** -> 초과 시 `AbaqusNameError: invalid job name`
-#   (모델을 다 만든 뒤 mdb.Job 에서 터져 라이선스를 쓰고 나서 실패한다). 여기서 즉시 막는다.
 if len(JOB_NAME) > 80:
     raise RuntimeError("[잡이름] %d자 > 80자 한계: %s\n   -> 케이스/태그 이름을 줄이세요."
                        % (len(JOB_NAME), JOB_NAME))
@@ -1126,8 +1065,7 @@ except Exception:
 report_job(JOB_NAME)
 
 # ============================================================================
-# 판정 재료 수집 — lambda 표 + base state 진단 + ledger 한 행.   (§18)
-#   규칙: "완주했는가" 와 "그 base state 가 우리가 주장하는 상태인가" 는 별개 질문이다.
+# 판정 재료 수집 — lambda 표 + base state 진단 + ledger 한 행
 #   lambda 표가 나와도 base state 진단(압축 면적비 / max|u3| / RF 상위)을 함께 읽는다.
 # ============================================================================
 _M = {}
@@ -1167,10 +1105,9 @@ except Exception as _e:
     print("%s [BASE] probe 실패(무시): %s" % (TAG, _e))
 
 # ---------------------------------------------------------------------------
-# 모드 형상 판정 (C3/C4) + 4조건 게이트.   (§18)
+# 모드 형상 판정 (C3/C4) + 4조건 게이트
 #   왜 형상인가: 임퍼펙션은 z 섭동이므로 면내 모드(u3~0)는 아무것도 주입하지 못하고,
 #   사선변에 붙은 경계조건 아티팩트는 클램프 물리가 아니라 틀린 초기결함이 된다.
-#   판정 산술은 buckle_mode_report.py 의 순수 함수를 쓴다(같은 저장소, DRY — 로컬 단위검증됨).
 # ---------------------------------------------------------------------------
 def judge_run(conv_max, lams, modes_ok, c3, c4, spread_min=SPREAD_MIN_PCT,
               u3_min=U3_FRAC_MIN, zone_r=CLAMP_ZONE_R):
@@ -1243,9 +1180,6 @@ try:
         'convMax': (max(_M['conv']) if _M.get('conv') else None),
         'wallclock': _M.get('wall'), 'lambdas': [], 'base_probe_ok': _BASE['probe_ok'],
     }
-    # lambda 는 **.dat 의 MODE NO / EIGENVALUE 표에서만** 읽는다(요청 수만큼 CONVERGED 한 런의
-    #   표가 스펙트럼이고, 실패 런의 ITERATION 목록은 레일리 몫 스냅샷이다).
-    #   파서는 parse_buckle_log.dat_lambdas() 에 있다(순수 함수 -> 로컬 단위검증 가능, DRY).
     _datf = os.path.join(_RUN, '%s.dat' % JOB_NAME)
     if os.path.exists(_datf) and _HAS_PBL:
         _txt = _io.open(_datf, encoding='utf-8', errors='replace').read()
