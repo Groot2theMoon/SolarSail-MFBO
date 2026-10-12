@@ -2790,3 +2790,39 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 
 [다음] ② 미러체크(수정본) 재실행 -> ④ HF `odb_table` 주입(`IMPERFECTION_MODE='odb_table'` +
   `MODE_TABLE=..\modes_2p2.txt`, `IMPERFECTION_AMPL_T=0.10`, `RUN_MODE='write'` 확인 후 `'auto'`).
+
+#### §19.55 HF write 검증 — 주입 정상 + 출처 헤더 '?' 수정 + R-13 stale 경고 (2026-10-12)
+
+[write 로그 판독 — 주입 정상]
+  - `[IMPERFECTION] 모드표 ..\modes_2p2.txt 로드 완료: 모드 [1,2,3,4] / 모드당 노드 10201개`
+  - `기하 섭동 적용: 10201/10201 노드, max|dz|=9.160e-07 m (노드 2546), 평균|dz|=5.746e-08 m (진폭 0.10 t)`
+    => 메쉬 라벨 **100% 일치**(주입 매핑 성립). max|dz| = 0.916 µm = 1.83 x (0.10 t = 0.5 µm).
+    **노드 2546 = 클램프 계열 모드1 의 부호기준 노드 2547 바로 옆** -> 합성 씨드의 최대점이 클램프
+    계열 피크에 있다 = 씨드가 **클램프 주도**(54배 규명과 정량 일치).
+  - `[GUARD] .inp 요소 타입 블록: {'T3D2': 5, 'S4': 9900, 'S3': 200}` (코너 3 + 클램프 2 케이블) ✓
+
+[HF 파라미터 = **저장소 기본값과 완전 일치**(로컬 드리프트 없음 — 의심 정정)]
+  DISP_GLOBAL=165e-6(L730) / PRETENSION_SCALE=10(L728) / GLOBAL_FINAL=1e-3(L735) / CLAMP_EXCL_R=0(L698) /
+  THICKNESS=5e-6(L695) / RUN_SELF_BUCKLE_JOB=False(L506) — 전부 저장소 값 그대로.
+  사용자가 바꾼 것 = 지시한 3개뿐: `IMPERFECTION_MODE='odb_table'` / `MODE_TABLE='..\modes_2p2.txt'` /
+  `IMPERFECTION_AMPL_T=0.10`.
+
+[⚠️ R-13 진단은 **무효** — stale ODB] `RUN_SELF_BUCKLE_JOB=False` 인데 R-13 이 `code\Buckle_Analysis.odb`
+  (이전 런 잔재)를 읽었다: u_z ~ 1e-22 m(수치 0), minP<0 면적비 0.0000, 중앙 +609.9 Pa (7000 Pa 대비 0.087).
+  = 빈/낡은 필드이므로 base state 판정 근거가 **아니다**. 실측 프리텐션은 이전 세션의 **중앙 ≈3958 Pa
+  = 논문 7000 Pa 의 0.57배**(그 값이 유효). 로그의 609.9 Pa 로 판단 금지.
+
+[⚠️ base 구동 크기 불일치 — 프로토콜상 **허용**] HF 는 코너 당김 165 µm 운용인데 씨드 소스(seed,
+  clamp_only)는 `-- 0.5 1.8e-5`(18 µm) 로 돌았다(9.2배). 합의(2026-10-08: 씨드는 guidance, `x_c` 정합만
+  필요)상 허용. 근거: (i) 두 레벨 모두 변형률 ~1e-4 이하 = 선형역, (ii) 좌굴모드가 레벨 무관했던 실측
+  이력(§19.44 d*≈−1.9µm 레벨 무관), (iii) 클램프/코너 비율(0.0556) 동일.
+  => 지금 제출 가능. 정확 정합이 필요하면 두 소스를 `-- 0.5 1.65e-4` 로 재실행(각 ~45초) 후 표/합성 재생성.
+
+[수정] 합성기가 `# source=`/`# step=`/`# instance=` 를 안 써서 HF 로그가 `source=? / step=? / instance=?`
+  로 찍혔다(교란 차단용 헤더의 목적 상실). 이제 `# source=combined: modes_seed.txt[1,2] + modes_clamp.txt[1,2]`
+  + 첫 소스의 step/instance/source_odb_1 을 함께 쓴다. 검증: `aba_imperfection.mode_table_info` 가 세 키를
+  실제로 반환함을 확인(라이선스 0).
+  (덱은 이미 만들어졌고 표 내용은 동일하므로 **재합성은 선택** — 다음 합성부터 자동 적용.)
+
+[다음] `RUN_MODE='auto'` 로 재실행 -> 덱 재생성 + riks 패처(`--line-search --ran=2e-2 --can=1e-2 --i0=8
+  --ir=10`) + 제출(약 40분). 판정: 이전 `DISP. CORRECTION TOO LARGE` 가 **완주**로 바뀌는가.

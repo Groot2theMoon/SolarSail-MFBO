@@ -114,9 +114,19 @@ def main(argv):
         if k > 4:
             print("[합성] 경고: 모드 %d개 -> HF 의 IMPERFECTION_MAX_MODES=4 를 넘습니다(상위 4개만 주입됨)" % k)
 
+    #   [2026-10-12 §19.55] HF 로그가 `모드표 출처: source=? / step=? / instance=?` 로 찍었다 —
+    #   mode_table_info 는 `# source=`/`# step=`/`# instance=` 키를 읽는데 합성기는 그 키를 안 썼다.
+    #   출처가 로그에 안 남으면 '엉뚱한 표' 교란을 못 잡는다(교란 차단이 이 헤더의 목적이다).
+    _i0 = mode_table_info(specs[0][1]) or {}
+    _src_txt = " + ".join("%s[%s]" % (os.path.basename(t), ','.join(str(x) for x in m))
+                          for (_w, t, m) in specs)
     with open(out_path, 'w') as f:
         f.write("# combiner=combine_mode_tables.py\n")
-        f.write("# combined_modes=%d\n" % len(combined))
+        f.write("# source=combined: %s\n" % _src_txt)
+        f.write("# step=%s\n" % (_i0.get('step', 'Step-Buckle')))
+        f.write("# instance=%s\n" % (_i0.get('instance', 'MEMBRANE-1')))
+        f.write("# source_odb_1=%s\n" % (_i0.get('source', '?')))
+        f.write("# combined_modes=%d / each mode u3 = w * source u3\n" % len(combined))
         f.write("\n".join(prov) + "\n")
         f.write("# 주의: 각 모드 u3 = w * (소스 표의 정규화된 u3). HF 는 균일 진폭으로 더한다.\n")
         for m in sorted(combined):
