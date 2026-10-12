@@ -130,7 +130,7 @@ def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, ver
                 _has_base = False
         if _has_base:
             lam = [float('nan')] + list(lam)
-            _say("[MODES] 기저 프레임(frame 1, frameValue 0) 제외 — λ 목록을 한 칸 밀어 정렬")
+            _say("[MODES] 기저 프레임(frame 1, frameValue 0) 제외 - λ 목록을 한 칸 밀어 정렬")
 
         # --- 후보 프레임: 양수 λ 이고 ODB 프레임 범위 안 ---
         cand = [m for m, v in enumerate(lam) if v > 0.0 and m < len(frames)][:BUCKLE_SCAN_MAX]
@@ -256,7 +256,7 @@ def main(argv):
     _dat_auto = os.path.splitext(odb_path)[0] + '.dat'
     _dh = _dat_auto if os.path.exists(_dat_auto) else None
     print('[MODES] lambda 출처 = %s' % (os.path.basename(_dh) if _dh
-          else 'ODB frameValue(=모드 번호) — 동명 .dat 없음'))
+          else 'ODB frameValue(=모드 번호) - 동명 .dat 없음'))
     try:
         write_mode_table(odb_path, step_name, out_path, n_modes, inst_name, dat_hint=_dh)
     except ImportError:

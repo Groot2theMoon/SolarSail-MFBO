@@ -109,6 +109,16 @@ def main():
     ok6, why6, _ = A.seed_gate(0.5, 0.0556, old, sc)
     check('게이트 구버전표 차단', not ok6, why6)
 
+    print("--- 9) 자식 프로세스 인코딩 고정 (§19.68) ---")
+    try:
+        import make_seed as MS
+        _rc, out = MS.sh("python3 -c \"import os;print(os.environ.get('PYTHONIOENCODING'))\"")
+        check('자식 PYTHONIOENCODING=utf-8 전달', 'utf-8' in out, out.strip()[-60:])
+        _rc, out = MS.sh("python3 -c \"import sys;print(str(chr(8212)))\"")   # U+2014
+        check('자식이 em-dash 출력해도 정상 종료', _rc == 0 and '\u2014' in out, out.strip()[-60:])
+    except ImportError as e:
+        check('make_seed import', False, e)
+
     print("--- 8) combine_mode_tables.parse_spec (드라이브 콜론 회귀) ---")
     try:
         import combine_mode_tables as CMT

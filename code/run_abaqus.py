@@ -636,7 +636,7 @@ if IMPERFECTION_MODE == 'odb_table':
          % (sorted(_mode_table.keys()), _sinfo.get('seed', '?'), _sinfo.get('clamp', '?'),
             _sinfo.get('fingerprint', '?')))
     if not _gate_ok:
-        emit("!!! ERROR: 시드표 게이트 실패 — %s" % _gate_why)
+        emit("!!! ERROR: 시드표 게이트 실패 - %s" % _gate_why)
         emit("[ERROR-EN] seed table gate failed -> aborting BEFORE HF job submit.")
         emit("    재생성: python3 make_seed.py --x_c %g --d_c %g --force" % (x_c, d_c))
         try:
@@ -648,7 +648,7 @@ if IMPERFECTION_MODE == 'odb_table':
             pass
         sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(1)
-    emit("[SEED] 게이트 OK — 이 표는 이 설계점·이 buckle 소스와 일치한다")
+    emit("[SEED] 게이트 OK - 이 표는 이 설계점·이 buckle 소스와 일치한다")
 elif IMPERFECTION_MODE == 'odb_direct':
     # (2026-09-28, 사용자 제안) 모드표 txt 를 거치지 않고 ODB 에서 직접 모드를 읽는다.
     #   물리는 odb_table 과 완전히 같다(노드 좌표 섭동). 파일이 하나 줄 뿐이다.
@@ -1278,7 +1278,7 @@ if fidelity == 'LF':
     #   [§19.66] 같은 설계점의 LF 는 재사용한다(잡 재제출 ~3분 절약). 이름에 (x_c, d_c) 가
     #     들어가므로 다른 점의 산출물을 읽을 위험이 없다.
     if os.path.exists(LF_ODB):
-        emit("[LF] 재사용: %s (설계점 %s) — 잡 재제출 생략" % (LF_ODB, point_tag(x_c, d_c)))
+        emit("[LF] 재사용: %s (설계점 %s) - 잡 재제출 생략" % (LF_ODB, point_tag(x_c, d_c)))
     else:
         run_job_safely(LF_JOB)
 

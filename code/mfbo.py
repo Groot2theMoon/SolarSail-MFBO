@@ -46,6 +46,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 RUN_DIR_NAME = "aba"
 MOCK = False                     # True = Abaqus 없이 가짜 RESULTS 로 루프 점검
 _RUN = os.path.join(_HERE, RUN_DIR_NAME)
+#   [§19.68] 자식 stdout 을 파이프로 잡으므로 인코딩을 고정한다(cp949 에서 죽는 것을 막는다).
+_CHILD_ENV = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_HERE)      # 체크포인트 등 MFBO 자체 산출물은 code/ 에 고정
 
@@ -113,7 +115,7 @@ def get_abaqus(new_x, new_s):
         _lf_odb = os.path.join(_RUN, aba_imperfection.lf_odb_name(x1, x2))
         print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
         subprocess.run(f'abaqus cae noGUI="{_script}" -- LF {x1} {x2}',
-                       shell=True, check=False, capture_output=True, text=True, cwd=_RUN,
+                       shell=True, check=False, capture_output=True, text=True, cwd=_RUN, env=_CHILD_ENV,
                        )
         if not os.path.exists(_lf_odb):
             print("!!! HF prerequisite LF run produced no %s - aborting this HF point."
@@ -130,7 +132,7 @@ def get_abaqus(new_x, new_s):
             print(f"--- Building HF seed table [x_c={x1:.4f} d_c={x2:.4f}] ---")
             _sr = subprocess.run(f'python3 "{_seed_script}" --x_c {x1} --d_c {x2}',
                                  shell=True, check=False, capture_output=True, text=True,
-                                 cwd=_HERE)
+                                 cwd=_HERE, env=_CHILD_ENV)
             if not os.path.exists(_seed_tbl):
                 print("!!! HF seed table generation failed - aborting this HF point.")
                 print((_sr.stdout or "")[-800:])
@@ -146,7 +148,8 @@ def get_abaqus(new_x, new_s):
             capture_output=True, 
             text=True,
             cwd=_RUN,
-            # env 주입 없음: 값은 run_abaqus.py 안의 코드 상수로 고정되어 있다.
+            env=_CHILD_ENV,
+            # env: 인코딩 고정(PYTHONIOENCODING). 물리 상수는 run_abaqus.py 안의 코드 상수로 고정.
         )
         
         output_lines = result.stdout.splitlines()

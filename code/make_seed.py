@@ -15,7 +15,7 @@
 설계 결정 (code/notes/plan-hf-seed-pipeline-2026-10-12.md)
     Q1=a  클램프 당김을 HF 의 d_c 에 맞춘다 -> clamp_pull = disp × d_c
     Q2=a  지문 불일치는 HF 가 **제출 전 중단**한다(이 스크립트는 지문을 표 머리에 새긴다)
-    Q3=b  CASE 전환은 소스 패치 — run_abaqus_buckle.py 의 `CASE = '...'` 줄을 잠시 바꾸고
+    Q3=b  CASE 전환은 소스 패치 - run_abaqus_buckle.py 의 `CASE = '...'` 줄을 잠시 바꾸고
           **finally 에서 원문 바이트로 복원**한다(실패해도 남기지 않는다)
 """
 from __future__ import print_function
@@ -30,6 +30,15 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+#   [§19.68] Windows 콘솔/파이프 인코딩(cp949) 때문에 자식이 출력 중 죽는 것을 막는다.
+#     (실측: aba_mode_from_odb.py 가 파이프로 잡힌 stdout 에서 '—' 를 못 써 죽었다.)
+os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+os.environ.setdefault('PYTHONUTF8', '1')
+_CHILD_ENV = dict(os.environ, PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 sys.path.insert(0, HERE)
 import aba_imperfection as A                                                     # noqa: E402
 
@@ -46,7 +55,7 @@ def sh(cmd, dry=False, cwd=HERE):
     if dry:
         return 0, ''
     p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True,
-                       encoding='utf-8', errors='replace')
+                       encoding='utf-8', errors='replace', env=_CHILD_ENV)
     out = (p.stdout or '')
     #   `abaqus python` 런처는 스크립트가 예외로 죽어도 rc=0 을 돌려줄 때가 있다(실측) ->
     #   종료코드를 믿지 않고 **산출물로 검증**한다. 그래서 자식 출력 꼬리는 항상 보여준다.
@@ -107,7 +116,7 @@ class CasePatch(object):
         if n != 1:
             raise RuntimeError('CASE 줄을 찾지 못했습니다(1개여야 함): %d' % n)
         if new == txt:
-            print("  [patch] CASE 는 이미 '%s' — 패치 생략" % self.case)
+            print("  [patch] CASE 는 이미 '%s' - 패치 생략" % self.case)
             self.orig = None
         else:
             io.open(BUCKLE_SCRIPT, 'wb').write(new.encode('utf-8'))
@@ -121,7 +130,7 @@ class CasePatch(object):
         io.open(BUCKLE_SCRIPT, 'wb').write(self.orig)
         back = io.open(BUCKLE_SCRIPT, 'rb').read()
         if back != self.orig:
-            raise RuntimeError('CASE 복원 실패 — run_abaqus_buckle.py 를 수동 확인하세요')
+            raise RuntimeError('CASE 복원 실패 - run_abaqus_buckle.py 를 수동 확인하세요')
         print("  [patch] CASE 원문 복원 완료%s"
               % ('' if cur != self.orig else ' (변경 없음)'))
         return False
@@ -158,35 +167,43 @@ def main(argv=None):
 
     # ---- 1) seed 가족 (x_c 무관, 1회) ----
     if a.force or a.refresh_seed_family or not os.path.exists(seed_tbl):
-        print("\n[1/3] seed 가족 (꼭짓점 케이블만) — x_c 무관")
-        with CasePatch('seed', a.dry_run):
-            rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g 0' % (a.x_c, disp),
-                       a.dry_run, cwd=HERE)
-            if rc:
-                return rc
+        print("\n[1/3] seed 가족 (꼭짓점 케이블만) - x_c 무관")
         odb, _job = expected_odb(a.x_c, disp, 0.0, 'seed', a.excl)
+        if os.path.exists(odb) and not a.force:
+            print("      buckle 산출물 있음 - 잡 생략 (%s)" % os.path.basename(odb))
+        else:
+            with CasePatch('seed', a.dry_run):
+                rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g 0' % (a.x_c, disp),
+                           a.dry_run, cwd=HERE)
+                if rc:
+                    return rc
+            odb, _job = expected_odb(a.x_c, disp, 0.0, 'seed', a.excl)
         rc, _ = sh('abaqus python aba_mode_from_odb.py "%s" Step-Buckle "%s" %d'
                    % (odb, seed_tbl, BUCKLE_MODES), a.dry_run, cwd=HERE)
         if not a.dry_run:
             _need(seed_tbl, 'seed 가족 모드표')
     else:
-        print("\n[1/3] seed 가족 표 있음 — 건너뜀 (%s)" % os.path.basename(seed_tbl))
+        print("\n[1/3] seed 가족 표 있음 - 건너뜀 (%s)" % os.path.basename(seed_tbl))
 
     # ---- 2) clamp 가족 (x_c·d_c 의존) ----
-    print("\n[2/3] clamp 가족 (클램프 케이블만) — x_c·d_c 의존")
+    print("\n[2/3] clamp 가족 (클램프 케이블만) - x_c·d_c 의존")
     if a.force or not os.path.exists(clamp_tbl):
-        with CasePatch('clamp_only', a.dry_run):
-            rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g %g %g'
-                       % (a.x_c, disp, pull, a.excl), a.dry_run, cwd=HERE)
-            if rc:
-                return rc
         odb, _job = expected_odb(a.x_c, disp, a.d_c, 'clamp_only', a.excl)
+        if os.path.exists(odb) and not a.force:
+            print("      buckle 산출물 있음 - 잡 생략 (%s)" % os.path.basename(odb))
+        else:
+            with CasePatch('clamp_only', a.dry_run):
+                rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g %g %g'
+                           % (a.x_c, disp, pull, a.excl), a.dry_run, cwd=HERE)
+                if rc:
+                    return rc
+            odb, _job = expected_odb(a.x_c, disp, a.d_c, 'clamp_only', a.excl)
         rc, _ = sh('abaqus python aba_mode_from_odb.py "%s" Step-Buckle "%s" %d'
                    % (odb, clamp_tbl, CLAMP_MODES), a.dry_run, cwd=HERE)
         if not a.dry_run:
             _need(clamp_tbl, 'clamp 가족 모드표')
     else:
-        print("      clamp 표 있음 — 건너뜀 (%s)" % os.path.basename(clamp_tbl))
+        print("      clamp 표 있음 - 건너뜀 (%s)" % os.path.basename(clamp_tbl))
 
     # ---- 3) 합성 + 헤더 ----
     print("\n[3/3] 합성 2+2 + 설계점 헤더")
@@ -197,9 +214,9 @@ def main(argv=None):
         print("  [header] %s" % (A.seed_header_lines(
             a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_SCRIPT),
             seed_tbl, '1,2', clamp_tbl, '1,2')[1],))
-        print("\n[make_seed] dry-run 종료 — 파일을 만들지 않았다.")
+        print("\n[make_seed] dry-run 종료 - 파일을 만들지 않았다.")
         return 0
-    _rel = lambda p: os.path.relpath(p, HERE)          # '1.0:seeds/x.txt:1,2' — 드라이브 콜론 회피
+    _rel = lambda p: os.path.relpath(p, HERE)          # '1.0:seeds/x.txt:1,2' - 드라이브 콜론 회피
     rc, _ = sh('abaqus python combine_mode_tables.py "%s" 1.0:"%s":1,2 1.0:"%s":1,2'
                % (out_tbl, _rel(seed_tbl), _rel(clamp_tbl)), False, cwd=HERE)
     _need(out_tbl, '합성 시드표')
@@ -225,10 +242,10 @@ def main(argv=None):
     io.open(meta_p, 'w', encoding='utf-8').write(meta)
     print(meta)
     if not ok:
-        print("!!! 게이트 실패 — 표를 만들었지만 HF 가 중단한다: %s" % why)
+        print("!!! 게이트 실패 - 표를 만들었지만 HF 가 중단한다: %s" % why)
         return 1
     if nodes != [10201] or sorted(tbl.keys()) != [1, 2, 3, 4] or any(p != 1.0 for p in peaks):
-        print("!!! 검증 실패 — nodes=%s modes=%s peaks=%s" % (nodes, sorted(tbl.keys()), peaks))
+        print("!!! 검증 실패 - nodes=%s modes=%s peaks=%s" % (nodes, sorted(tbl.keys()), peaks))
         return 1
     print("[make_seed] OK — HF 가 %s 를 읽는다" % os.path.basename(out_tbl))
     return 0

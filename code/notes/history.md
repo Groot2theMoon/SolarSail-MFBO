@@ -3176,3 +3176,23 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   유닉스 절대) · `static_leak_check` 이상 없음 · 검사기 PASS. dry-run 표시도 상대경로 스펙으로 통일.
 [다음] 재실행하면 ①·② 는 캐시로 건너뛰고 ③(합성)만 다시 돈다 — `python make_seed.py --x_c 0.5 --d_c 0.5`
   (또는 `abaqus python make_seed.py --x_c 0.5 --d_c 0.5`; 둘 다 동작한다).
+
+#### §19.68 자식 stdout 을 파이프로 잡으면 cp949 에서 죽는다 (2026-10-12)
+
+[증상] 재실행에서 ①(seed 가족 모드표 추출)이 실패: 자식 출력 마지막 줄이
+  `[MODES] 'cp949' codec can't encode character '\u2014' in position 41`.
+  즉 `aba_mode_from_odb.py` 가 **'—'(U+2014)** 를 인쇄하려다 UnicodeEncodeError 로 죽었고, 표를
+  쓰기 전에 죽어 `seeds/modes_seed.txt` 가 만들어지지 않았다(→ 1차 실런의 진짜 원인도 이것이었다:
+  그때는 ①·② 가 조용히 실패하고 ③ 합성에서 FileNotFoundError 로 드러났다).
+[왜 §19.54 의 직접 실행은 멀쩡했나] 콘솔(tty)일 때는 Windows 가 유니코드로 출력하지만, make_seed 가
+  `capture_output=True` 로 **파이프**를 주면 Python 이 locale 인코딩(cp949)을 쓴다. cp949 에는 λ·√ 등은
+  있지만 **em-dash 는 없다** -> 그래서 파이프에서만 죽는다.
+[수정 3겹]
+  1. **자식 환경 고정**: `make_seed.sh()` 와 `mfbo.py` 의 subprocess 3곳에
+     `PYTHONIOENCODING=utf-8` + `PYTHONUTF8=1` 을 넘긴다(모든 자식에 적용 — 재발 차단의 본체).
+  2. **인쇄 문자열 ASCII 화**: `aba_mode_from_odb.py` 의 '—' 2곳, `run_abaqus.py` 의 새 메시지 3곳
+     (`[LF] 재사용`, `[SEED] 게이트 OK`, 시드 게이트 실패), `make_seed.py` 의 인쇄 10여 곳.
+  3. **make_seed 자체 stdout 도** `reconfigure(encoding='utf-8', errors='replace')`.
+[덤] `make_seed.py` 가 **buckle ODB 도 캐시**한다(있으면 잡 생략) — 표만 지우고 다시 돌릴 때 1~2분 절약.
+[검증] py_compile · `test_seed_path.py` **38/38 PASS**(§9 신규 2항목: 자식에 PYTHONIOENCODING 전달 ·
+  자식이 em-dash 를 출력해도 정상 종료) · `static_leak_check` 이상 없음 · 검사기 PASS · dry-run 확인.
