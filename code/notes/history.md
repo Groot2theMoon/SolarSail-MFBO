@@ -2771,3 +2771,22 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [다음] ② 미러체크 재실행(정규 기저 확인) -> ③ 합성기(`abaqus python combine_mode_tables.py ...`)
   -> ④ HF `odb_table` 주입. 미러체크는 **해석용**(축퇴 기저가 정규 대칭/반대칭인지)이고 합성을 막지는 않는다
   (축퇴 공간 안의 어떤 기저든 유효한 섭동이다 — 다만 문서·재현성 때문에 정규 기저로 확인해 두는 것이 옳다).
+
+#### §19.54 2+2 합성 **실행 성공** + 씨드 요약 리포트 추가 (2026-10-12)
+
+[실행] `abaqus python combine_mode_tables.py modes_2p2.txt 1.0:modes_seed.txt:1,2 1.0:modes_clamp.txt:1,2`
+  -> `[합성] 저장: ...modes_2p2.txt (모드 4개)` / `[검증] load_mode_table 재독 OK — 모드 [1,2,3,4] /
+  노드 10201개/모드 / 원본 대비 불일치 0건` ✓ (소스 헤더도 seed/clamp ODB 로 정확히 찍힘).
+  = 모드 1·2 = 꼭짓점(seed) 계열, 모드 3·4 = 클램프(clamp_only) 계열.
+
+[추가 — 씨드 요약 리포트] 40분 HF 를 쏘기 전에 씨드 자체를 확인할 수 있게 `combine_mode_tables.py` 가
+  합성장 통계를 찍는다(t = 5 µm, `*IMPERFECTION` 규약 u3_주입 = AMPL_T * t * u3_표):
+    `[요약] 합성장: 노드 N개 / 표 기준 max|Σ w·φ| = ... (노드 L)`
+    `       HF 진폭 0.10 t (=5 µm) 적용 시 주입 max|Δz| = ... µm ( … t)`
+    `       최대노드 기여: source1 ..% / source2 ..%`  <- 어느 가족이 씨드를 지배하는가
+    `       MODE k (source{s}, w=..): max|u3|=.. @node ..`
+  검증(라이선스 0, 합성표 2개): 기여 분해 합 100% / 모드별 max·노드 라벨 정확 / w 스케일 반영 ✓
+  (초기 구현에서 소스 인덱스가 -1 어긋나 `source0` 로 찍히던 것을 `enumerate(specs)` 로 정정.)
+
+[다음] ② 미러체크(수정본) 재실행 -> ④ HF `odb_table` 주입(`IMPERFECTION_MODE='odb_table'` +
+  `MODE_TABLE=..\modes_2p2.txt`, `IMPERFECTION_AMPL_T=0.10`, `RUN_MODE='write'` 확인 후 `'auto'`).
