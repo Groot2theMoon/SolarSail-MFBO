@@ -2701,3 +2701,43 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   하네스 `clamp_only`·`clamp_only_nodes`·`corner_live_cb` EXIT=0 / 배선: `BC_Clamp_CL` = u3 만(회전 자유),
   `BC_Right_Z` = `Set(RP_Right_Set)` ur*=SET(코너는 회전 고정 — 비대칭은 그대로 남아 있다).
   예상 잡 이름: `Buckle_xc050_d018um_dc000_f100_s4_grid_clamp_only_normal_ex210_plv01000` (71자).
+
+#### §19.52 **성공** — `clamp_only` 100/100 수렴 + 2+2 합성기 (`combine_mode_tables.py`) (2026-10-12)
+
+[결과] `Buckle_xc050_d018um_dc000_f100_s4_grid_clamp_only_normal_ex210_plv01000`
+  `job_completed_ok = True` / `NUMBER OF EIGENVALUES CONVERGED = 100` / `REQUESTED = 100` / ERROR 0.
+  `EIGENVALUE` 전부 **양수**: 1.09865e-04 (2회), 1.20477e-04 (2), 1.30986e-04 (2), 1.41511e-04 (2),
+  1.52159e-04 (2), 1.63022e-04 (2), ... = **6쌍 전부 2중 축퇴**(모델의 좌우 대칭).
+
+[판정 — 사용자 가설 **확증**] 차단 원인은 **꼭짓점 케이블과 클램프 하드웨어의 공존**이었다:
+  | 모델 | 꼭짓점 케이블 | 클램프 | 결과 |
+  |---|---|---|---|
+  | `seed` | ✓ | 없음 | ✓ 4모드 양수 (전역) |
+  | `corner_live_cb` | ✓ | 케이블 | ✗ 62 (CONVERGED=0) |
+  | `corner_live_rp` | ✓ | RP | ✗ 122 |
+  | **`clamp_only`** | **✗** | **케이블** | ✓ **100/100 양수** |
+  즉 **케이블 세트를 하나로 줄이면 수렴**한다 — '두 케이블 세트 동시 존재'가 원인. (사용자 제안 적중.)
+  참고: 클램프 계열 λ ≈ 1.1e-04 가 코너 계열(seed) 2.33e-04 보다 **작다** = 더 취약/선행 기구 ->
+  "주름이 클램프 기인"(54배 규명)과 정성적으로 일치. (단 두 λ 는 live 하중·base 가 달라 수치 비교는 부적절.)
+
+[함정 — 쌍 축퇴] λ 가 2개씩 같으므로 그 2차원 공간의 **기저 선택이 임의**다(Abaqus 가 정한다).
+  M1/M2 를 그대로 합성하면 재현성이 깨질 수 있다 -> `buckle_mirror_check.py` 로 **대칭/반대칭 정규 기저**로
+  회전해 두고 쓰는 것이 옳다(유효성엔 무해, 문서화·재현성 문제).
+
+[합성기 구현] `code/combine_mode_tables.py` (표준 라이브러리 only).
+  - 근거: HF 는 모드표 **하나**만 읽고 `aba_imperfection.build_perturbation` 이
+    `{label: Δz} = Σ_modes amplitude * φ(label)` 로 **균일 진폭 합산**(재정규화 없음)
+    -> 가족별 가중치 ω 는 **표에 구워 넣어야** 한다.
+  - 입력 `w:table:modes` (여러 개) -> 모드 1..N 재번호 + 각 u3 를 w 로 스케일 + 출처 헤더 유지.
+  - 검증(라이선스 0, 합성 모드표 2개로): 합성 후 **실제 HF 로더**(`aba_imperfection.load_mode_table`)로
+    재독해 값 불일치 **0건** / w=0.5·2.0 스케일 확인 / `IMPERFECTION_MAX_MODES=4` 초과 경고 동작.
+  - 사용: `python3 combine_mode_tables.py modes_2p2.txt 1.0:modes_seed.txt:1,2 1.0:modes_clamp.txt:1,2`
+
+[주입 레시피 — HF 는 'odb_table' 경로]
+  1. `abaqus python aba_mode_from_odb.py buckle\<seed odb> Step-Buckle modes_seed.txt 4`   (라이선스 0)
+     `abaqus python aba_mode_from_odb.py buckle\<clamp_only odb> Step-Buckle modes_clamp.txt 4`
+  2. (권장) `abaqus cae noGUI=buckle_mirror_check.py -- buckle/<job> Step-Buckle` 로 축퇴 기저 정규화
+  3. `python3 combine_mode_tables.py modes_2p2.txt 1.0:modes_seed.txt:1,2 1.0:modes_clamp.txt:1,2`
+  4. HF: `IMPERFECTION_MODE='odb_table'` + `MODE_TABLE = os.path.join('..','modes_2p2.txt')` 로 두 줄 수정
+     -> `RUN_MODE='write'` 로 `[IMPERFECTION] 모드표 ... / 주입=기하 섭동` 확인 -> `'auto'` 제출.
+     진폭 `IMPERFECTION_AMPL_T=0.10`(논문값) 권장 — 현행 1.0 은 이전 HF `DISP. CORRECTION TOO LARGE` 이력.
