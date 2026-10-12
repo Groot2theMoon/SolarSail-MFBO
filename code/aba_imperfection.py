@@ -439,6 +439,21 @@ def buckle_fingerprint(script_path, keys=BUCKLE_FINGERPRINT_KEYS):
     return model_fingerprint(script_path, keys)[0]
 
 
+def point_tag(x_c, d_c):
+    """설계점 태그 — 산출물 이름에 넣어 짝 어긋남(mispairing)을 구조적으로 막는다."""
+    return '_xc%03d_dc%03d' % (int(round(float(x_c) * 100.0)), int(round(float(d_c) * 100.0)))
+
+
+def lf_odb_name(x_c, d_c):
+    """설계점별 LF ODB 파일명. 고정 'LF_Analysis.odb' 를 대체한다(§19.66)."""
+    return 'LF_Analysis%s.odb' % point_tag(x_c, d_c)
+
+
+def lf_job_name(x_c, d_c):
+    """설계점별 LF 잡 이름(run_job_safely 에 넘긴다)."""
+    return 'LF_Analysis%s' % point_tag(x_c, d_c)
+
+
 def file_token(path):
     """파일 내용 sha1 앞 16자. 없으면 None."""
     try:

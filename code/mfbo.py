@@ -22,6 +22,7 @@ Solar-Sail의 형상 변수(x1, x2)를 최적화하여 추력 성능 저하를 �
 
 import subprocess
 import os
+import aba_imperfection   # §19.66: 설계점별 LF ODB 이름 규약
 import torch 
 import warnings
 from scipy.stats import qmc
@@ -107,20 +108,16 @@ def get_abaqus(new_x, new_s):
     #        eval_abaqus.py 의 get_lf(args[-3]) 가 실패한다 -> 먼저 LF 해석을 수행해 둔다.
     #        (stale 산출물 오염 방지를 위해 기존 파일 삭제 후 실행)
     if mode_str == "HF":
-        _lf_odb = os.path.join(_RUN, "LF_Analysis.odb")
-        for _ext in (".odb", ".lck", ".msg", ".sta", ".dat", ".fil", ".prt"):
-            _p = os.path.join(_RUN, "LF_Analysis" + _ext)
-            if os.path.exists(_p):
-                try:
-                    os.remove(_p)
-                except OSError:
-                    pass
+        #   [2026-10-12 §19.66] LF 산출물은 설계점별 이름이다(LF_Analysis_xc###_dc###.odb).
+        #     삭제하지 않는다 — run_abaqus.py 의 LF 브랜치가 같은 점이면 스스로 재사용한다.
+        _lf_odb = os.path.join(_RUN, aba_imperfection.lf_odb_name(x1, x2))
         print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
         subprocess.run(f'abaqus cae noGUI="{_script}" -- LF {x1} {x2}',
                        shell=True, check=False, capture_output=True, text=True, cwd=_RUN,
                        )
         if not os.path.exists(_lf_odb):
-            print("!!! HF prerequisite LF run produced no LF_Analysis.odb - aborting this HF point.")
+            print("!!! HF prerequisite LF run produced no %s - aborting this HF point."
+                  % os.path.basename(_lf_odb))
             return FAIL, FAIL
 
         #   [2026-10-12 계획 T8] HF 임퍼펙션 시드는 설계점 (x_c, d_c) 마다 달라진다.

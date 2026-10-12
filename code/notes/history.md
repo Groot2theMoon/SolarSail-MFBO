@@ -3135,3 +3135,25 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [다음 — 사용자 런] `python3 make_seed.py --x_c 0.5 --d_c 1.0` (HF 에 실제로 넘기는 d_c 와 같은 값:
   §19.55 로그 기준 `d_c=1`). 표가 없으므로 지금 HF 는 게이트에서 중단된다(의도). 생성 후
   `abaqus cae noGUI=".../run_abaqus.py" -- HF 0.5 1.0` 는 종전과 동일하게 동작한다.
+
+#### §19.66 LF 산출물 설계점별 이름 + 재사용 (§19.65 후속) (2026-10-12)
+
+[문제] LF ODB 이름이 **고정**(`LF_Analysis.odb`)이라 (a) 이전 설계점의 LF 가 이번 점의 지표로
+  둔갑할 수 있었고(mfbo 가 매번 삭제 후 재실행해 막고 있었다), (b) 같은 설계점을 다시 평가할 때도
+  LF 잡(약 3분)을 다시 돌려야 했다.
+[변경]
+  - `aba_imperfection.py`: `point_tag(x_c, d_c)` = `_xc<NNN>_dc<NNN>`, `lf_odb_name()`, `lf_job_name()`
+    (stdlib — HF 와 mfbo 가 **같은 규약**을 쓴다).
+  - `run_abaqus.py`: `LF_ODB = lf_odb_name(x_c, d_c)`(설계점별) + `LF_JOB` 신설. LF 브랜치는
+    **이미 있으면 재사용**(로그 `[LF] 재사용: ... — 잡 재제출 생략`). HF 브랜치는 **짝 LF 가 없으면
+    잡 제출 전에 중단**(41분 낭비 방지 + 재실행 명령 안내). `HF_ODB` 는 고정 유지 — 즉시 eval 로
+    소비되고 남는 것은 수치인데, 점마다 새 이름을 주면 수 GB 가 쌓인다.
+  - `mfbo.py`: LF 산출물 삭제 블록 제거(재사용), 존재 확인은 `lf_odb_name(x1, x2)` 로.
+[검증] py_compile · `test_seed_path.py` **33/33 PASS**(설계점 태그 7항목 추가 — 태그 형식 · LF ODB/잡
+  이름 · x_c/d_c 구분 · 구 고정명과 충돌 없음) · `static_leak_check` 이상 없음 · 검사기 PASS
+  (HF↔buckle 30 / HF↔모드소스 27).
+[정정] §19.65 흐름도에 "② 선행 LF" 의 사유를 적지 않았고, 처음엔 HF 브랜치가 스스로 LF 를 돌린다고
+  오독했다. 실측: `run_job_safely('LF_Analysis')` 는 `elif fidelity == 'LF'` 브랜치에만 있다 ->
+  HF 는 LF ODB 를 **읽기만** 한다(eval_abaqus.py:1478 의 `get_lf(args[-3])`). 그래서 mfbo 의 선행
+  LF 는 필수다(짝 지표를 함께 얻는 이득도 있다 — HF 1회가 데이터 2행).
+[남은 것] 사용자 머신의 옛 `code/aba/LF_Analysis.odb` 는 이제 참조되지 않는다(삭제 가능).

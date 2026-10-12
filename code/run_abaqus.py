@@ -108,6 +108,7 @@ from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: 
                               imperfection_text, report, load_mode_table,
                               build_perturbation, perturbation_report, mode_table_info,
                               verify_inp_element_types,
+                              point_tag, lf_odb_name, lf_job_name,
                               seed_table_path, seed_gate, BUCKLE_SCRIPT_NAME,
                               SEED_DIR_NAME, job_completed_from_logs)
 # aba_grid_mesh: boundary_node_labels / clamp_exclude_labels / make_set (면외 z 구속 노드셋). §9
@@ -1183,7 +1184,12 @@ my_model.DisplacementBC(
 )
 
 BUCKLE_ODB = 'Buckle_Analysis.odb'
-LF_ODB = 'LF_Analysis.odb'
+#   [2026-10-12 §19.66] LF ODB 는 **설계점별 이름**이다(LF_Analysis_xc<NNN>_dc<NNN>.odb).
+#     고정 이름은 이전 설계점의 LF 가 이번 점의 지표로 둔갑할 수 있었다(짝 오염).
+#     HF ODB 는 고정 이름을 유지한다 — 즉시 eval 로 소비되고 남는 것은 수치이며, 점마다
+#     새 이름을 주면 수 GB 가 쌓인다.
+LF_ODB = lf_odb_name(x_c, d_c)
+LF_JOB = lf_job_name(x_c, d_c)
 HF_ODB = 'HF_Postbuckle.odb'
 
 cmd = ""
@@ -1269,11 +1275,25 @@ if fidelity == 'LF':
         frequency=10   # R-10: odb 크기 절감
     )
 
-    run_job_safely('LF_Analysis')
+    #   [§19.66] 같은 설계점의 LF 는 재사용한다(잡 재제출 ~3분 절약). 이름에 (x_c, d_c) 가
+    #     들어가므로 다른 점의 산출물을 읽을 위험이 없다.
+    if os.path.exists(LF_ODB):
+        emit("[LF] 재사용: %s (설계점 %s) — 잡 재제출 생략" % (LF_ODB, point_tag(x_c, d_c)))
+    else:
+        run_job_safely(LF_JOB)
 
     cmd = 'abaqus python "%s" %s LF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB)
 
 elif fidelity == 'HF':
+
+    #   [§19.66] HF 는 같은 설계점의 LF 지표를 함께 낸다(eval_abaqus.py <LF.odb> <HF.odb> HF).
+    #     짝이 없으면 HF 잡(약 41분)을 **제출하기 전에** 멈춘다.
+    if not os.path.exists(LF_ODB):
+        emit("!!! ERROR: 짝지을 LF 산출물이 없습니다 -> %s" % LF_ODB)
+        emit("[ERROR-EN] paired LF odb missing -> aborting BEFORE HF job submit.")
+        emit("    먼저: abaqus cae noGUI=run_abaqus.py -- LF %g %g" % (x_c, d_c))
+        sys.stdout.flush()
+        sys.exit(1)
 
     # 좌굴모드와 포스트버클 해석이 '같은 초기응력 상태'에서 계산되도록
     # 초기응력 재생성(500 -> 100 Pa)을 좌굴 잡 제출 '앞'으로 이동.

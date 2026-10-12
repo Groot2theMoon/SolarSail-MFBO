@@ -109,6 +109,17 @@ def main():
     ok6, why6, _ = A.seed_gate(0.5, 0.0556, old, sc)
     check('게이트 구버전표 차단', not ok6, why6)
 
+    print("--- 7) 설계점 태그 · LF 산출물 이름 (§19.66) ---")
+    check("point_tag(0.5, 0.5)", A.point_tag(0.5, 0.5) == '_xc050_dc050', A.point_tag(0.5, 0.5))
+    check("point_tag(0.25, 0.0556)", A.point_tag(0.25, 0.0556) == '_xc025_dc006', A.point_tag(0.25, 0.0556))
+    check("lf_odb_name(0.5, 0.5)", A.lf_odb_name(0.5, 0.5) == 'LF_Analysis_xc050_dc050.odb',
+          A.lf_odb_name(0.5, 0.5))
+    check("lf_job_name(0.5, 0.5)", A.lf_job_name(0.5, 0.5) == 'LF_Analysis_xc050_dc050',
+          A.lf_job_name(0.5, 0.5))
+    check("LF 이름 x_c 로 구분", A.lf_odb_name(0.5, 0.5) != A.lf_odb_name(0.6, 0.5))
+    check("LF 이름 d_c 로 구분", A.lf_odb_name(0.5, 0.5) != A.lf_odb_name(0.5, 0.6))
+    check("구 고정명과 충돌 없음", A.lf_odb_name(0.5, 0.5) != 'LF_Analysis.odb')
+
     print("--- 6) run_abaqus.py 의 aba_imperfection import 이름 실재성 ---")
     here = os.path.dirname(os.path.abspath(__file__))
     raw = io.open(os.path.join(here, 'run_abaqus.py'), encoding='utf-8').read()
