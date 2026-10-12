@@ -3081,3 +3081,28 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   10 으로는 실패할 수 있다. **사용자 결정 대기.**
   물리 메모: 창은 base 종속이라(§2 규칙 '요청 > 음수 개수') 한 값으로 묶는 계약 자체가 부정확하다.
   성공한 `clamp_only` 런은 요청 100 이 **전부 양수**였다 → 그 base 의 음수는 창 안에 없다 → 10 도 성립 예상.
+
+#### §19.64 검사기 buckle↔mode 비교 **은퇴** (사용자 결정 (C)안) (2026-10-12)
+
+[배경·실측] "MFBO 로 넘어가면 검사기 안 쓰이는데 buckle 에서 연동 구현을 빼도 되나" ->
+  `run_abaqus_buckle.py` 에는 **검사기 호출이 0건**(import·subprocess 없음). 연동 방향이 반대다 —
+  **검사기가 buckle 소스를 텍스트로 읽어** 비교한다. 그래서 buckle 에서 상수를 지우면 '연동 해제'가
+  아니라 검사기가 깨진다(실증: 어제의 10/25 변경 → 위반 2 = 그 RED). 런타임 가드
+  `_require_constant` 2콜은 검사기 연동이 아니라 자체 안전장치다 → 유지.
+
+[변경] `check_model_consistency.py`:
+  - `SHARED_BUCKLE_MODE` 13항목 + 비교 루프 + PATTERN_SIGN 사용검사 삭제(2,577자) → '은퇴' 안내로 대체.
+  - 죽은 케이스 분기(paper_s1 / clamp_lf) 제거, 낡은 `DEAD_FRAC`/`CORNER_F0` 출력 정정.
+  - RESULT 줄에서 buckle↔모드소스 카운터 제거 → `PASS — HF↔buckle 30 / HF↔모드소스 27 … (은퇴)`.
+  `run_abaqus_buckle.py`: 검사기 언급 3줄 정합(docstring / `CLAMP_CABLE_LEN`=HF↔buckle 계약 /
+  `CLAMP_EXCL_R`=check_clamp_edge_overlap).
+
+[검증] py_compile(경고 0) / static_leak_check 이상 없음 / **검사기 PASS·EXIT=0(RED 해소)** /
+  하네스 `seed`·`clamp_only` EXIT=0.
+
+[정정 — 시드는 x_c 무관 (사용자 지적이 맞다)] `seed`(꼭짓점 케이블만, `HAS_CLAMPS=False`)에는 클램프
+  부품(패치/RP/케이블/제외집합)이 아예 없어 **x_c 에 의존하지 않는다** → 한 번 만든 ODB/모드표를
+  계속 재사용하면 된다. x_c 에 따라 바뀌는 것은 **클램프 가족(`clamp_only`) 모드**뿐이다 →
+  MFBO 가 x_c 를 스윕하면 그 2모드는 x_c 마다 재추출하는 것이 옳다(런 ~40초, 저렴). 고정 재사용하면
+  임퍼펙션의 국소 패턴이 실제 클램프 위치와 어긋나 특정 후좌굴 경로를 인위적으로 유리/불리하게 만든다.
+  남은 파이프라인 항목: HF 의 `MODE_TABLE` 이 상수라 x_c 별 모드표를 넘기려면 env/인자 통로가 필요.
