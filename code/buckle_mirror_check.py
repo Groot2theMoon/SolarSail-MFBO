@@ -18,6 +18,8 @@ buckle_mirror_check.py — 좌굴 ODB의 미러(x -> 20-x) 대칭 진단.
 사용법 (Abaqus 머신, code 디렉터리, job = cwd 상대 경로·확장자 없이)
     abaqus cae noGUI=buckle_mirror_check.py -- <job> [step]
     예) abaqus cae noGUI=buckle_mirror_check.py -- buckle/Buckle_xc020_d018um_dc006_f020_s4_grid_clamp_lf_normal_ex210 Step-Buckle
+    ⚠️ [§19.53] CAE 커널은 argv 앞에 exe 경로를 넣는다 -> 인자는 **꼬리 기준**으로 읽는다
+       (앞에서 a[0] 을 쓰던 구현이 `ABQcaeK.exe.odb` 로 죽었다).
     ⚠️ buckle 산출물은 RUN_DIR_NAME='buckle' 아래에 쌓이므로 buckle/ 접두사가 필요하다
        (openOdb(job + '.odb') 를 cwd 상대경로로 연다 — 접두사가 없으면 FileNotFound 로 죽는다).
 
@@ -33,13 +35,28 @@ AXIS = 10.0     # 미러축 x=10 (BASE=20 의 중앙)
 TOL = 1e-6
 
 
-def _args():
-    out = []
-    for t in list(sys.argv):
-        if t.lower().endswith('.py'):
-            continue
-        out.append(t)
-    return out
+def _is_kernel_token(t):
+    """Abaqus CAE 커널이 argv 앞에 끼워 넣는 토큰인가."""
+    tl = t.lower()
+    return (tl.endswith('.py') or tl.endswith('.exe') or 'nogui=' in tl)
+
+
+def _args(argv=None):
+    """CLI 인자를 꼬리 기준으로 뽑는다 -> (job, step).
+
+    ⚠️ [2026-10-12 §19.53] `abaqus cae noGUI=script.py -- <job> <step>` 로 부르면 sys.argv 앞쪽에
+    **커널 실행파일 경로**(.../ABQcaeK.exe)와 `noGUI=...py` 가 들어온다. 예전 구현은 앞에서부터
+    a[0] 을 job 으로 써서 exe 경로를 열려다 `OdbError: ...ABQcaeK.exe.odb` 로 죽었다.
+    (반면 `abaqus python script.py ...` 는 argv[0]='script.py' 라 무사하다 — 두 호출 방식이 다르다.)
+    -> 커널 토큰을 걸러내고 **꼬리에서** 읽는다(run_abaqus_buckle.py 의 sys.argv[-3:] 관례와 동일).
+    """
+    a = [t for t in list(sys.argv if argv is None else argv)
+         if t not in ('--',) and not _is_kernel_token(t)]
+    if not a:
+        return None, None
+    if len(a) >= 2 and a[-1].lower().startswith('step'):
+        return a[-2], a[-1]
+    return a[-1], 'Step-Buckle'
 
 
 def collect(fr):
@@ -88,12 +105,10 @@ def resid(vals, pairs):
 
 
 def main():
-    a = _args()
-    if not a:
+    job, step = _args()
+    if job is None:
         print('usage: abaqus cae noGUI=buckle_mirror_check.py -- <job> [step]')
         return 1
-    job = a[0]
-    step = a[1] if len(a) > 1 else 'Step-Buckle'
     odb = openOdb(job + '.odb', readOnly=True)
     inst = odb.rootAssembly.instances[INST]
     pairs = mirror_pairs(inst)

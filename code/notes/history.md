@@ -2741,3 +2741,33 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   4. HF: `IMPERFECTION_MODE='odb_table'` + `MODE_TABLE = os.path.join('..','modes_2p2.txt')` 로 두 줄 수정
      -> `RUN_MODE='write'` 로 `[IMPERFECTION] 모드표 ... / 주입=기하 섭동` 확인 -> `'auto'` 제출.
      진폭 `IMPERFECTION_AMPL_T=0.10`(논문값) 권장 — 현행 1.0 은 이전 HF `DISP. CORRECTION TOO LARGE` 이력.
+
+#### §19.53 모드표 2개 생성 성공 + `buckle_mirror_check` 인자 파싱 버그 (2026-10-12)
+
+[모드표 — 성공]
+  - `modes_seed.txt` : 4모드 / 10201 노드 / λ = 2.328470e-04, 2.647060e-04, 4.341920e-04, 4.494520e-04
+    (프레임 2~5, 기저 프레임 1 제외 — 앞 4개 값이 §19.38 의 보고서와 일치 ✓)
+  - `modes_clamp.txt`: 4모드 / 10201 노드 / λ = 1.098650e-04, 1.098650e-04, 1.204770e-04, 1.204770e-04
+    = **쌍 축퇴 확인**(2중) ✓
+
+[증상] `abaqus cae noGUI=buckle_mirror_check.py -- buckle/<job> Step-Buckle`
+  -> `OdbError: Cannot open file C:/Program Files/SIMULIA/.../ABQcaeK.exe.odb` (job 이 exe 경로로 잡힘).
+
+[원인] `_args()` 가 '`.py` 로 끝나는 토큰'만 걸러 **앞에서부터** `a[0]` 을 job 으로 썼다. 그런데 CAE 커널의
+  `sys.argv` **앞쪽**에는 커널 실행파일(`...ABQcaeK.exe`)과 `noGUI=...py` 가 들어 있다 -> exe 경로가 job 이 됐다.
+  `abaqus python` 으로 부르는 `aba_mode_from_odb.py` 는 argv[0]='script.py' 라 무사했다 —
+  **두 호출 방식이 다르다**는 점이 함정이었다(그래서 모드표는 성공, 미러체크만 실패).
+
+[수정] 커널 토큰(`*.py` / `*.exe` / `noGUI=...`)을 걸러내고 **꼬리 기준**으로 읽는다(프로젝트 관례 =
+  `run_abaqus_buckle.py` 의 `sys.argv[-3:]`). 마지막 토큰이 `Step...` 이면 step, 그 앞이 job.
+  `_args(argv=None)` 로 분리해 단위 검증 가능하게 했다.
+
+[검증 (라이선스 0)] 실제 함수 소스를 AST 로 떼어 가짜 argv 4종으로 실행 — 4/4 통과:
+  ① `[exe, noGUI=....py, --, buckle/J, Step-Buckle]` -> (`buckle/J`, `Step-Buckle`)
+  ② `[exe, noGUI=....py, --, buckle/J]`               -> (`buckle/J`, `Step-Buckle`)(기본 step)
+  ③ `['abaqus','python','x.py','buckle/J']`           -> (`buckle/J`, `Step-Buckle`)
+  ④ `['buckle_mirror_check.py','buckle/J','Step-Buckle']` -> 동일
+
+[다음] ② 미러체크 재실행(정규 기저 확인) -> ③ 합성기(`abaqus python combine_mode_tables.py ...`)
+  -> ④ HF `odb_table` 주입. 미러체크는 **해석용**(축퇴 기저가 정규 대칭/반대칭인지)이고 합성을 막지는 않는다
+  (축퇴 공간 안의 어떤 기저든 유효한 섭동이다 — 다만 문서·재현성 때문에 정규 기저로 확인해 두는 것이 옳다).
