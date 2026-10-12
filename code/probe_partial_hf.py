@@ -65,8 +65,12 @@ def main(argv):
                     mx[k], arg[k] = v.data[k], v.nodeLabel
         print("  U: max|U1|=%.4e (node %d) / max|U2|=%.4e (node %d) / max|U3|=%.4e (node %d)"
               % (abs(mx[0]), arg[0], abs(mx[1]), arg[1], abs(mx[2]), arg[2]))
-        print("     (max|U3| = 주름 진폭 u_z,max — 두께 5e-06 m 대비 %.1f t)"
-              % (abs(mx[2]) / 5.0e-6))
+        uz = [v.data[2] for v in U]
+        print("     (max|U3| = u_z,max — 두께 5e-06 m 대비 %.1f t)" % (abs(mx[2]) / 5.0e-6))
+        #   논문 대조는 u_z,ave = (|max|+|min|)/2 다(mean|u3| 아님) — 54배 규명의 결론.
+        u_ave = (abs(max(uz)) + abs(min(uz))) / 2.0
+        print("  u_z,max=%.4e  u_z,min=%.4e  u_z,ave=(|max|+|min|)/2=%.4e m = %.1f t"
+              % (max(uz), min(uz), u_ave, u_ave / 5.0e-6))
     if last_step.frames and 'RF' in last_step.frames[-1].fieldOutputs.keys():
         rf = last_step.frames[-1].fieldOutputs['RF'].values
         s = [0.0, 0.0, 0.0]
@@ -93,9 +97,14 @@ def main(argv):
             ns = odb.rootAssembly.nodeSets[k] if owner == 'assembly' else inst.nodeSets[k]
             vals = last_step.frames[-1].fieldOutputs['U'].getSubset(region=ns).values
             if vals:
-                v0 = vals[0]
-                print("    %-28s node %-6d U=(%.4e, %.4e, %.4e)"
-                      % (k, v0.nodeLabel, v0.data[0], v0.data[1], v0.data[2]))
+                #   세트 전체 요약(첫 노드만 찍으면 짝을 오해한다 — CL/CR 을 거울로 보게 됨).
+                u1 = [v.data[0] for v in vals]
+                u2 = [v.data[1] for v in vals]
+                u3 = [v.data[2] for v in vals]
+                print("    %-28s n=%-3d |U|=%.4e  U=(-%.3e..%.3e, %.3e..%.3e, %.3e..%.3e)"
+                      % (k, len(vals),
+                         max((a * a + b * b + c * c) ** 0.5 for a, b, c in zip(u1, u2, u3)),
+                         abs(min(u1)), max(u1), min(u2), max(u2), min(u3), max(u3)))
         except Exception as e:
             print("    %-28s (읽기 실패: %s)" % (k, e))
     odb.close()
