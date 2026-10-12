@@ -3269,3 +3269,23 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   실측 통과**. 남은 실측은 HF 런 1회(`[SEED] 게이트 OK` + 주입 로그)와 MFBO 루프뿐이다.
 [커밋] `code/seeds/*.txt` + `*.meta.txt` 를 커밋한다(seeds/README.md 정책). clamp 가족 표는
   시드 당김이 고정이라 **x_c 에만 의존** → 다른 d_c 에서도 재사용된다.
+
+#### §19.74 선행 LF 잡 제거 — LF 지표는 HF ODB 에서 공짜로 (§19.66 가드 철회) (2026-10-12)
+
+[사용자 지적] "같은 설계점의 LF 지표를 왜 내야 하나? HF 중간의 ClampTension/HighTension 단계로
+  eval_abaqus.py 를 돌리면 HF 를 돌리면서 LF 결과물을 공짜로 얻는다 — LF ODB 를 만들 필요 없다."
+[실측 판정: **지적이 맞다**]
+  - `eval_abaqus.get_lf(path)` 는 `odb.steps['Step-HighTension'].frames[-1]` 만 읽는다(스텝명 하드코딩).
+  - `run_abaqus.py:1247` 이 HF 브랜치에서 `StaticStep(name='Step-HighTension',
+    previous='Step-ClampTension')` 를 **만들고**, BC 도 그 스텝으로 `setValuesInStep`(L1256/1262/1268).
+    => HF ODB 안에 그 상태가 그대로 있다 -> 별도 LF 런 없이 lf1~lf3 을 얻는다.
+  - 따라서 §19.66 에서 내가 넣은 "짝 LF ODB 가 없으면 제출 전 중단" 가드는 **과했다(철회)**.
+[변경]
+  - `run_abaqus.py`: 가드 제거, eval 호출을 `eval_abaqus.py <HF.odb> <HF.odb> HF` 로.
+    LF 브랜치(`-- LF`, s=0 탐색용)는 그대로 유지한다.
+  - `mfbo.py`: HF 분기의 **선행 LF 런 삭제**(점당 ~3분 절약, 산출물도 하나 줄어듦).
+[검증] py_compile · `test_seed_path.py` 40/40 · `static_leak_check` 이상 없음 · 검사기 PASS.
+  실측 확정은 다음 HF 런: `RESULTS:lf1,lf2,lf3,hf` 가 그대로 나오면 완료(안 나오면 HF ODB 의
+  Step-HighTension 에 EVOL/S 프레임이 없거나, get_lf 의 'EVOL field not found' 가 찍힌다).
+[주의] HF ODB 는 **임퍼펙션이 들어간 모델**이라 LF-only 런(무결함, s=0)과 lf 값이 미세하게 다를 수
+  있다. 1회 비교해 크기를 보라(예상은 작음 — LF/HF 잡음 가정이 1e-6/1e-3 급).

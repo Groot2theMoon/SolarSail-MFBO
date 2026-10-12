@@ -1286,14 +1286,10 @@ if fidelity == 'LF':
 
 elif fidelity == 'HF':
 
-    #   [§19.66] HF 는 같은 설계점의 LF 지표를 함께 낸다(eval_abaqus.py <LF.odb> <HF.odb> HF).
-    #     짝이 없으면 HF 잡(약 41분)을 **제출하기 전에** 멈춘다.
-    if not os.path.exists(LF_ODB):
-        emit("!!! ERROR: 짝지을 LF 산출물이 없습니다 -> %s" % LF_ODB)
-        emit("[ERROR-EN] paired LF odb missing -> aborting BEFORE HF job submit.")
-        emit("    먼저: abaqus cae noGUI=run_abaqus.py -- LF %g %g" % (x_c, d_c))
-        sys.stdout.flush()
-        sys.exit(1)
+    #   [§19.74] 별도 LF 잡이 필요 없다: LF 지표(lf1~lf3)는 **HF ODB 자신**의
+    #     `Step-HighTension` 마지막 프레임에서 나온다(eval_abaqus.get_lf 가 그 스텝을 읽는다).
+    #     HF 체인 = GlobalTension -> ClampTension -> HighTension -> Postbuckle 이므로
+    #     HC 를 돌리면 그 상태를 이미 지나간다 — 사용자 설계 의도대로 '공짜'로 얻는다.
 
     # 좌굴모드와 포스트버클 해석이 '같은 초기응력 상태'에서 계산되도록
     # 초기응력 재생성(500 -> 100 Pa)을 좌굴 잡 제출 '앞'으로 이동.
@@ -1495,7 +1491,8 @@ elif fidelity == 'HF':
     run_job_safely('HF_Postbuckle')
 
 
-    cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)   # P0-C: 짝지은 LF odb
+    #   [§19.74] LF 인자로 **HF ODB 자신**을 넘긴다(get_lf 는 Step-HighTension 프레임만 본다).
+    cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), HF_ODB, HF_ODB)
 
 try:
     # shell=True로 eval_abaqus.py 실행
