@@ -2826,3 +2826,33 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 
 [다음] `RUN_MODE='auto'` 로 재실행 -> 덱 재생성 + riks 패처(`--line-search --ran=2e-2 --can=1e-2 --i0=8
   --ir=10`) + 제출(약 40분). 판정: 이전 `DISP. CORRECTION TOO LARGE` 가 **완주**로 바뀌는가.
+
+#### §19.56 run_abaqus.py 실독 — 현행 포스트버클링 절차와 발견 3건 (2026-10-12, 사용자 요청)
+
+[절차 요약] 코너 3 + 클램프 2 케이블 모델 → 코너 당김 `DISP_GLOBAL=165 µm` 로 base → **모드표 기반 기하
+  임퍼펙션(2+2)** 주입 → **안정화 정적**(`*Static, stabilize=0.003`, DISSIPATED_ENERGY_FRACTION,
+  adaptiveDampingRatio=0.05, continueDampingFactors=False, initialInc=1e-4/minInc=1e-8/maxInc=0.1/
+  maxNumInc=10000) + **패처가 넣는 `*Controls`**(line-search, Rαn=2e-2, Cαn=1e-2, i0=8, ir=10) 로
+  코너 `GLOBAL_FINAL=1 mm` + 클램프 `CLAMP_FINAL=GLOBAL_FINAL·d_c`(=1 mm @d_c=1) 까지 밀어 주름 발달.
+  HF 경로에서 `Step-ClampTension`·`Step-Buckle` 은 **삭제**되므로 실제 덱 스텝 = `Step-GlobalTension`
+  + `Step-Postbuckle` 2개.
+
+[발견 1 — `PRETENSION_SCALE` 은 모델에 들어가지 않는다]
+  전수 grep 결과 `PRETENSION_SCALE` 은 **로그 출력(L270-271)과 상수/주석(L728-729)에만** 등장한다.
+  BC·하중·PredefinedField 어디에도 쓰이지 않는다. 주석은 "프리텐션 변위 = 5e-6 × 이 값 = 5e-5 m" 라고
+  주장하지만 실제 모델에는 그 변위가 없다 = **문서-구현 불일치**. 초기 장력은 `SIGMA0=500 Pa`
+  (`Stress` 프리필드, L1058/1209/1261)와 코너 당김 `DISP_GLOBAL` 이 담당한다.
+
+[발견 2 — HF base 에서 클램프는 0]
+  `Step-ClampTension` 삭제(L1343) + 클램프 BC 는 Postbuckle 에서 `CLAMP_FINAL`로 설정(L1387-1392)
+  -> `Step-GlobalTension` 구간 동안 클램프 변위 = Initial 값 0. 따라서 HF 의 base state 는
+  **"코너만 당겨진 상태"** 이고 씨드 소스 모델(`seed`/`clamp_only`)의 base(클램프 당김 포함)와 다르다.
+  §19.55 의 "씨드=guidance, x_c 정합만" 허용 논리에 포함되는 사항이지만 명시해 둔다.
+
+[발견 3 — 이 런은 **Riks 가 아니다**] 모듈 이름이 `riks_patch_input.py` 이고 docstring(L35)도
+  "Step-Postbuckle (Riks/Stabilization)" 이라 오해하기 쉽다. 그러나 `run_patcher()` 기본 ctrl
+  = `--line-search --ran=2e-2 --can=1e-2 --i0=8 --ir=10` 이고 `DO_RIKS = ('--riks') or (not (LS or RC
+  or ...))` (L274-279) 이므로 **DO_RIKS=False** -> `*Static, stabilize=...` 유지(리크스 변환 없음).
+  재현 검증: '--line-search + --ran/--can' -> DO_RIKS False / 플래그 없음 -> True.
+  => 현행 HF 포스트버클링 = **안정화 정적 + 유효한 `*Controls`**. 리크스로 돌리려면 `--riks`.
+  (모듈 자신의 경고: 리크스에서는 `*Controls` 실효 없음 — 문서에 Riks 언급 없고 line search 평가 0회 실측.)
