@@ -9,7 +9,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     삼각 막(BASE=20 m, HEIGHT=10 m, 두께 5e-6 m)
     + 꼭짓점 강체패치 3개 + 클램프 강체패치 2개 (위치 x_c).
     스텝 (2개 — 클램프를 별도 텐션 스텝으로 분리하지 않는다):
-        Step-GlobalTension      꼭짓점 + 클램프 하중 (DEAD = base state)
+        Step-GlobalTension      꼭짓점 or 클램프 하중 (DEAD = base state)
         Step-Buckle             고유값 추출 (LIVE = perturbation 0.01 m)
     창은 N_EIG_BUCKLE / BUCKLE_VECTORS 상수로 정한다(요청 수 <= 실제 subspace 차원).
 
@@ -241,25 +241,15 @@ CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거�
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
-#   [mode 정합] PERTURBATION=0.01: mode.py/HF 와 동일해야 한다(클램프만 다른 상태로 비교하려면).
 
-#   [§19.60 제거] PAPER_S1_LIVE_M / paper_s1 은 'paper45' 경로와 함께 제거(현행 2케이스는 HF 각도 28.6).
-N_EIG_BUCKLE = 100      # 추출 요청 고유값 수 (mode.py 와 같은 값이어야 한다 — 계약)
-                        #   [2026-10-11 복원] 4 -> 100: 과거 성공 조합(100/250). base state 의 음수
-                        #   클러스터를 넘겨야 양수 모드가 subspace 창에 들어온다 — 케이블 런 실측
-                        #   "음수 52 < 100 -> CONVERGED=4".
-#   [이력] N_EIG=4 / 기저 250: 대조군이 '요청 4 / 기저 250' 으로 수렴했다. 기저 250 = 천장 272 아래.
-BUCKLE_VECTORS = 250    # subspace 기저 벡터 수. 실측 천장: 300 을 요청하면
-#   ⚠️ "N_EIG <= 실제 subspace 차원" 이 조건이다: 기저를 키워 요청하면 REDUCED 되고 결국
-#   EIGENVALUES CANNOT BE FOUND. 창을 키우지 말고 이 두 상수를 직접 줄여 시험한다.
-#   (neig=/vec= CLI 는 런처가 '=' 를 삼켜 조용한 오답 — 쓰지 말 것.)
+N_EIG_BUCKLE = 10   # 추출 요청 고유값 수
+BUCKLE_VECTORS = 25   # subspace 기저 벡터 수. 실측 천장: 300 을 요청하면
 BUCKLE_MAXITER = 5000
 BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
 BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
 BUCKLE_MIN_EIGEN = 0.0          # LANCZOS 전용 (음의 고유값도 보고 싶으면 -1e30 등)
 BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 넘기지 않는다)
 
-# Abaqus API 는 심볼릭 상수를 요구한다 — 문자열을 넘기면 즉시 죽는다(§7).
 if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
     # 원장 P3: 값 검증이 없으면 dict KeyError 로 죽어 원인이 안 보인다.
     raise RuntimeError("BUCKLE_SOLVER must be 'SUBSPACE' or 'LANCZOS' (got %r)"
@@ -271,12 +261,9 @@ PATTERN_SIGN = 1.0            # 좌굴 '하중 패턴' 부호: 1.0 = 바깥으�
 
 SIGMA0 = 700.0          # 초기응력 [Pa] — 수렴 보조. [mode 정합] mode.py=700 (buckle 은 500 이었다)
 
-
 # 인자 — 한 번에 한 케이스만(x_c [disp_m]). 스윕 없음.
 #   러너가 자기 플래그와 그 값을 앞에 붙이고 셸의 '--' 는 전달되지 않는다.
-#   => 뒤에서부터 훑어 러너 토큰을 건너뛰고 숫자가 끊길 때까지 모은다(§1).
 _LAUNCHER_WORDS = ('abaqus', 'cae', 'cae.exe', 'abq', 'standard', 'explicit')
-
 
 def _is_launcher_token(tok):
     """러너/구분자/스크립트 토큰이면 True (사용자 인자가 아니다)."""
@@ -296,19 +283,12 @@ def _is_launcher_token(tok):
 
 def parse_args(argv):
     """맨 뒤의 숫자 1~4개를 <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] 로 읽는다.
-
-    [§19.60] dead_frac(5번째) 인자는 clamp_lf 계열('live' 분기) 전용이어서 제거했다.
-
-    조용한 치환 금지: 개수가 맞지 않거나 숫자가 아닌 토큰을 만나면 추측하지 않고
-    사용법과 argv 전문을 찍고 예외로 끝낸다.
     """
     toks = list(argv)
     print("%s argv=%s" % (TAG, toks))
     if not any(t.lower().endswith('.py') for t in toks):
         print("%s WARNING: no script-name token in argv (unexpected launcher layout)." % TAG)
 
-    # 레거시 `-- HF x_c d_c` 형식은 두 번째 숫자의 의미가 다르다(d_c 비율 vs disp_m [m]).
-    # 조용히 재해석하면 1.0 m 같은 엉뚱한 변위가 되므로 거부한다.
     legacy = [t for t in toks if t.strip().upper() in ('LF', 'HF')]
     if legacy:
         raise RuntimeError(
@@ -346,7 +326,7 @@ DISP = DISP_GLOBAL if _disp_arg is None else _disp_arg
 # 클램프 법선 당김 — 기본은 코너 당김과 같은 비율(A-route 의 d_c), CLI 3번째 인자로 직접 지정 가능.
 #   예: -- 0.5 0 5e-5  -> 코너 미구동 + 클램프만 5e-5 m (클램프 단독 구동 진단)
 CLAMP_PULL = (DISP * CLAMP_DC if _clamp_arg is None else _clamp_arg)
-# CLAMP_PERT 를 CLAMP_DC 가 아니라 **실제 CLAMP_PULL** 에 비례시킨다.
+# CLAMP_PERT 를 CLAMP_DC 가 아니라 실제 CLAMP_PULL에 비례시킨다.
 #   CLI 3번째 인자로 CLAMP_PULL 을 직접 주면 예전 코드는 섭동만 CLAMP_DC(0.5) 기준으로
 #   남아 하중과 섭동이 어긋났다(d_c 스윕이 조용히 오염된다).
 if _excl_arg is not None:
@@ -365,8 +345,6 @@ if DISP < 0.0:
     raise RuntimeError('disp_m must be >= 0 (got %r).' % (DISP,))
 # 상한 가드. DISP 는 이 모델의 크기(20 m)에 비해 작아야 한다.
 #   정상 운용점은 DISP_GLOBAL = 1.8e-05 m (18 um), 논문 좌굴모델도 모서리 5e-4 m / 정점 1e-3 m 다.
-#   실사고: 런처가 `neig=10` 의 `=` 를 소비해 값 `10` 이 disp_m 으로 들어왔고, 10 m 당김으로
-#   잡이 돌았다(잡 이름 d10000000um). 오류가 아니라 **엉뚱한 해석**이라 눈치채기 어렵다.
 DISP_MAX = 1.0e-3   # m
 if DISP > DISP_MAX:
     raise RuntimeError(
@@ -385,9 +363,6 @@ print("%s d_c=%.3g -> CLAMP_PULL=%.4e m (buckle pert %.3e m)"
 
 V_CL = clamp_coord_L(x_c)
 V_CR = clamp_coord_R(x_c)
-
-# 하중 각도 — HF/케이블 방향(28.6도). 아래 첫 줄은 HF↔buckle SHARED 계약 항목이라
-#   **리터럴로 유지한다**(check_model_consistency 가 이 문자열을 직접 비교한다).
 angle_deg = 28.6
 angle_rad = np.deg2rad(angle_deg)
 cos_val = float(np.cos(angle_rad))
@@ -395,7 +370,6 @@ sin_val = float(np.sin(angle_rad))
 
 # 클램프 당김 단위벡터 (DIR_CL = 좌측 클램프, DIR_CR = 우측 클램프)
 _s2 = 2.0 ** 0.5
-#   [§19.62] 'normal' 고정 -> 분기 없이 직접 세팅(HF 와 같은 방향).
 DIR_CL, DIR_CR = (-1.0 / _s2, +1.0 / _s2), (+1.0 / _s2, +1.0 / _s2)
 
 print("%s x_c=%g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
@@ -449,11 +423,6 @@ def run_job_safely(job_name, model_name=None):
 
     time.sleep(1.0)
 
-    # 진단 출력은 호출측에서 report_job() 한 번으로 끝낸다.
-
-    # 잡 성공 판정 = 산출물 + 완주 문자열. 'ODB 존재'도 'Exit code 0'도 증거가 아니다(§2).
-    # 예전에는 같은 조건을 두 번 검사해 두 번째 WARNING 이 **도달 불가**였다
-    #   (첫 검사가 먼저 raise 한다). 한 번만 검사하고 실패 이유를 메시지에 구분해 넣는다.
     if job.status == ABORTED or not os.path.exists(odb_file):
         print_failure_cause(job_name)
         raise RuntimeError('Job %s 실패 (Status=%s): ABORTED 이거나 .odb 가 없다. '
