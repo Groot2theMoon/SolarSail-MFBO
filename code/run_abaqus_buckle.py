@@ -164,7 +164,7 @@ CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이. HF(run_abaqus.py) 와 
 PRETENSION_MODE = 'corner2'
 if PRETENSION_MODE not in ('corner2', 'paper3'):
     raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
-DISP_TOP_OVER_CORNER = 1.4142135623   # paper3 전용
+DISP_TOP_OVER_CORNER = 1.4142135623   # Top 케이블 구동량 = 코너 당김 x 이 값(√2)
 
 CLAMP_EXCL_R = 0.21   # m — 클램프 패치 노드를 경계 u3 구속에서 **뺀다**.
 #   CLAMP_EXCL_R > 0 인 이유: 클램프 패치 노드는 Coupling 으로 RP(u3=0)에 묶여 있어, 같은
@@ -185,7 +185,7 @@ def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 #   이 차이가 클램프와 교란되어 '클램프가 원인'인지 판별할 수 없었다.
 DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점 (원격 5e-6 실험 되돌림 — §19.38)
 
-# 코너 하중 각도 [deg] — CASE 가 요구한다('hf' = 28.6 = 우리 HF/케이블 방향, 'paper45' = 논문).
+# 코너 하중 각도 [deg] — 전 케이스가 'hf'(28.6 = 우리 HF/케이블 방향). [§19.60] 'paper45' 경로 제거.
 CORNER_ANGLE_DEG = 28.6
 
 # 케이스 (CASE) — '무엇을 DEAD, 무엇을 LIVE 로 두는가'만 고른다.
@@ -224,21 +224,13 @@ _ROUTE = resolve_case(CASE)
 HAS_CABLES = _ROUTE['cables']       # 꼭짓점을 케이블(T3D2)+Tie 로 잇고 끝단을 구동하는가
 HAS_CLAMPS = _ROUTE['clamps']       # 클램프 강체패치를 만드는가
 CLAMP_LOAD = _ROUTE['clamp_load']   # 'none' | 'live' (live = 클램프를 집중하중으로 LIVE 에)
-CORNER_DIR = _ROUTE['corner_dir']   # 'hf' | 'paper45'
+CORNER_DIR = _ROUTE['corner_dir']   # 모든 현행 케이스가 'hf'(28.6도)
 LIVE_DRIVER = _ROUTE.get('live_driver', 'corner')   # 'corner'(기존 케이스) | 'clamp'(clamp_live)
 #   clamp_cable: 클램프 하중을 **케이블 끝단**으로 전달하는가(HF 와 같은 하중 경로).
 #     False(기본) = 클램프 강체패치 RP 직접 구동(clamp_lf/clamp_live 의 현행 경로).
 HAS_CLAMP_CABLES = bool(_ROUTE.get('clamp_cable', False))
-#   clamp_drive: 클램프를 어떻게 붙이는가.
-#     'rp'(기본, 현행) = 강체패치 RP + Coupling(DISTRIBUTING) + (선택) Tie/케이블 — HF 와 같은 부품.
-#     'nodes'         = **이상화**: 노드집합에 u1/u2(당김)·u3=0(그립)을 직접 지정변위 — RP/Coupling/
-#                       Tie/케이블이 **없다**(near-zero 모드의 통로를 제거). 국소 압축은 그대로 생긴다.
-CLAMP_DRIVE = _ROUTE.get('clamp_drive', 'rp')
-#   클램프 케이블의 Tie 는 **RP 를 앵커**로 쓴다 -> 노드구동('nodes')과 양립 불가(케이스 조합 오류를
-#   조용한 KeyError 로 두지 않고 여기서 막는다).
-if HAS_CLAMP_CABLES and CLAMP_DRIVE != 'rp':
-    raise RuntimeError("[케이스] clamp_cable=True 는 clamp_drive='rp' 에서만 성립한다"
-                       " (클램프 케이블 Tie 의 앵커가 RP 다).")
+#   [§19.60 제거] clamp_drive='nodes'(B안: 노드집합 직접 구동) 경로는 clamp_only 가 RP 경로로
+#   100/100 수렴(§19.52)하면서 역할이 끝나 제거했다. 기록은 history §19.48~§19.50.
 
 
 def _require_constant(name, have, want):
@@ -314,14 +306,8 @@ CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거�
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
 #   [mode 정합] PERTURBATION=0.01: mode.py/HF 와 동일해야 한다(클램프만 다른 상태로 비교하려면).
-#   paper_s1 은 예외로 PAPER_S1_LIVE_M 을 쓴다(논문 자신의 좌굴 스텝 크기에서만 lambda 비교 성립).
 
-# ---- 논문 baseline 좌굴 스텝 크기 (CASE='paper_s1' 전용) ----
-PAPER_S1_LIVE_M = 0.10   # m — Galhofo 2022 의 좌굴 스텝은 꼭짓점 변위를 0.10 m 까지 올린다.
-#   논문 lambda 비교는 **논문 자신의 좌굴 스텝 크기**(PAPER_S1_LIVE_M)에서만 성립한다 — lambda 는
-#   LIVE 크기에 반비례. PERTURBATION(0.01)은 mode.py 와의 SHARED 계약이라 케이스별로 바꾸지 않는다.
-# ---- 추출 창: N_EIG_BUCKLE 은 두 조건의 교집합 (parse_buckle_log._window_hint 와 같은 판정) ----
-#   (a) N_EIG_BUCKLE > base state 의 SYSTEM 음수 고유값 개수   (b) N_EIG_BUCKLE <= 실제 subspace 차원
+#   [§19.60 제거] PAPER_S1_LIVE_M / paper_s1 은 'paper45' 경로와 함께 제거(현행 2케이스는 HF 각도 28.6).
 N_EIG_BUCKLE = 100      # 추출 요청 고유값 수 (mode.py 와 같은 값이어야 한다 — 계약)
                         #   [2026-10-11 복원] 4 -> 100: 과거 성공 조합(100/250). base state 의 음수
                         #   클러스터를 넘겨야 양수 모드가 subspace 창에 들어온다 — 케이블 런 실측
@@ -467,8 +453,6 @@ V_CR = clamp_coord_R(x_c)
 # 하중 각도 — HF/케이블 방향(28.6도). 아래 첫 줄은 HF↔buckle SHARED 계약 항목이라
 #   **리터럴로 유지한다**(check_model_consistency 가 이 문자열을 직접 비교한다).
 angle_deg = 28.6
-if CORNER_DIR == 'paper45':
-    angle_deg = 45.0    # 논문 좌굴모델(45도) 재현 케이스 전용 — HF 와 같은 각도가 아니다.
 angle_rad = np.deg2rad(angle_deg)
 cos_val = float(np.cos(angle_rad))
 sin_val = float(np.sin(angle_rad))
@@ -731,17 +715,6 @@ def create_rigid_patch(a, inst_memb, name, coord, radius):
     return rp, rp_region
 
 
-def create_patch_nodeset(a, inst_memb, name, coord, radius):
-    """[B안] 강체패치 없이 **노드집합만** 만든다(RP/Coupling 없음).
-
-    clamp_drive='nodes' 전용: 클램프를 노드집합 직접 지정변위로 구동하기 위한 대상.
-    """
-    nodes = inst_memb.nodes.getByBoundingSphere(center=coord, radius=radius)
-    if not nodes:
-        nodes = (inst_memb.nodes.getClosest(coordinates=coord),)
-    return a.Set(name=name + '_Nodes', nodes=nodes)
-
-
 def connect_cable(a, name, part, sail_corner, vector_dir, radius=1e-4, cable_len=None):
     """케이블 인스턴스를 꼭짓점에 붙이고 (시작단, 끝단) 노드 영역을 돌려준다.
 
@@ -865,11 +838,6 @@ def build_model(disp):
     #   CLAMP_EXCL_R=0.21 과 같아져 제외가 패치를 온전히 덮는다(이중 구속 게이트도 그대로 통과).
     if not HAS_CLAMPS:
         rp_cl_obj = rp_cr_obj = None
-    elif CLAMP_DRIVE == 'nodes':
-        #   [B안] 강체패치를 만들지 않는다 — 노드셋만(RP/Coupling/Tie/케이블 전부 없음).
-        rp_cl_obj = rp_cr_obj = None
-        create_patch_nodeset(a, inst_memb, 'CL', V_CL, radius=0.21)
-        create_patch_nodeset(a, inst_memb, 'CR', V_CR, radius=0.21)
     else:
         rp_cl_obj, rp_cl_reg = create_rigid_patch(a, inst_memb, 'CL', V_CL, radius=0.21)
         rp_cr_obj, rp_cr_reg = create_rigid_patch(a, inst_memb, 'CR', V_CR, radius=0.21)
@@ -902,7 +870,7 @@ def build_model(disp):
     a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
     a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
     a.Set(name='RP_Left_Set', referencePoints=(a.referencePoints[rp3_obj.id],))
-    if HAS_CLAMPS and CLAMP_DRIVE == 'rp':
+    if HAS_CLAMPS:   # [§19.60] nodes 경로 제거 -> RP 세트는 클램프가 있으면 항상 만든다
         a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
         a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
     # Tie (RP <-> 케이블 시작단) — mode.py 와 동일. cload 라우트에는 케이블이 없다.
@@ -925,14 +893,12 @@ def build_model(disp):
     #   'cable' : 케이블 끝단(end_c*)에 변위를 준다.
     #   'cload' : 케이블이 없으므로 **강체패치 RP** 에 하중/구속을 직접 건다.
     def _clamp_target(side):
-        #   클램프 구동/구속 대상: 케이블 끝단 > 노드집합(B안) > 강체패치 RP(현행).
+        #   클램프 구동/구속 대상: 클램프 케이블 끝단 > 강체패치 RP.
         if HAS_CLAMP_CABLES:
             return end_cl if side == 'CL' else end_cr
-        if CLAMP_DRIVE == 'nodes':
-            return a.sets['CL_Nodes' if side == 'CL' else 'CR_Nodes']
         return a.sets['RP_CL_Set' if side == 'CL' else 'RP_CR_Set']
 
-    _CLAMP_ROT_KW_USE = _CLAMP_ROT_KW if CLAMP_DRIVE == 'rp' else {}
+    _CLAMP_ROT_KW_USE = _CLAMP_ROT_KW   # [§19.60] nodes 경로 제거 -> 항상 적용
 
     if HAS_CABLES:
         A1, A2, A3 = end_c1, end_c2, end_c3
@@ -1025,7 +991,7 @@ def build_model(disp):
     #   만들어지지 않아 뒤에서 KeyError 로 죽는다(하네스가 잡는다. clamp_live_cb 에서 실제로 발생).
     if CASE in ('seed', 'clamp_only'):   # [§19.60] 둘 다 코너 구동 경로가 필요하다
                                          #   (seed=케이블 끝단 / clamp_only=강체패치 RP)
-        # 변위 구동: 'cable' 은 케이블 끝단, 'paper45' 는 꼭짓점 강체패치 RP (논문 레시피).
+        # 변위 구동: 케이블 끝단(seed) 또는 꼭짓점 강체패치 RP(clamp_only).
         my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
                                 region=A2, u1=SET, u2=SET)
         my_model.DisplacementBC(name='Disp_Control_Left', createStepName='Initial',
@@ -1150,21 +1116,6 @@ def build_model(disp):
             stepName='Step-Buckle', u1=_ns * cos_val, u2=-_ns * sin_val)
         my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
             stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
-    if CORNER_DIR == 'paper45':
-        # 논문 baseline 은 **논문 자신의 좌굴 스텝 크기**로 올린다 — lambda 가 LIVE 크기에
-        #   반비례하므로 그 크기에서만 논문의 3.18e-4 와 직접 비교가 성립한다. 꼭짓점 3개 전부.
-        #   (CORNER_DIR=='paper45' 와 HAS_CABLES 는 CASE 로 상호배타 — _require_constant.)
-        _ns = PATTERN_SIGN * PAPER_S1_LIVE_M
-        my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
-            stepName='Step-Buckle', u1=_ns * cos_val, u2=-_ns * sin_val)
-        my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
-            stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
-        my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
-            stepName='Step-Buckle', u1=0.0, u2=_ns * DISP_TOP_OVER_CORNER)
-        print("%s [paper_s1] 꼭짓점 3개 prescribed 구동: DEAD=%.4e m (Top x%.4g) / "
-              "LIVE=%.4e m — 논문 좌굴 스텝 크기"
-              % (TAG, disp_a, DISP_TOP_OVER_CORNER, PAPER_S1_LIVE_M))
-
     return model_name
 
 # job 이름에 요소 태그 + 클램프 모드를 넣는다. 같은 이름이면 run_job_safely 가 stale
@@ -1185,7 +1136,7 @@ _dc_tag = (int(round(CLAMP_DC_EFF * 100.0))
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
 _live_tag = (('_plv%05d' % int(round(PERTURBATION * 1.0e5)))
              if CASE in ('seed', 'clamp_only') else '')   # [§19.60] 둘 다 LIVE 프로브가 있다
-_rot_tag = '' if CLAMP_DRIVE == 'nodes' else ('_rotfix' if CLAMP_RP_FIX_ROT else '')   # 스위치를 켜면 출력 이름이 갈린다
+_rot_tag = ('_rotfix' if CLAMP_RP_FIX_ROT else '')   # 스위치를 켜면 출력 이름이 갈린다
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
 JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x_c * 100.0)),
                                                        int(round(DISP * 1.0e6)),

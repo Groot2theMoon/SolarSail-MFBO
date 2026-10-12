@@ -2984,3 +2984,32 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [우선순위] ① seed 행에 live_driver 명시(위험 제거) ② 케이스 10개 + 게이트/등록/문서 정리
   ③ `'live'` 분기 + DEAD_FRAC/F0 제거 ④ B안(nodes) 경로 제거 ⑤ paper45 + 도달 불가 고유솔버 분기 제거.
   각 단계 1커밋 + 검사기/하네스 EXIT=0 확인.
+
+#### §19.61 §19.60 정리 **실행 완료** — 케이스 12→2, 1524→1345줄 (-179, -12%) (2026-10-12)
+
+[실행 결과] 5단계 전부 완료(각 단계마다 검사기 PASS + 하네스 seed/clamp_only EXIT=0).
+  | 단계 | 내용 | 커밋 |
+  |---|---|---|
+  | 1 | `seed` 행에 `live_driver='corner'` **명시**(기본값 의존 제거) | `1595bce` |
+  | 2 | 케이스 12→2, 게이트·태그·checker/harness 등록·docstring 정리 | `1595bce` |
+  | 3 | `clamp_load='live'` 분기 **50줄** + DEAD_FRAC/CORNER_F0/CLAMP_F0 + CLI 5번째 인자 제거 | `ad48058` |
+  | 4 | `clamp_drive='nodes'`(B안) 경로 전부 제거 — 키·가드·분기·`create_patch_nodeset`·`_clamp_target` 분기· | `(이 커밋)` |
+  |   | `_CLAMP_ROT_KW_USE` 단순화·`_rot_tag` 단순화 | |
+  | 5 | `corner_dir='paper45'` 경로(각도 분기 + 프로브 블록) + `PAPER_S1_LIVE_M` 제거 | `(이 커밋)` |
+  파급 정리: checker `_CABLE_CASES`→`('seed',)` · `_KNOWN_CASES`→`+('clamp_only',)` · 고아 등록
+  `control_none`/`paper_s1` 제거 · harness `CASE_CONSTANTS` 14→2행 · `CASE in (...)` 게이트 4곳 ·
+  태그 목록 3곳 · docstring 케이스표.
+
+[⚠️ §19.60 조사 오류 1건 **정정** — 고유솔버는 도달 불가가 아니다]
+  §19.60 에 "EIGENSOLVER_CONST/BUCKLE_BLOCK_SIZE/BUCKLE_MIN_EIGEN 는 도달 불가"라고 적었으나 **틀렸다**.
+  현행 코드는 `BUCKLE_SOLVER = 'SUBSPACE'`(L321) 로 제어되며 `EIGENSOLVER_CONST = {'SUBSPACE':…,
+  'LANCZOS':…}[BUCKLE_SOLVER]` + `if BUCKLE_SOLVER == 'SUBSPACE'` 분기가 **둘 다 살아 있다**
+  (로그 실측 `buckle step: solver=SUBSPACE numEigen=100 vectors=250`). 제거하지 않았다.
+  덧: seed/clamp_only 는 **SUBSPACE 로 100/100 성공**했다 — 문서의 "SUBSPACE 100모드 실패"는 클램프
+  하드웨어가 붙은 옛 모델의 기록이며 현행 모델에 그대로 적용되지 않는다.
+
+[검증] py_compile OK / 검사기 PASS(HF↔buckle 30 · HF↔모드소스 27 · buckle↔모드소스 13, 위반 0) /
+  하네스 `seed`·`clamp_only` EXIT=0(두 모델 구축 경로가 모두 살아 있음). 실모델(Abaqus) 재현은 사용자 런 대기.
+[줄수] `run_abaqus_buckle.py` **1524 → 1345줄** (-179줄, 약 -12%).
+[남은 후보(별건)] `run_abaqus.py` 기본 모드소스 상수(`ClampFree_Buckle.odb`/`modes_ClampFree_Buckle.txt`)는
+  이제 기본값 경로로만 남아 있다 — 프로덕션 HF 라 이번 범위에서 제외했다.
