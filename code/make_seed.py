@@ -69,12 +69,12 @@ def sh(cmd, dry=False, cwd=HERE):
     return p.returncode, out
 
 
-def _need(path, what):
+def _need(path, what, hint=''):
     """산출물 검증 — rc 가 아니라 파일로 판정한다."""
     if not os.path.exists(path):
         raise SystemExit("[make_seed] %s 가 만들어지지 않았습니다 -> %s\n"
-                         "  (위에 찍힌 자식 출력의 마지막 줄을 보세요. 경로 규약/스펙 형식 문제일 수 있습니다.)"
-                         % (what, path))
+                         "  (위에 찍힌 자식 출력의 마지막 줄을 보세요.)%s"
+                         % (what, path, ('\n  ' + hint) if hint else ''))
     if os.path.getsize(path) == 0:
         raise SystemExit("[make_seed] %s 가 비어 있습니다 -> %s" % (what, path))
     print("  [ok] %s (%d bytes)" % (what, os.path.getsize(path)))
@@ -146,9 +146,10 @@ def main(argv=None):
     ap.add_argument('--disp', type=float, default=None,
                     help='buckle 코너 당김 [m]. 생략하면 run_abaqus_buckle.py 의 DISP_GLOBAL')
     ap.add_argument('--excl', type=float, default=0.21)
-    ap.add_argument('--seed-clamp-dc', type=float, default=0.0556, dest='seed_clamp_dc',
-                    help='[§19.69] 시드 클램프 당김 비율. HF 의 d_c 와 분리한다 - d_c=0.5 급에서는 '
-                         '클램프 base 가 퇴화해 선형모드가 0개 나온다(실측). 알려진 성공 창은 5.56%%.')
+    ap.add_argument('--seed-clamp-dc', type=float, default=0.0, dest='seed_clamp_dc',
+                    help='[§19.69/§19.70] 시드 클램프 당김 비율. 기본 0.0 = §19.52 에서 실제로 100/100 을 '
+                         '낸 설정(clamp_only, dc000). HF 의 d_c 와 분리한다 - 맞추면 d_c=0.5 급에서 '
+                         '클램프 base 가 퇴화해 선형모드가 0개 나온다(실측).')
     ap.add_argument('--force', action='store_true', help='캐시 무시하고 재생성')
     ap.add_argument('--dry-run', action='store_true', help='명령만 출력(라이선스 0)')
     ap.add_argument('--refresh-seed-family', action='store_true',
@@ -209,7 +210,10 @@ def main(argv=None):
         rc, _ = sh('abaqus python aba_mode_from_odb.py "%s" Step-Buckle "%s" %d'
                    % (odb, clamp_tbl, CLAMP_MODES), a.dry_run, cwd=HERE)
         if not a.dry_run:
-            _need(clamp_tbl, 'clamp 가족 모드표')
+            _need(clamp_tbl, 'clamp 가족 모드표',
+                  hint=('자식 출력에 "프레임 1개 / 양수 λ 모드가 없다" 가 보이면 시드 클램프 당김이 '
+                        '너무 큽니다. 기본 --seed-clamp-dc 0.0(=§19.52 성공 설정)을 쓰세요. 현재: %.4g'
+                        % a.seed_clamp_dc))
     else:
         print("      clamp 표 있음 - 건너뜀 (%s)" % os.path.basename(clamp_tbl))
 
