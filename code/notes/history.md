@@ -3106,3 +3106,32 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   MFBO 가 x_c 를 스윕하면 그 2모드는 x_c 마다 재추출하는 것이 옳다(런 ~40초, 저렴). 고정 재사용하면
   임퍼펙션의 국소 패턴이 실제 클램프 위치와 어긋나 특정 후좌굴 경로를 인위적으로 유리/불리하게 만든다.
   남은 파이프라인 항목: HF 의 `MODE_TABLE` 이 상수라 x_c 별 모드표를 넘기려면 env/인자 통로가 필요.
+
+#### §19.65 HF 시드 연결 파이프라인 구현 — Task 1~4·6·8 (2026-10-12)
+
+[결정] Q1=a(d_c 반영: `clamp_pull = buckle_disp x d_c`) · Q2=a(지문 불일치 = **제출 전 중단**) ·
+  Q3=b(CASE 는 **소스 패치**) · Q4=미정(시드 감도 A/B 보류).
+[구현]
+  - `aba_imperfection.py` — 설계점 시드 API(stdlib): `seed_table_name/path`, `buckle_fingerprint`,
+    `file_token`, `canon_seed_inputs`, `seed_fingerprint`, `seed_header_lines`, `read_seed_header`,
+    `seed_gate`, `BUCKLE_FINGERPRINT_KEYS`(기존 키 + THICKNESS/USE_GRID_MESH/CLAMP_*/BUCKLE_SOLVER/
+    CORNER_ANGLE_DEG).
+  - `code/test_seed_path.py`(신규) — 26항목 라이선스0 시험: 경로·env 우선·지문 민감도(5종)·
+    buckle 상수 드리프트·헤더 왕복·게이트 차단 5종 · **run_abaqus.py import 이름 실재성**.
+  - `run_abaqus.py` — `MODE_TABLE` = `seeds/modes_xc<NNN>_dc<NNN>.txt`(결정적) + env
+    `SOLARSAIL_MODE_TABLE` 오버라이드. 은퇴한 `run_abaqus_mode.py` 지문검사(경고만)를
+    `seed_gate`(차단 + 재생성 명령 출력)로 교체. 노드 수 불일치 WARN -> `sys.exit(1)`.
+  - `code/make_seed.py`(신규) — ①seed 가족(x_c 무관, 캐시) ②clamp 가족(x_c·d_c) ③2+2 합성 + 헤더
+    ④검증(노드 10201 · 모드 4 · peak|u3|=1) + `.meta.txt`. `--dry-run`/`--force`/`--refresh-seed-family`.
+    **Q3=b 를 try/finally 로 원문 바이트 복원**(실패해도 소스를 남기지 않는다).
+  - `code/seeds/README.md`(신규) · `mfbo.py` HF 분기 훅(표 없을 때만 생성, 실패 시 그 점 포기).
+[검증] py_compile · `test_seed_path.py` 26/26 PASS · `static_leak_check` 이상 없음 ·
+  검사기 PASS(HF↔buckle 30 / HF↔모드소스 27) · `make_seed --dry-run` EXIT=0 — 잡 이름 2개가
+  실측 규약과 일치(`..._grid_seed_normal_ex210_plv01000` / `..._dc006_..._clamp_only_...`).
+[⚠️ 구현 중 잡은 버그 2건 — 같은 원인] import 삽입이 `verify_inp_element_types` 를 **접두 매칭**해
+  이름을 쪼갰다(`SEED_DIR_NAMEs`). py_compile 은 통과하고 런타임에서만 ImportError 가 난다.
+  한 번은 `StaticStep(...)` 의 닫는 괄호를 잡아 구문까지 깨뜨렸다. -> 테스트 6절에 **import 실재성
+  정적 가드**를 추가(재발 차단).
+[다음 — 사용자 런] `python3 make_seed.py --x_c 0.5 --d_c 1.0` (HF 에 실제로 넘기는 d_c 와 같은 값:
+  §19.55 로그 기준 `d_c=1`). 표가 없으므로 지금 HF 는 게이트에서 중단된다(의도). 생성 후
+  `abaqus cae noGUI=".../run_abaqus.py" -- HF 0.5 1.0` 는 종전과 동일하게 동작한다.
