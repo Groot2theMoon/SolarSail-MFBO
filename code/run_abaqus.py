@@ -107,7 +107,9 @@ if _HERE not in sys.path:
 from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: E402
                               imperfection_text, report, load_mode_table,
                               build_perturbation, perturbation_report, mode_table_info,
-                              verify_inp_element_types, job_completed_from_logs)
+                              verify_inp_element_types,
+                              seed_table_path, seed_gate, BUCKLE_SCRIPT_NAME,
+                              SEED_DIR_NAME, job_completed_from_logs)
 # aba_grid_mesh: boundary_node_labels / clamp_exclude_labels / make_set (면외 z 구속 노드셋). §9
 #   격자는 이제 사용 중이다: USE_GRID_MESH=True -> aba_grid_mesh.import_grid_part
 #   (.inp -> PartFromInputFile). fill_part 는 Part.addNodes 가 없어 폐기했다(§19.15).
@@ -525,7 +527,11 @@ if MODE_SOURCE not in ('external', 'self'):
 #   *BUCKLE   -> 'odb_direct'(기본). *BUCKLE 은 .fil 출력이 금지되므로 모드 프레임은 ODB 에만 있다.
 #   *FREQUENCY -> 'file' (.fil + *IMPERFECTION, FILE=).
 IMPERFECTION_MODE = 'odb_table'   # 'odb_direct'(기본) | 'odb_table' | 'file'
-MODE_TABLE = os.path.join('..', 'modes_2p2.txt')   # code\aba -> code\
+#   [2026-10-12] 설계점별 시드표 — 기본은 결정적 경로(seeds/modes_xc<NNN>_dc<NNN>.txt),
+#     실험은 env SOLARSAIL_MODE_TABLE 로 덮는다. 종전 상수 '..\modes_2p2.txt' 는 x_c=0.5 산출물
+#     하나만 가리켜, MFBO(x_c 스윕)에서 조용히 같은 시드를 재사용했다(계획 Q1=a / Q2=a).
+SEEDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), SEED_DIR_NAME)
+MODE_TABLE = seed_table_path(SEEDS_DIR, x_c, d_c, env=os.environ.get('SOLARSAIL_MODE_TABLE'))
 MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
 MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
 MODE_INSTANCE = 'MEMBRANE-1'                                    # 막 인스턴스 이름
@@ -618,35 +624,30 @@ if IMPERFECTION_MODE == 'odb_table':
           % (MODE_TABLE, sorted(_mode_table.keys()), len(_mode_table[IMPERFECTION_MODES[0]])))
     emit("[IMPERFECTION] 모드표 출처: source=%s / step=%s / instance=%s"
           % (_tinfo.get('source', '?'), _tinfo.get('step', '?'), _tinfo.get('instance', '?')))
-    # 모드표 재사용 게이트 — 소스 상수를 바꾼 뒤 재추출하지 않으면 '다른 형상의 모드'를 조용히 주입한다(§5b).
-    #   차단하지 않고 기록만 한다(mode_table_check.txt).
-    try:
-        from aba_imperfection import model_fingerprint, table_fingerprint
-        _src_mode = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                 'run_abaqus_mode.py')
-        _fp_now = model_fingerprint(_src_mode)[0]
-        _fp_tbl = table_fingerprint(MODE_TABLE)
-        if _fp_tbl is None:
-            _fp_msg = ("[MODE-TABLE] 지문 없음(표가 구버전) -> 지금 표가 이 모드 소스에서 나온 "
-                       "것인지 확인할 수 없다. 의심되면 다시 뽑을 것: "
-                       "abaqus cae noGUI=run_abaqus_mode.py")
-        elif _fp_now == _fp_tbl:
-            _fp_msg = ("[MODE-TABLE] 지문 일치 OK sha1=%s -> 모드 소스가 표 생성 이후 바뀌지 "
-                       "않았다(재사용 안전)" % _fp_tbl)
-        else:
-            _fp_msg = ("[MODE-TABLE] !! STALE: 지문 불일치(현재 소스 %s / 표 %s) -> 모드 소스가 "
-                       "바뀌었다. 좌굴모드를 다시 뽑아야 한다: "
-                       "abaqus cae noGUI=run_abaqus_mode.py" % (_fp_now, _fp_tbl))
-        emit(_fp_msg)
+    #   [2026-10-12] 설계점 시드 게이트 (계획 Q2=a: 불일치면 **제출 전 중단**).
+    #     판정: ① 표가 이 x_c/d_c 에서 나왔는가 ② 만든 뒤 buckle 소스가 바뀌지 않았는가
+    #           ③ 소스 모드표가 그 뒤 바뀌지 않았는가.
+    #     로직은 aba_imperfection.seed_gate(stdlib) — 단위시험 code/test_seed_path.py.
+    _buckle_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), BUCKLE_SCRIPT_NAME)
+    _gate_ok, _gate_why, _sinfo = seed_gate(x_c, d_c, MODE_TABLE, _buckle_script)
+    emit("[SEED] x_c=%.4g d_c=%.4g table=%s" % (x_c, d_c, MODE_TABLE))
+    emit("[SEED] 모드 %s / source_seed=%s / source_clamp=%s / 지문=%s"
+         % (sorted(_mode_table.keys()), _sinfo.get('seed', '?'), _sinfo.get('clamp', '?'),
+            _sinfo.get('fingerprint', '?')))
+    if not _gate_ok:
+        emit("!!! ERROR: 시드표 게이트 실패 — %s" % _gate_why)
+        emit("[ERROR-EN] seed table gate failed -> aborting BEFORE HF job submit.")
+        emit("    재생성: python3 make_seed.py --x_c %g --d_c %g --force" % (x_c, d_c))
         try:
             with open('mode_table_check.txt', 'w') as _fpc:
-                _fpc.write('%s\ntable=%s\nsource_sha1=%s\ntable_sha1=%s\ntime=%s\n'
-                           % (_fp_msg, os.path.abspath(MODE_TABLE), _fp_now, _fp_tbl,
+                _fpc.write('GATE FAIL\n%s\ntable=%s\ntime=%s\n'
+                           % (_gate_why, os.path.abspath(MODE_TABLE),
                               time.strftime('%Y-%m-%d %H:%M:%S')))
         except Exception:
             pass
-    except Exception:
-        pass
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
+        sys.exit(1)
+    emit("[SEED] 게이트 OK — 이 표는 이 설계점·이 buckle 소스와 일치한다")
 elif IMPERFECTION_MODE == 'odb_direct':
     # (2026-09-28, 사용자 제안) 모드표 txt 를 거치지 않고 ODB 에서 직접 모드를 읽는다.
     #   물리는 odb_table 과 완전히 같다(노드 좌표 섭동). 파일이 하나 줄 뿐이다.
@@ -772,8 +773,12 @@ def _apply_imperfection_to_part(part):
          % (len(_apply), len(_labels), perturbation_report(_pert),
             IMPERFECTION_AMPL_T, _amp))
     if len(_apply) != len(_labels):
-        emit("!!! WARNING: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치 의심"
+        #   [2026-10-12 계획 T3] 경고로 두면 드리프트가 조용한 오주입으로 남는다 -> 중단.
+        emit("!!! ERROR: 모드표 노드 %d개 중 %d개만 적용 -> 메쉬/라벨 불일치(오주입 방지)"
              % (len(_labels), len(_apply)))
+        emit("[ERROR-EN] imperfection node mapping incomplete -> aborting.")
+        sys.stdout.flush()
+        sys.exit(1)
     #   말이 아니라 실측: 좌표에 실제로 들어갔는지 샘플 3개를 로그에 남긴다.
     for _nd in part.nodes.sequenceFromLabels(
             labels=(_labels[0], _labels[len(_labels) // 2], _labels[-1])):

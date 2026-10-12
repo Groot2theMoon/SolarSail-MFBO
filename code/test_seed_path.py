@@ -9,6 +9,7 @@
 """
 import io
 import os
+import re
 import sys
 import tempfile
 
@@ -107,6 +108,17 @@ def main():
     _write(old, 'MODE 1\n1 1.0\n')
     ok6, why6, _ = A.seed_gate(0.5, 0.0556, old, sc)
     check('게이트 구버전표 차단', not ok6, why6)
+
+    print("--- 6) run_abaqus.py 의 aba_imperfection import 이름 실재성 ---")
+    here = os.path.dirname(os.path.abspath(__file__))
+    raw = io.open(os.path.join(here, 'run_abaqus.py'), encoding='utf-8').read()
+    m = re.search(r'from aba_imperfection import \((.*?)\)', raw, re.S)
+    check('run_abaqus.py import 블록 발견', bool(m))
+    if m:
+        names = [n.strip().split('#')[0].strip() for n in m.group(1).split(',')]
+        names = [n for n in names if n]
+        missing = [n for n in names if not hasattr(A, n)]
+        check('import 이름 전부 실재(%d개)' % len(names), not missing, missing)
 
     print()
     if FAIL:
