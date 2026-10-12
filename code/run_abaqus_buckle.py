@@ -1278,8 +1278,7 @@ _dc_tag = (int(round(CLAMP_DC_EFF * 100.0))
            else 0)
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
 _live_tag = ('_plv%05d' % int(round(PERTURBATION * 1.0e5))) if CASE in ('clamp_live', 'clamp_live_cb', 'corner_live_cb', 'clamp_live_nodes', 'corner_live_nodes', 'corner_live_rp') else ''
-_rot_tag = ('_nd' if CLAMP_DRIVE == 'nodes'
-            else ('_rotfix' if CLAMP_RP_FIX_ROT else ''))   # [B안] 노드구동이면 _nd (RP 없음 -> rotfix 무의미)   # 스위치를 켜면 출력 이름이 갈린다
+_rot_tag = '' if CLAMP_DRIVE == 'nodes' else ('_rotfix' if CLAMP_RP_FIX_ROT else '')   # 스위치를 켜면 출력 이름이 갈린다
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
 JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x_c * 100.0)),
                                                        int(round(DISP * 1.0e6)),
@@ -1287,6 +1286,11 @@ JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x
                                                        _f_tag,
                                                        ELEM_TAG, MESH_TAG, CASE, CLAMP_DIR,
                                                        _excl_tag, _rot_tag, _live_tag)
+#   [2026-10-11 §19.49] Abaqus 는 잡 이름 **80자 한계** -> 초과 시 `AbaqusNameError: invalid job name`
+#   (모델을 다 만든 뒤 mdb.Job 에서 터져 라이선스를 쓰고 나서 실패한다). 여기서 즉시 막는다.
+if len(JOB_NAME) > 80:
+    raise RuntimeError("[잡이름] %d자 > 80자 한계: %s\n   -> 케이스/태그 이름을 줄이세요."
+                       % (len(JOB_NAME), JOB_NAME))
 
 print("")
 print("=" * 78)

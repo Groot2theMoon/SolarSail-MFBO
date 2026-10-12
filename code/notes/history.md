@@ -2609,3 +2609,25 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 
 [다음] `CASE=corner_live_nodes` + `-- 0.5 1.8e-5 0` 1런 -> 성공하면 `clamp_live_nodes` 1런 -> 2+2 재료.
   실패하면 클램프 가족을 포기하고 (A) seed 클램프-free 4모드로 확정한다.
+
+#### §19.49 잡 이름 80자 한계 — B안 첫 런이 `AbaqusNameError: invalid job name` (2026-10-11)
+
+[증상] 사용자 런: `abaqus cae noGUI=run_abaqus_buckle.py -- 0.5 1.8e-5 0` ->
+  `AbaqusNameError: invalid job name` (`run_job_safely` -> `mdb.Job(name=...)`). 모델 생성·메쉬·BC 는 전부 끝난
+  **뒤**에 터졌다 = 라이선스(cae) 를 쓰고 나서 실패 = 사용자 시간 낭비.
+
+[원인 — 내 실수] §19.48 에서 잡 이름에 `_nd` 태그를 **추가**했다. `corner_live_nodes` 라는 케이스 이름
+  자체가 이미 구동을 말하므로 중복이었고, 그 3자가 이름을 **81자**로 밀어 **Abaqus 80자 한계**를 넘겼다.
+  (기존 최장 = `..._corner_live_cb_normal_ex210_plv01000` 75자 = 통과. 80자 초과는 조용한 함정.)
+
+[수정] ① `_rot_tag` = `'' if CLAMP_DRIVE == 'nodes' else ('_rotfix' if CLAMP_RP_FIX_ROT else '')`
+  ('nodes' 는 RP 가 없어 rotfix 자체가 무의미 — 태그 제거). 결과 78자.
+  ② **재발 방지 가드**: `JOB_NAME` 정의 직후 `if len(JOB_NAME) > 80: raise RuntimeError(...)`.
+  -> 모델/메쉬를 만들기 **전**에 죽으므로 라이선스를 낭비하지 않고, `buckle_stub_harness.py` 의 EXIT 코드가
+  곧 이름 길이 회귀 검사가 된다(하네스 EXIT=0 = 이름 ≤ 80자 증거).
+  (삽입 위치를 잘못 잡아 multi-line `%` 문장 가운데에 들어가 SyntaxError 를 냈다가 바로 정정 — spread 문장을
+  자를 때는 **문장 끝**을 기준으로 삼을 것.)
+
+[검증] py_compile OK / 검사기 PASS(HF↔buckle 30 · HF↔모드소스 27 · buckle↔모드소스 13, 위반 0) /
+  하네스 `corner_live_nodes`·`clamp_live_nodes` EXIT=0(가드 통과) / B 배선 유지 확인
+  (`BC_Clamp_CL` -> `Set(CL_Nodes)` u3=0, `RP_CL_Set`·`Tie`·`Cable` 0건).
