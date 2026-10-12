@@ -3047,3 +3047,37 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   [기법 등록] **삭제 리팩터링 뒤 정적 검사**: 제거한 이름이 '실코드'(행 시작 주석 + 꼬리 주석 제외)에
      남았는지 검사한다. 남으면 NameError 이고 하네스가 못 잡는다. 실측 1건 검출.
      판정: 위 2건 외 코드 잔존 **0건**.
+
+#### §19.63 docstring 정합 재작성 + 파서 문구 정정 (2026-10-12)
+
+[변경] `run_abaqus_buckle.py` 모듈 docstring 을 현행 코드에 맞춰 간결하게 재작성(2467 -> 1992자,
+  파일 1265 -> 1249줄). 정정한 **사실 오류**:
+  - **HF 주입 경로**: 현행은 **모드표 합성**(`aba_mode_from_odb` -> `combine_mode_tables` ->
+    `IMPERFECTION_MODE='odb_table'` + `MODE_TABLE='..\modes_2p2.txt'`, 진폭 1.0 t, 노드 좌표 섭동)이다.
+    구 docstring 의 `*IMPERFECTION, FILE=..\buckle\<job>, STEP=2` 는 HF 의 `'file'` 모드(비현행)
+    설명이었다(단일 ODB 직접 주입은 env `SOLARSAIL_MODE_ODB` = `'odb_direct'` 경로).
+  - **CLI 기본값**: `clamp_excl_r_m` 생략 시 **0.0 -> 0.21**(`CLAMP_EXCL_R`).
+  - **인자 개수**: 최대 **4개**. 구 docstring 과 파서 오류 메시지에 5번째 `dead_frac` 가 남아 있었다
+    (§19.60 에서 제거됐는데 문구 미정리) -> 파서 메시지도 함께 정정(`1 to 4`, `[dead_frac]` 삭제).
+  - **잡 이름 형식**: `Buckle_xc<NNN>_d<NNN>um_<elem>_<clamp>` -> 실제
+    `..._dc<NNN>_f<NNN>_<elem>_<mesh>_<case>_<dir>_ex<NNN>_plv<NNNNN>` + 80자 초과 예외 가드.
+  - **창 규칙**: 두 조건의 교집합 명시 — (a) 요청 수 > base 의 SYSTEM 음수 고유값 개수,
+    (b) 요청 수 <= 실제 subspace 차원. (a) 위반 시 첫 n 개가 전부 음수.
+
+[검증] `py_compile -W error::SyntaxWarning`(경고 0) / `static_leak_check.py` 이상 없음 /
+  검사기 PASS(HF↔buckle 30 · HF↔모드소스 27 · buckle↔모드소스 13) / 하네스 `seed`·`clamp_only`
+  EXIT=0 / docstring 렌더 확인(`buckle\<job>`, `..\modes_2p2.txt` = 역슬래시 1개).
+
+[⚠️ 사용자 병렬 변경 — 상수 값 조정 1건] 같은 시각 원격에 `6744a4b`(주석 정리) · `2cada93`(내 브랜치
+  merge) · `b16f8c7`(주석 정리 + **상수 값 조정**: `N_EIG_BUCKLE` 100 -> **10**, `BUCKLE_VECTORS`
+  250 -> **25**)가 올라왔다. 그 위로 리베이스했고(사용자가 지운 주석은 되살리지 않음), **값 변경은
+  그대로 두었다** — 연구 결정이라 조용히 되돌리지 않는다.
+  ⚠️ **검사기 RED(미결)**: `buckle↔모드소스 위반 2` —
+      !!!  buckle=False  mode=True   N_EIG_BUCKLE = 100
+      !!!  buckle=False  mode=True   BUCKLE_VECTORS = 250
+  (`run_abaqus_mode.py` 는 아직 100/250 이라 문자열 계약이 깨졌다.)
+  후보: (A) buckle 을 100/250 복원 (B) 창 상수(N_EIG_BUCKLE·BUCKLE_VECTORS)를 계약에서 빼고
+  'base 종속' 주석으로 대체 (C) 세 파일 동기 — 단 mode 스크립트의 케이블 base 는 음수 ~52 라
+  10 으로는 실패할 수 있다. **사용자 결정 대기.**
+  물리 메모: 창은 base 종속이라(§2 규칙 '요청 > 음수 개수') 한 값으로 묶는 계약 자체가 부정확하다.
+  성공한 `clamp_only` 런은 요청 100 이 **전부 양수**였다 → 그 base 의 음수는 창 안에 없다 → 10 도 성립 예상.

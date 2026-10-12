@@ -1,54 +1,37 @@
 """
 run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, 스윕 없음.
 
-목적
-    클램프 패치가 있는 삼각 막 모델의 선형 좌굴 고유모드를 한 번에 추출한다.
-    추출한 모드는 HF 포스트버클링의 초기결함(*IMPERFECTION, FILE=..., STEP=2)으로 쓴다.
+삼각 막(20x10 m, t=5e-6) + 꼭짓점 강체패치 3 + 클램프 강체패치 2(x_c), 균일 격자(10,201 노드).
+스텝 2개: Step-GlobalTension(DEAD = base state) / Step-Buckle(LIVE = 고유값, PERTURBATION 0.01 m).
+뽑은 모드는 HF 포스트버클링의 초기결함(기하 섭동) 씨드다 — guidance 이고 x_c 정합만 필요하다.
+수치 상수는 HF(run_abaqus.py)·mode 와 같아야 한다(check_model_consistency.py 가 강제).
 
-모델 (run_abaqus_new.py 의 HF 모델과 같은 빌드 블록을 공유한다)
-    삼각 막(BASE=20 m, HEIGHT=10 m, 두께 5e-6 m)
-    + 꼭짓점 강체패치 3개 + 클램프 강체패치 2개 (위치 x_c).
-    스텝 (2개 — 클램프를 별도 텐션 스텝으로 분리하지 않는다):
-        Step-GlobalTension      꼭짓점 or 클램프 하중 (DEAD = base state)
-        Step-Buckle             고유값 추출 (LIVE = perturbation 0.01 m)
-    창은 N_EIG_BUCKLE / BUCKLE_VECTORS 상수로 정한다(요청 수 <= 실제 subspace 차원).
+케이스 (CASE, 현행 2개 — 씨드 재료 전용)
+    seed        DEAD 코너 전량 DISP(케이블 끝단) / LIVE 코너      -> 꼭짓점 가족(전역) 모드
+    clamp_only  DEAD 코너(패치 RP)+클램프(케이블) / LIVE 클램프    -> 클램프 가족(국소) 모드
+    두 케이블 세트를 한 모델에 공존시키면 선형모드가 수렴하지 않는다(§19.46~19.47) -> 가족을 분리해
+    각자 자기 base 에서 뽑고, 계열별 상위 2모드를 combine_mode_tables.py 로 합성한다.
+    ⚠️ lambda 는 프로브 크기의 배수(운용점 회계 아님 — 모드 형상은 크기에 불변).
 
-케이스 (CASE 상수) — 현행 **2개** (씨드 재료 전용).
-    CASE          DEAD (base state)                      LIVE (lambda 대상)     답하는 질문
-    seed          코너 전량 DISP (케이블 끝단 구동)       코너 PERTURBATION      꼭짓점 가족 모드(전역)
-    clamp_only    코너 당김(패치 RP) + 클램프 당김(케이블)  클램프 PERTURBATION    클램프 가족 모드(국소)
-    ⚠️ lambda 는 **프로브 크기의 배수**이며 운용점 회계가 아니다(모드 형상은 프로브 크기에 불변).
-    두 모델은 서로 다른 base state 를 가진다 — 씨드는 guidance 이고 x_c 정합만 필요하다(§19.50).
-    각 계열 상위 2모드를 combine_mode_tables.py 로 합성해 *IMPERFECTION(기하 섭동)으로 주입한다.
+사용법  abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
+    x_c            0.5 -> 좌(5,5) / 우(15,5). 안전대역 (0.03, 0.95) 밖이면 경고만.
+    disp_m         코너 당김 [m]. 생략 = DISP_GLOBAL(1.8e-5). 상한 1e-3 m(인자 순서 오배열 가드).
+    clamp_pull_m   클램프 당김 [m]. 생략 = disp_m x CLAMP_DC.
+    clamp_excl_r_m 클램프 반경 내 노드를 면외 구속에서 제외 [m]. 생략 = CLAMP_EXCL_R(0.21).
+    CASE 와 창(N_EIG_BUCKLE / BUCKLE_VECTORS / BUCKLE_SOLVER)은 상수부에서 수정한다 — 값이 잡 이름에
+    들어가 산출물이 안 덮인다. 요구 상수(PRETENSION_MODE / CORNER_ANGLE_DEG)가 어긋나면 즉시 예외.
+    ⚠️ 창 = 요청 수 > base 의 SYSTEM 음수 고유값 개수  AND  <= 실제 subspace 차원. 앞 조건을 어기면
+       첫 n 개가 전부 음수로 온다 — 그때는 모델이 아니라 창을 먼저 의심한다(창 값은 base 종속).
 
-사용법
-    abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
-        x_c            클램프 위치 파라미터. 0.5 -> 좌(5,5) / 우(15,5)
-        disp_m         GlobalTension 코너 당김 [m]. 생략하면 DISP_GLOBAL (1.8e-5).
-        clamp_pull_m   클램프 당김 [m]. 생략하면 disp_m * CLAMP_DC.
-        clamp_excl_r_m 클램프 반경 내 노드를 면외 구속에서 제외 [m]. 기본 0.0.
-    예)  abaqus cae noGUI=run_abaqus_buckle.py -- 0.5
-         abaqus cae noGUI=run_abaqus_buckle.py -- 0.25 1.8e-5 9.0e-6
-    CASE 는 CLI 가 아니라 **상수부에서 직접 수정한다**. 값이 잡 이름에 들어가므로 산출물이
-    서로 덮이지 않는다. 케이스가 요구하는 상수(PRETENSION_MODE / CORNER_ANGLE_DEG)가 어긋나면
-    실행 전에 예외로 막힌다.
+산출물 (code/buckle/)  <job>.odb/.dat/.msg/.sta/.fil/... + <job>.diag.txt. 고유값 표는 .dat 의
+    MODE NO / EIGENVALUE 블록(콘솔에도 덤프). 잡 이름은 조건에서 자동 생성한다:
+    Buckle_xc050_d018um_dc006_f100_s4_grid_clamp_only_normal_ex210_plv01000 (80자 초과는 예외 차단).
 
-    추출 창(N_EIG_BUCKLE / BUCKLE_VECTORS)은 **상수부에서 직접 수정한다** (CLI 로 받지 않는다).
-    ⚠️ N_EIG_BUCKLE 은 '실제 subspace 차원' 이하여야 한다. 실측(2026-10-07): vectors=500 을
-       요청해도 'VECTORS IN SUBSPACE IS REDUCED TO 14' 가 찍히면 200 개는 원리적으로 못 찾는다.
-       창을 키우는 대신 요청 수를 줄이는 쪽이 맞다.
-    disp_m 에는 1 mm 상한 가드가 있다(인자 순서가 어긋나 조용히 다른 모델이 만들어지는 것을 막는다).
-
-산출물 (code/buckle/)
-    <job>.odb / .dat / .msg / .sta / .fil / .diag.txt
-    job 이름은 인자+요소+클램프모드에서 자동 생성한다: Buckle_xc<NNN>_d<NNN>um_<elem>_<clamp>
-      (예: Buckle_xc050_d0050um_s4r_driven) — 케이스가 바뀌어도 산출물이 서로 덮이지 않는다.
-    CASE 는 상단 상수(현행 seed / clamp_only).
-    고유값 표는 .dat 의 MODE NO / EIGENVALUE 블록에 있고, 스크립트가 콘솔에도 덤프한다.
-
-HF 에서 모드를 쓸 때 — 경로 주의 (HF 잡의 작업 디렉터리는 code/aba 다)
-    *IMPERFECTION, FILE=..\\buckle\\<job>, STEP=2
-    <job> 은 이 스크립트가 마지막에 그대로 찍어 준다.
+HF 로 넘길 때
+    ① abaqus python aba_mode_from_odb.py buckle\\<job>.odb Step-Buckle modes_x.txt 4
+    ② abaqus python combine_mode_tables.py modes_2p2.txt 1.0:modes_seed.txt:1,2 1.0:modes_clamp.txt:1,2
+    ③ HF 는 IMPERFECTION_MODE='odb_table' + MODE_TABLE='..\\modes_2p2.txt' 로 그 표를 노드 좌표
+       섭동으로 주입한다(진폭 1.0 t). 단일 ODB 직접 사용은 env SOLARSAIL_MODE_ODB='buckle\\<job>.odb'.
 """
 
 from abaqus import *
@@ -307,13 +290,13 @@ def parse_args(argv):
             stop = t
             break
     nums.reverse()
-    if not (1 <= len(nums) <= 5):
+    if not (1 <= len(nums) <= 4):
         raise RuntimeError(
-            'Expected 1 to 5 trailing numeric arguments '
-            '(<x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m] [dead_frac]), got %r '
+            'Expected 1 to 4 trailing numeric arguments '
+            '(<x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]), got %r '
             '(first non-numeric token from the end: %r).\n'
             'Usage: abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] '
-            '[clamp_excl_r_m] [dead_frac]'
+            '[clamp_excl_r_m]'
             % (nums, stop))
     return (nums[0],
             (nums[1] if len(nums) > 1 else None),
