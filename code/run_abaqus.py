@@ -293,7 +293,19 @@ def run_job_safely(job_name, model_name=None):
         sys.exit(0)
     # 'auto' 는 제출 전에 *Controls 를 주입한다. 제자리 덮어쓰기라 잡 이름/입력명이 유지된다.
     if RUN_MODE == 'auto':
-        if not run_patcher(job_name + '.inp'):
+        #   [§19.80] 패처는 `Step-Postbuckle`(=HF 전용 스텝)에 *Controls 를 주입한다.
+        #     LF 덱에는 그 스텝이 없다 — 실측: "ERROR: *Step, name=Step-Postbuckle 을(를) 찾을 수
+        #     없습니다" 로 패처가 실패하고, §14 규칙(패치 안 된 덱은 제출 금지) 때문에 LF 잡이
+        #     아예 제출되지 않았다. LF 경로는 그동안 밟지 않아 드러나지 않던 버그다.
+        _needs_patch = True
+        try:
+            with open(job_name + '.inp', 'r', encoding='utf-8', errors='replace') as _fh:
+                _needs_patch = ('Step-Postbuckle' in _fh.read())
+        except Exception:
+            _needs_patch = True          # 읽지 못하면 종전 동작(패처 시도) 유지
+        if not _needs_patch:
+            emit("[PATCHER] 이 덱에 Step-Postbuckle 이 없다 -> 패처 생략(§19.80, LF 경로)")
+        if _needs_patch and not run_patcher(job_name + '.inp'):
             emit("!!! ERROR: 패처 실패 — 패치되지 않은 덱을 제출하지 않는다(§14).")
             emit("RESULTS:FAIL")
             sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움

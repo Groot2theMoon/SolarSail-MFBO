@@ -3368,3 +3368,24 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [주의] 위 버그 때문에 최근 REPORT 된 RESULTS(`0.7427,0.5338,574.11,0.00388`)는 **stale** 이다.
   실제 값은 완주 잡마다 LF 런을 먼저 돌린 뒤 eval 을 돌려야 나온다. ODB 자체를 직접 읽는
   `probe_partial_hf.py` 값(d_c=0.3 에서 u_z,ave=422.1 t)은 이 버그와 무관하게 유효하다.
+
+#### §19.80 LF 덱에 패처를 걸지 않는다 — LF 경로 첫 실런에서 드러난 버그 (2026-10-13)
+
+[실측] `abaqus cae noGUI=run_abaqus.py -- LF 0.5 0.3` ->
+  `[PATCHER] (stderr) SystemExit(ERROR: *Step, name=Step-Postbuckle 을(를) 찾을 수 없습니다)` ->
+  `!!! ERROR: 패처 실패 — 패치되지 않은 덱을 제출하지 않는다(§14).` -> `RESULTS:FAIL`
+[원인] `run_job_safely` 가 `RUN_MODE='auto'` 에서 **잡 종류와 무관하게** `run_patcher(deck)` 를
+  호출한다. 패처 기본 타깃이 `Step-Postbuckle` 인데 그 스텝은 **HF 전용**이라 LF 덱에는 없다.
+  §19.74 철회(§19.79)로 LF 선행 런이 파이프라인에 복귀하면서 처음 밟은 경로다 — 즉 LF 는
+  그동안 이 코드로 한 번도 돌지 않았고, 그래서 드러나지 않았다.
+[변경] `run_abaqus.py` `run_job_safely`: 덱 텍스트에 `Step-Postbuckle` 이 없으면 **패처를 생략**
+  (`[PATCHER] ... 패처 생략(§19.80, LF 경로)`) — 읽기 실패 시엔 종전 동작 유지.
+[부수 발견 — 미수정, 기록만]
+  - 패처의 **셸 재시도 경로가 죽어 있다**: `abaqus python ... --ran=2e-2` 를 Abaqus 인자 파서가
+    거부("It has both equality sign and prepended dash"). 인프로세스가 성공하는 동안은 무해하지만,
+    인프로세스가 실패하면 재시도도 못 살린다.
+  - **LF 브랜치도 이제 임퍼펙션을 주입한다**(모드표 로드 + 기하 섭동, 이번 런 진폭 0.10 t).
+    LF 지표의 정의가 "무결함 모델"이었는지 확인 필요 — 정의가 바뀌면 과거 LF 값과 비교 불가.
+  - LF 스텝(HF 의 대응 기저 상태)에 line-search/controls 를 **걸지 않는 것**이 맞는지는 미확인.
+    현재는 생략(과거 197 s LF 완주가 그 상태였다).
+[검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
