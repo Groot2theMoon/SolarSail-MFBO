@@ -225,6 +225,13 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label):
         loss_sum += (np.sum(areas) * IDEAL_THRUST_COEFF - actual_thrust)
         ideal_area_sum += np.sum(areas)
 
+    #   [§19.82] **상대** 손실로 반환한다.
+    #     종전 반환은 `loss_sum` = Σ(면적×IDEAL_THRUST_COEFF) − 실제추력 = **절대량**이었고,
+    #     정규화용으로 누적한 `ideal_area_sum` 을 쓰지 않았다(의도는 상대화였는데 빠져 있었다).
+    #     절대량을 비율로 오독하면 "0.00755 = 0.7%" 처럼 100배 작게 보인다.
+    #     상대 = 손실 / (총면적 × IDEAL_THRUST_COEFF) = 평판 이상추력 대비 손실률.
+    if ideal_area_sum > 0.0 and IDEAL_THRUST_COEFF > 0.0:
+        return float(max(loss_sum, 0.0) / (ideal_area_sum * IDEAL_THRUST_COEFF))
     return float(max(loss_sum, 1e-12))
 
 def get_hf(odb_path):
