@@ -3345,3 +3345,26 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   검사기 PASS · `static_leak_check` 이상 없음.
 [주의] 지문 정의가 바뀌었으므로(§19.76 표 포함) 기존 표의 지문은 재계산과 불일치한다 →
   `make_seed --x_c 0.5 --d_c 0.5` 로 **1회 재생성**(combine 만, 수 초)이 필요하다.
+
+#### §19.79 §19.74 철회 — 짝 LF 는 필수였다 + stale extraction.txt 차단 (2026-10-13)
+
+[실측] 사용자가 완주 잡에서 수동으로 돌린 eval:
+    `abaqus python ..\eval_abaqus.py HF_Postbuckle.odb HF_Postbuckle.odb HF`
+    -> `LF Error: Target step not found.` / `RESULTS:FAIL`
+  즉 `eval_abaqus.get_lf` 는 `Step-HighTension` 을 찾는데 그 스텝은 **LF 전용**이고 HF 체인에는
+  없다. LF 모델은 클램프가 없는(NO_CLAMP) 모델이라 HF 의 중간 상태로 대체할 수 없다 —
+  물리적으로 다른 상태다. **§19.74 는 내 오판**(L1247 을 HF 브랜치로 잘못 읽었고, eval 의 API
+  형태를 그대로 믿었다).
+[연쇄 피해] eval 이 실패해도 run_abaqus 가 eval 의 `RESULTS:` 줄을 버리고 **`extraction.txt` 를
+  무조건 읽어** 옛 값을 '이번 런의 결과'로 출력 -> 0.02/0.005 두 런의 RESULTS 가 소수점 17자리까지
+  동일했다(같은 파일을 두 번 읽음). 실패 신호가 로그에서 삼켜졌다.
+[변경]
+  1. `run_abaqus.py`: 짝 LF 가드 복원(없으면 HF 제출 전 중단) · eval 인자를 `<LF.odb> <HF.odb> HF`
+     로 되돌림.
+  2. **eval 직전 `extraction.txt` 삭제**(stale 원리 차단) · eval 의 `RESULTS:FAIL`/`Target step not
+     found` 를 **전파**(삼키지 않음) · 실패 시 파일을 읽지 않고 `RESULTS:FAIL` 만 낸다.
+  3. `mfbo.py`: HF 분기의 선행 LF 런 복원(같은 점 산출물 있으면 재사용).
+[검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
+[주의] 위 버그 때문에 최근 REPORT 된 RESULTS(`0.7427,0.5338,574.11,0.00388`)는 **stale** 이다.
+  실제 값은 완주 잡마다 LF 런을 먼저 돌린 뒤 eval 을 돌려야 나온다. ODB 자체를 직접 읽는
+  `probe_partial_hf.py` 값(d_c=0.3 에서 u_z,ave=422.1 t)은 이 버그와 무관하게 유효하다.

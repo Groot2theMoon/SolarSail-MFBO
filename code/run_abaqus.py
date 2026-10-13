@@ -1286,10 +1286,15 @@ if fidelity == 'LF':
 
 elif fidelity == 'HF':
 
-    #   [§19.74] 별도 LF 잡이 필요 없다: LF 지표(lf1~lf3)는 **HF ODB 자신**의
-    #     `Step-HighTension` 마지막 프레임에서 나온다(eval_abaqus.get_lf 가 그 스텝을 읽는다).
-    #     HF 체인 = GlobalTension -> ClampTension -> HighTension -> Postbuckle 이므로
-    #     HC 를 돌리면 그 상태를 이미 지나간다 — 사용자 설계 의도대로 '공짜'로 얻는다.
+    #   [§19.79] §19.74 철회 — 짝 LF 산출물이 **필수**다.
+    #     실측: `eval_abaqus.get_lf` 는 `Step-HighTension` 을 찾는데, 그 스텝은 **LF 전용**이다.
+    #     HF 체인에는 없다(eval 로그: "LF Error: Target step not found."). LF 모델은 클램프가
+    #     없는(NO_CLAMP) 모델이라 HF 의 중간 상태로 대체될 수 없다 — 물리적으로 다른 상태다.
+    if not os.path.exists(LF_ODB):
+        emit("!!! ERROR: 짝지을 LF 산출물이 없습니다 -> %s" % LF_ODB)
+        emit("    먼저: abaqus cae noGUI=run_abaqus.py -- LF %g %g" % (x_c, d_c))
+        sys.stdout.flush()
+        sys.exit(1)
 
     # 좌굴모드와 포스트버클 해석이 '같은 초기응력 상태'에서 계산되도록
     # 초기응력 재생성(500 -> 100 Pa)을 좌굴 잡 제출 '앞'으로 이동.
@@ -1492,25 +1497,40 @@ elif fidelity == 'HF':
 
 
     #   [§19.74] LF 인자로 **HF ODB 자신**을 넘긴다(get_lf 는 Step-HighTension 프레임만 본다).
-    cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), HF_ODB, HF_ODB)
+    cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)
 
 try:
-    # shell=True로 eval_abaqus.py 실행
-    # stdout 을 회수해 로그에 남기되 "RESULTS:" 줄은 버린다 — 상위에는 아래
-    # extraction.txt 경로로만 전달해야 mfbo.py 가 같은 신호를 두 번 읽지 않는다.
+    #   [§19.79] stale 산출물 차단: eval 이 쓰지 않았다면 옛 extraction.txt 를 읽어
+    #     '이번 런의 결과'처럼 보고하는 사고가 있었다(실측: 0.02/0.005 런이 소수점 17자리까지
+    #     동일 — 같은 파일을 두 번 읽은 것). 그래서 **먼저 지운다**.
+    try:
+        if os.path.exists('extraction.txt'):
+            os.remove('extraction.txt')
+    except Exception:
+        pass
     p = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     rc = p.returncode
+    _eval_bad = (rc != 0)
     for _ln in ((p.stdout or "") + (p.stderr or "")).splitlines():
         _ls = _ln.strip()
-        if _ls.startswith("RESULTS:") or not _ls:
+        if not _ls:
             continue
-        if _ls.startswith("!!!") or "ERROR" in _ls or "FAIL" in _ls or "Traceback" in _ls:
+        if _ls.startswith("RESULTS:FAIL") or "Target step not found" in _ls or "FAIL" in _ls:
+            _eval_bad = True
+            emit("   [eval] %s" % _ls)      # [§19.79] FAIL 신호를 삼키지 않는다
+            continue
+        if _ls.startswith("RESULTS:"):
+            continue
+        if _ls.startswith("!!!") or "ERROR" in _ls or "Traceback" in _ls:
             emit("   [eval] %s" % _ls)
     if rc != 0:
         emit("!!! ERROR: eval_abaqus.py exited with code %d" % rc)
-    
+
     # 추출 스크립트가 출력한 "RESULTS:..." 라인을 찾아 전달
-    if os.path.exists('extraction.txt'):
+    if _eval_bad:
+        emit("!!! ERROR: eval_abaqus.py 가 실패했습니다(LF 스텝/입력 확인) -> RESULTS:FAIL")
+        emit("RESULTS:FAIL")
+    elif os.path.exists('extraction.txt'):
         with open('extraction.txt', 'r') as f:
             emit("RESULTS:" + f.read().strip())
     else:

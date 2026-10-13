@@ -110,8 +110,19 @@ def get_abaqus(new_x, new_s):
     #        eval_abaqus.py 의 get_lf(args[-3]) 가 실패한다 -> 먼저 LF 해석을 수행해 둔다.
     #        (stale 산출물 오염 방지를 위해 기존 파일 삭제 후 실행)
     if mode_str == "HF":
-        #   [§19.74] 선행 LF 잡 없음 — LF 지표는 HF ODB 의 Step-HighTension 프레임에서 나온다
-        #     (사용자 설계: ClampTension/HighTension 단계를 지나므로 별도 LF 런은 낭비였다).
+        #   [§19.79] §19.74 철회 -> 선행 LF 런 복원(eval 이 LF ODB 의 Step-HighTension 을 읽는다).
+        _lf_odb = os.path.join(_RUN, aba_imperfection.lf_odb_name(x1, x2))
+        if os.path.exists(_lf_odb):
+            print(f"--- LF reuse: {os.path.basename(_lf_odb)} (skip submit) ---")
+        else:
+            print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
+            subprocess.run(f'abaqus cae noGUI="{_script}" -- LF {x1} {x2}',
+                           shell=True, check=False, capture_output=True, text=True, cwd=_RUN,
+                           env=_CHILD_ENV)
+            if not os.path.exists(_lf_odb):
+                print("!!! HF prerequisite LF run produced no %s - aborting this HF point."
+                      % os.path.basename(_lf_odb))
+                return FAIL, FAIL
         #   [2026-10-12 계획 T8] HF 임퍼펙션 시드는 설계점 (x_c, d_c) 마다 달라진다.
         #   표 경로는 run_abaqus.py 가 결정적으로 조립하므로(seeds/modes_xc<NNN>_dc<NNN>.txt)
         #   여기서는 **없을 때만** 만든다(같은 점 재방문 비용 0). 실패하면 HF 를 돌리지 않는다.
