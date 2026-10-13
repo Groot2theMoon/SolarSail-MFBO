@@ -3289,3 +3289,22 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   Step-HighTension 에 EVOL/S 프레임이 없거나, get_lf 의 'EVOL field not found' 가 찍힌다).
 [주의] HF ODB 는 **임퍼펙션이 들어간 모델**이라 LF-only 런(무결함, s=0)과 lf 값이 미세하게 다를 수
   있다. 1회 비교해 크기를 보라(예상은 작음 — LF/HF 잡음 가정이 1e-6/1e-3 급).
+
+#### §19.75 make_seed ↔ run_abaqus 분리 유지 — 병합·자동호출 모두 보류 (사용자 결정, 2회 확인)
+
+[질문] "make_seed.py 를 run_abaqus.py 에 병합할 수 없나? mfbo 자동화로 합치기에 굳이 분리할 필요가 있나?"
+[실측] 병합은 기술적으로 가능하다 — `run_abaqus.py` 는 이미 `abaqus python eval_abaqus.py` 를
+  서브프로세스로 띄우고(L1478 근처), `combine_mode_tables` 는 stdlib, `extract_modes` 는
+  CAE 안에서 직접 import 호출이 가능하다. 못 할 일이 아니다.
+[기각 사유 3 — 다음에 또 물으시면 이 셋으로 답한다]
+  1. **CAE 라이선스 중첩**: HF 가 이미 cae 1개(+standard 8토큰)를 점유한 채 buckle 용 cae 를 또
+     띄운다(동시 2개). 서버 여유가 "1 out of 2" 로 찍히던 그 자원이다.
+  2. **중첩 Abaqus = 환경 함정 배수기**: 이 파이프라인에서만 4건이 나왔다 — 자식 stdout 파이프
+     인코딩(§19.68) / 파일 읽기 인코딩(§19.71) / execfile 에 `__file__` 없음(§19.73) /
+     `abaqus python` rc=0 거짓말(§19.67). 중첩하면 이들이 40분짜리 HF 런 **안쪽**에서 터진다.
+  3. **실패 격리 상실**: 지금은 '시드 실패'와 'HF 실패'가 로그에서 분리돼 보인다. 병합하면 HF
+     프로세스 하나가 버클2+추출2+합성1 을 떠안아 원인이 뭉개진다.
+[대안 ③ — 채택 안 함] `run_abaqus.py` 가 시드표가 없을 때만 `make_seed.py` 를 서브프로세스로
+  자동 호출(한 줄 UX, 구현 ~10줄). 자식 cae 1개 추가가 대가.
+[결정] **현행 유지**: `mfbo.py` 가 순서(make_seed → run_abaqus)를 잡고 두 스크립트는 분리한다.
+  수동 실행 시에도 순서는 LF(불필요, §19.74)·시드·HF 로 명확하다.
