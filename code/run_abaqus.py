@@ -46,6 +46,7 @@ from abaqus import *
 from abaqusConstants import *
 from step import *
 from mesh import ElemType
+import re
 import regionToolset
 import interaction
 import sys
@@ -228,7 +229,7 @@ except:
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
                   'dat', 'res', 'abq', 'ipm', 'mdl', 'stt', 'cid')
 
-def run_job_safely(job_name, model_name=None):
+def run_job_safely(job_name, model_name=None, stabilize=None):
     """
     job 실행 중 .odb, .lck 파일 충돌을 방지하고, 완료까지 대기하는 함수
 
@@ -305,7 +306,7 @@ def run_job_safely(job_name, model_name=None):
             _needs_patch = True          # 읽지 못하면 종전 동작(패처 시도) 유지
         if not _needs_patch:
             emit("[PATCHER] 이 덱에 Step-Postbuckle 이 없다 -> 패처 생략(§19.80, LF 경로)")
-        if _needs_patch and not run_patcher(job_name + '.inp'):
+        if _needs_patch and not run_patcher(job_name + '.inp', stabilize=stabilize):
             emit("!!! ERROR: 패처 실패 — 패치되지 않은 덱을 제출하지 않는다(§14).")
             emit("RESULTS:FAIL")
             sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
@@ -333,8 +334,31 @@ def run_job_safely(job_name, model_name=None):
     emit("Job %s completed successfully (Status: %s)." % (job_name, str(job.status)))
     return True
 
+def run_job_with_ladder(job_name, model_name=None):
+    """[§19.85] STABILIZE_LADDER 를 순서대로 시도해 **완주하면 멈춘다**.
+
+    왜: 스냅스루 정규화에 필요한 감쇠 수준이 설계점마다 다르다(실측: (0.8,0.75)에서 0.003 실패 /
+    0.01 완주). 완주한 레벨을 `stabilize_used.txt` 로 남겨 결과의 자격을 추적할 수 있게 한다.
+    """
+    for _lv in STABILIZE_LADDER:
+        emit("[LADDER] stabilize=%g 시도 (%s)" % (_lv, job_name))
+        if run_job_safely(job_name, model_name=model_name, stabilize=_lv):
+            emit("[LADDER] stabilize=%g 에서 완주" % _lv)
+            try:
+                with open(os.path.join(os.getcwd(), 'stabilize_used.txt'), 'w',
+                          encoding='utf-8') as _f:
+                    _f.write('%g\n' % _lv)
+            except Exception:
+                pass
+            return True
+        emit("[LADDER] stabilize=%g 실패 -> 다음 레벨로" % _lv)
+    emit("!!! ERROR: 사다리 소진 %s — 이 설계점은 완주 불가" % (STABILIZE_LADDER,))
+    return False
+
+
 def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=2e-2',
-                                                     '--can=1e-2', '--i0=8', '--ir=10')):
+                                                     '--can=1e-2', '--i0=8', '--ir=10'),
+                stabilize=None):
     """패치 전 덱에 *Controls 를 주입해 같은 파일명으로 덮어쓴다.
 
     riks_patch_input.py 는 SRC 를 전부 메모리로 읽은 뒤 DST 를 열어 쓰므로
@@ -343,6 +367,20 @@ def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=2e-2
 
     반환: True(성공) / False(실패 — 호출자가 RESULTS:FAIL 로 끊는다)
     """
+    #   [§19.85] stabilize 가 주어지면 패치된 덱의 `*Static, stabilize=...` 값만 교체한다.
+    #     (패처 자체의 안정화 기본값에 의존하지 않고 사다리를 돌리기 위한 최소 개입)
+    def _set_stabilize(_p, _v):
+        with open(_p, 'r', encoding='utf-8', errors='replace') as _f:
+            _t = _f.read()
+        _new, _n = re.subn(r'(\*Static,\s*stabilize=)[0-9.eE+-]+', r'\g<1>%g' % _v, _t)
+        if _n != 1:
+            emit("[LADDER] !!! stabilize 치환 실패(패턴 %d건) — 덱을 확인하세요: %s" % (_n, _p))
+            return False
+        with open(_p, 'w', encoding='utf-8') as _f:
+            _f.write(_new)
+        emit("[LADDER] stabilize=%g 로 덱 수정 (%s)" % (_v, os.path.basename(_p)))
+        return True
+
     _rp = os.path.join(_HERE, 'riks_patch_input.py')
     if not os.path.exists(_rp):
         emit("[PATCHER] !!! riks_patch_input.py 없음: %s" % _rp)
@@ -520,6 +558,12 @@ IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t �
 #     LF 는 MFBO 의 "싼 대리 모델"이다 — 그 정의가 시드표/진폭에 의존하면 같은 설계점의 LF 값이
 #     시드에 따라 흔들려 다중충실도 구조가 약해진다. LF 분기에서는 섭동 크기를 0 으로 만들어
 #     메쉬를 완전하게 둔다(주름은 HF 에서만 발달한다는 해석과도 일치).
+#   [§19.85] HF 완주 사다리(사용자 지시: 0.005 - 0.01 - 0.02 - 0.05).
+#     실측 근거: 같은 점 (x_c=0.8, d_c=0.75)에서 stabilize=0.003 -> TOO MANY ATTEMPTS(τ=0.622),
+#     0.01 -> 완주. 감쇠가 지배 변수임이 단일 변수 실험으로 확정됐다. 첫 레벨로 제출하고
+#     실패하면 다음 레벨로 승급한다(각 레벨의 선택 결과를 로그에 남긴다).
+STABILIZE_LADDER = (0.005, 0.01, 0.02, 0.05)
+
 try:
     _IS_HF_RUN = (fidelity == 'HF')
 except NameError:
@@ -1521,7 +1565,11 @@ elif fidelity == 'HF':
         if not inserted:
             my_model.keywordBlock.insert(len(my_model.keywordBlock.sieBlocks)-1, imp_text)
 
-    run_job_safely('HF_Postbuckle')
+    if not run_job_with_ladder('HF_Postbuckle'):
+        emit("!!! ERROR: HF 완주 실패(안정화 사다리 소진) -> RESULTS:FAIL")
+        emit("RESULTS:FAIL")
+        sys.stdout.flush()
+        sys.exit(1)
 
 
     #   [§19.79] LF 인자는 **LF ODB** 다 — get_lf 는 LF 전용 `Step-HighTension` 을 읽으므로

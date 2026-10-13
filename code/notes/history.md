@@ -3438,3 +3438,21 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   진폭 = **probe_partial_hf.py**(살아있는 ODB — u_z,max/min/ave + Galhofo 참조 상수 포함).
 [주의] `aba\eig_history.jsonl` 에 이미 낡은 값이 쌓여 있을 수 있다 — 삭제하거나 무시할 것.
 [검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
+
+#### §19.85 HF 완주 사다리 — stabilize 0.005 → 0.01 → 0.02 → 0.05 (사용자 지시, 2026-10-13)
+
+[근거] 단일 변수 실험 확정: 같은 점 (x_c=0.8, d_c=0.75)에서 `stabilize=0.003` -> TOO MANY
+  ATTEMPTS(τ=0.622) 실패, **0.01 -> 완주**. 감쇠 수준이 완주를 지배하는 변수다(설계점마다 필요한
+  하한이 다르다 — 안정화는 스냅스루 정규화 장치이고 그 격렬함이 (x_c,d_c)에 의존).
+[변경] `run_abaqus.py`
+  - `STABILIZE_LADDER = (0.005, 0.01, 0.02, 0.05)` 상수.
+  - `run_patcher(..., stabilize=None)`: 패처 실행 뒤 **덱의 `*Static, stabilize=...` 값만** 정규식으로
+    교체(`_set_stabilize`, 치환 1건 assert). 패처 자체 기본값에 의존하지 않는다.
+  - `run_job_safely(..., stabilize=None)` -> `run_patcher(..., stabilize=stabilize)`.
+  - `run_job_with_ladder(job_name)`: 레벨을 순서대로 시도, 완주하면 중단하고 **`aba/stabilize_used.txt`
+    에 그 레벨을 기록**(결과의 자격 추적). 소진 시 False.
+  - HF 호출부: `run_job_safely('HF_Postbuckle')` -> `run_job_with_ladder(...)`, 실패 시
+    명시적 `RESULTS:FAIL` + 종료. LF 는 `Step-Postbuckle` 이 없어 패처가 생략되므로 사다리 미적용.
+[검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
+[주의] 완주해도 **에너지 비(ALLSD/ALLIE)** 는 별도 확인 대상이다 — 감쇠로 만든 완주는 주름을
+  덮어 손실을 과소평가할 수 있다. `probe_energy.py` 로 점마다 확인하고 1% 초과면 신뢰도 표시.
