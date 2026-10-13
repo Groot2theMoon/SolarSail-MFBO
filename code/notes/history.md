@@ -3421,3 +3421,20 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   현재 66.7% 는 3.2배지만, d_c=0.3 은 클램프 당김이 작아 클램프가 하중을 덜 흡수하고 막이 더
   압축되는 방향(54배 규명의 메커니즘과 같은 방향)이라 **설계점 효과**로 설명될 수 있다 —
   확인 필요: 역사적 20.6% 가 어느 (x_c, d_c) 였는가.
+
+#### §19.84 R-13 / N-6 진단 무력화 — 낡은 Buckle_Analysis.* 를 읽던 눈먼 진단 (사용자 지적, 2026-10-13)
+
+[지적] "진단 부분 전부 지우면 안되나? 어차피 지금 run_abaqus.py 로는 쓰이지도 않잖아."
+[확인] 맞다 — 이 진단은 매 런 **실행**되지만 그 산출물을 소비하는 곳이 없다. 그리고 소스가
+  `Buckle_Analysis.odb/.dat/.msg` 인데 `RUN_SELF_BUCKLE_JOB=False` 라 **생성되지 않는다**.
+  실측 증거: x_c=0.5/d_c=0.3 런과 x_c=0.8/d_c=0.75 런의 R-13 출력이 **완전히 동일**했다
+  (913 Pa / 609.9 Pa / u_z=1.5e-22 m). `[record] eig_history.jsonl` 도 같은 낡은 .dat 에서 나온
+  값(`lambda1=0.000125093`, 매 런 동일)을 **이력 파일에 누적**하고 있었다 — 조용한 데이터 오염.
+[조치] `BASE_PROBE`/`EIG_RECORD` 스위치를 **False** 로(코드 삭제 아님 — 블록이 try/except 라
+  통째 절단은 문법 위험. 별도 작업으로 남김). 검사기의 해당 메시지도 정정
+  ("base_state_probe 면적가중" -> "eval_abaqus.get_lf(LF1 압축 부피비)") — EVOL 검사 자체는
+  get_lf 가 EVOL 을 쓰므로 여전히 유효하다.
+[대체 수단] base state 지표 = **LF ODB 의 lf1~lf3**(§19.79/§19.82 로 정상 동작), 논문 대조용
+  진폭 = **probe_partial_hf.py**(살아있는 ODB — u_z,max/min/ave + Galhofo 참조 상수 포함).
+[주의] `aba\eig_history.jsonl` 에 이미 낡은 값이 쌓여 있을 수 있다 — 삭제하거나 무시할 것.
+[검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.

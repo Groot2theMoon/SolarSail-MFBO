@@ -319,7 +319,7 @@ def main():
         _has = 'EVOL' in _txt
         print("  %s  %s" % ('OK  ' if _has else '!!! ', _label + ' EVOL=' + str(_has)))
         if not _has:
-            bad.append('%s: EVOL 필드출력 누락 -> base_state_probe 면적가중 불가' % _label)
+            bad.append('%s: EVOL 필드출력 누락 -> eval_abaqus.get_lf(LF1 압축 부피비) 계산 불가' % _label)
 
     print()
     print("--- 작업 디렉터리 분리 (산출물 혼입 방지) ---")
