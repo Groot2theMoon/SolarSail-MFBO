@@ -89,14 +89,14 @@ def buckle_disp():
 
 def expected_odb(x_c, disp, d_c, case, excl=0.21):
     """buckle 잡 이름 규약으로 ODB 경로를 만든다(없으면 glob 폴백)."""
-    dc = int(round(d_c * 100.0)) if case == 'clamp_only' else 0
+    dc = A.value_tag(d_c) if case == 'clamp_only' else '0'     # [§19.76] 반올림 없음
     ex = '' if excl == 0.0 else '_ex%03d' % int(round(excl * 1000.0))
-    job = ('Buckle_xc%03d_d%03dum_dc%03d_f%03d_s4_grid_%s_normal%s_plv01000'
-           % (int(round(x_c * 100.0)), int(round(disp * 1.0e6)), dc, 100, case, ex))
+    job = ('Buckle_xc%s_d%03dum_dc%s_f%03d_s4_grid_%s_normal%s_plv01000'
+           % (A.value_tag(x_c), int(round(disp * 1.0e6)), dc, 100, case, ex))
     p = os.path.join(RUN_DIR, job + '.odb')
     if os.path.exists(p):
         return p, job
-    pat = os.path.join(RUN_DIR, 'Buckle_xc%03d_*_%s_*.odb' % (int(round(x_c * 100.0)), case))
+    pat = os.path.join(RUN_DIR, 'Buckle_xc%s_*_%s_*.odb' % (A.value_tag(x_c), case))
     hits = sorted(glob.glob(pat), key=os.path.getmtime, reverse=True)
     return (hits[0], os.path.splitext(os.path.basename(hits[0]))[0]) if hits else (p, job)
 

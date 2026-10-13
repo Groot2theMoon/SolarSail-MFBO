@@ -26,7 +26,7 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
 
 산출물 (code/buckle/)  <job>.odb/.dat/.msg/.sta/.fil/... + <job>.diag.txt. 고유값 표는 .dat 의
     MODE NO / EIGENVALUE 블록(콘솔에도 덤프). 잡 이름은 조건에서 자동 생성한다:
-    Buckle_xc050_d018um_dc006_f100_s4_grid_clamp_only_normal_ex210_plv01000 (80자 초과는 예외 차단).
+    Buckle_xc0p5_d018um_dc0p0556_f100_s4_grid_clamp_only_normal_ex210_plv01000 (80자 초과는 예외 차단).
 
 HF 로 넘길 때
     ① abaqus python aba_mode_from_odb.py buckle\\<job>.odb Step-Buckle modes_x.txt 4
@@ -945,14 +945,21 @@ if ELEM_TAG is None:
 
 _excl_tag = '' if CLAMP_EXCL_R == 0.0 else '_ex%03d' % int(round(CLAMP_EXCL_R * 1000.0))
 _f_tag = 100
-_dc_tag = (int(round(CLAMP_DC_EFF * 100.0))
-           if CASE in ('clamp_only',) else 0)
+
+
+def _value_tag(v):
+    """[§19.76] 수치 -> 파일명 태그. aba_imperfection.value_tag 와 같은 규칙(반올림 없음)."""
+    return ('%g' % float(v)).replace('+', '').replace('-', 'm').replace('.', 'p')
+
+
+_dc_tag = (_value_tag(CLAMP_DC_EFF)
+           if CASE in ('clamp_only',) else '0')
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
 _live_tag = (('_plv%05d' % int(round(PERTURBATION * 1.0e5)))
              if CASE in ('seed', 'clamp_only') else '')   # [§19.60] 둘 다 LIVE 프로브가 있다
 _rot_tag = ''                     # [§19.62] rotfix 기계장치 제거 -> 이름 토큰 없음
 MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
-JOB_NAME = 'Buckle_xc%03d_d%03dum_dc%03d_f%03d_%s_%s_%s_%s%s%s%s' % (int(round(x_c * 100.0)),
+JOB_NAME = 'Buckle_xc%s_d%03dum_dc%s_f%03d_%s_%s_%s_%s%s%s%s' % (_value_tag(x_c),
                                                        int(round(DISP * 1.0e6)),
                                                        _dc_tag,
                                                        _f_tag,

@@ -422,9 +422,20 @@ BUCKLE_SCRIPT_NAME = 'run_abaqus_buckle.py'
 SEED_DIR_NAME = 'seeds'
 
 
+def value_tag(v):
+    """[§19.76] 수치 -> 파일명 태그. **반올림하지 않는다**.
+
+    종전 `int(round(v*100))` 는 0 과 0.001 을, x_c=0.1234 와 0.1249 를 같은 이름으로 만들었다
+    -> 서로 다른 설계점이 같은 시드표/ODB 를 덮어쓰거나 재사용해 조용한 오염이 가능했다.
+    '%g' 는 값을 복원 가능한 문자열로 만든다(0 -> '0', 0.5 -> '0p5', 0.0556 -> '0p0556',
+    1.8e-05 -> '1p8em05'). 파일명 안전: 영숫자와 p/m 만 쓴다.
+    """
+    return ('%g' % float(v)).replace('+', '').replace('-', 'm').replace('.', 'p')
+
+
 def seed_table_name(x_c, d_c, prefix='modes'):
-    """설계점 -> 시드표 파일명. dc 는 백분율로 자른다(0.0556 -> 006; HF 잡 이름과 같은 규칙)."""
-    return '%s_xc%03d_dc%03d.txt' % (prefix, int(round(x_c * 100.0)), int(round(d_c * 100.0)))
+    """설계점 -> 시드표 파일명. 태그는 value_tag(HF 잡 이름과 같은 규칙)."""
+    return '%s_xc%s_dc%s.txt' % (prefix, value_tag(x_c), value_tag(d_c))
 
 
 def seed_table_path(seeds_dir, x_c, d_c, env=None):
@@ -441,7 +452,7 @@ def buckle_fingerprint(script_path, keys=BUCKLE_FINGERPRINT_KEYS):
 
 def point_tag(x_c, d_c):
     """설계점 태그 — 산출물 이름에 넣어 짝 어긋남(mispairing)을 구조적으로 막는다."""
-    return '_xc%03d_dc%03d' % (int(round(float(x_c) * 100.0)), int(round(float(d_c) * 100.0)))
+    return '_xc%s_dc%s' % (value_tag(x_c), value_tag(d_c))
 
 
 def lf_odb_name(x_c, d_c):

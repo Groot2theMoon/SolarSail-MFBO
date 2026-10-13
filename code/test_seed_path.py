@@ -40,18 +40,18 @@ def main():
 
     print("--- 1) 파일명 규칙 ---")
     check('name 0.5/0.0556 -> xc050_dc006',
-          A.seed_table_name(0.5, 0.0556) == 'modes_xc050_dc006.txt',
+          A.seed_table_name(0.5, 0.0556) == 'modes_xc0p5_dc0p0556.txt',
           A.seed_table_name(0.5, 0.0556))
     check('name 0.25/0.1 -> xc025_dc010',
-          A.seed_table_name(0.25, 0.1) == 'modes_xc025_dc010.txt',
+          A.seed_table_name(0.25, 0.1) == 'modes_xc0p25_dc0p1.txt',
           A.seed_table_name(0.25, 0.1))
     check('name 0.3/0.5 -> xc030_dc050',
-          A.seed_table_name(0.3, 0.5) == 'modes_xc030_dc050.txt',
+          A.seed_table_name(0.3, 0.5) == 'modes_xc0p3_dc0p5.txt',
           A.seed_table_name(0.3, 0.5))
 
     print("--- 2) 경로 · env 우선 ---")
     check('path 기본 = seeds/modes_xc050_dc006.txt',
-          A.seed_table_path(tmp, 0.5, 0.0556) == os.path.join(tmp, 'modes_xc050_dc006.txt'),
+          A.seed_table_path(tmp, 0.5, 0.0556) == os.path.join(tmp, 'modes_xc0p5_dc0p0556.txt'),
           A.seed_table_path(tmp, 0.5, 0.0556))
     check('path env 오버라이드 우선',
           A.seed_table_path(tmp, 0.5, 0.0556, env='other/t.txt') == os.path.abspath('other/t.txt'))
@@ -83,7 +83,7 @@ def main():
     _write(seed_t, 'MODE 1\n1 1.0\nMODE 2\n1 -1.0\n')
     _write(clamp_t, 'MODE 1\n1 1.0\n')
     fp, hdr = A.seed_header_lines(0.5, 0.0556, b1, seed_t, '1,2', clamp_t, '1')
-    tbl = os.path.join(tmp, 'modes_xc050_dc006.txt')
+    tbl = os.path.join(tmp, 'modes_xc0p5_dc0p0556.txt')
     _write(tbl, '\n'.join(hdr) + '\nMODE 1\n1 1.0\nMODE 2\n1 -1.0\n')
     check('헤더에 지문 기록', fp in '\n'.join(hdr))
     check('table_fingerprint 호환(기존 리더)', A.table_fingerprint(tbl) == fp,
@@ -145,8 +145,24 @@ def main():
         check('combine_mode_tables import', False, e)
 
     print("--- 7) 설계점 태그 · LF 산출물 이름 (§19.66) ---")
-    check("point_tag(0.5, 0.5)", A.point_tag(0.5, 0.5) == '_xc050_dc050', A.point_tag(0.5, 0.5))
-    check("point_tag(0.25, 0.0556)", A.point_tag(0.25, 0.0556) == '_xc025_dc006', A.point_tag(0.25, 0.0556))
+    check("point_tag(0.5, 0.5)", A.point_tag(0.5, 0.5) == '_xc0p5_dc0p5', A.point_tag(0.5, 0.5))
+    check("point_tag(0.25, 0.0556)", A.point_tag(0.25, 0.0556) == '_xc0p25_dc0p0556', A.point_tag(0.25, 0.0556))
+    # ---- [§19.76] 태그 충돌 가드: 서로 다른 설계점이 같은 이름을 쓰면 안 된다 ----
+    check("[§19.76] 0 vs 0.001 충돌 없음",
+          A.seed_table_name(0.5, 0.0) != A.seed_table_name(0.5, 0.001),
+          A.seed_table_name(0.5, 0.0) + ' / ' + A.seed_table_name(0.5, 0.001))
+    check("[§19.76] x_c 0.1234 vs 0.1249 충돌 없음",
+          A.seed_table_name(0.1234, 0.5) != A.seed_table_name(0.1249, 0.5),
+          A.seed_table_name(0.1234, 0.5) + ' / ' + A.seed_table_name(0.1249, 0.5))
+    check("[§19.76] d_c 1e-04 vs 0 충돌 없음",
+          A.seed_table_name(0.5, 1.0e-4) != A.seed_table_name(0.5, 0.0),
+          A.seed_table_name(0.5, 1.0e-4))
+    _dir = os.path.dirname(os.path.abspath(__file__))
+    _bs = io.open(os.path.join(_dir, 'run_abaqus_buckle.py'), encoding='utf-8').read()
+    _ms = io.open(os.path.join(_dir, 'make_seed.py'), encoding='utf-8').read()
+    _fmt = 'Buckle_xc%s_d%03dum_dc%s_'
+    check("[§19.76] 잡이름 형식 buckle↔make_seed 동일",
+          (_fmt in _bs) and (_fmt in _ms), 'buckle=%s make_seed=%s' % (_fmt in _bs, _fmt in _ms))
     check("lf_odb_name(0.5, 0.5)", A.lf_odb_name(0.5, 0.5) == 'LF_Analysis_xc050_dc050.odb',
           A.lf_odb_name(0.5, 0.5))
     check("lf_job_name(0.5, 0.5)", A.lf_job_name(0.5, 0.5) == 'LF_Analysis_xc050_dc050',
