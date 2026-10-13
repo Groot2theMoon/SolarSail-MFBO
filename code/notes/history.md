@@ -3456,3 +3456,18 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
 [주의] 완주해도 **에너지 비(ALLSD/ALLIE)** 는 별도 확인 대상이다 — 감쇠로 만든 완주는 주름을
   덮어 손실을 과소평가할 수 있다. `probe_energy.py` 로 점마다 확인하고 1% 초과면 신뢰도 표시.
+
+#### §19.86 사다리에 에너지 비 판정 결합 — "완주 + 자격" 쌍으로 기록 (사용자 지시, 2026-10-13)
+
+[동기] §19.85 사다리는 "완주"만 보장한다. 그런데 안정화는 스냅스루 정규화 장치라 완주가 감쇠의
+  산물일 수 있다(주름을 덮어 손실을 과소평가). 완주와 자격을 함께 남겨야 BO 결과를 논문에 쓸 수 있다.
+[변경] `run_abaqus.py` `run_job_with_ladder`: 완주한 레벨에서
+  - **`probe_energy.py` 를 subprocess 로 실행**(`abaqus python probe_energy.py <job>.odb Step-Postbuckle`)
+    -> `ALLSD/ALLIE` 의 last/max 를 파싱.
+  - 판정: **max < 1% OK / < 5% ACCEPT / >= 5% SUSPECT**(SUSPECT 면 경고 로그).
+  - `aba/stabilize_used.txt` 를 **key=value** 로 기록:
+    `stabilize`, `allds_allie_last_pct`, `allds_allie_max_pct`, `energy_verdict`, `job`, `x_c`, `d_c`.
+  - 프로브 실패나 에너지 이력 부재는 **무시**(`unknown`) — 진단이 본 런을 죽이지 않는다.
+[의미] 이제 HF 결과 한 점은 `(추력손실, 사용 감쇠 레벨, 에너지 자격)` 세 값으로 남는다.
+  BO가 저신뢰 점을 구분할 수 있고, 논문에서 "감쇠가 물리를 대신하지 않았다"를 점별로 보일 수 있다.
+[검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.

@@ -345,10 +345,45 @@ def run_job_with_ladder(job_name, model_name=None):
         emit("[LADDER] stabilize=%g 시도 (%s)" % (_lv, job_name))
         if run_job_safely(job_name, model_name=model_name, stabilize=_lv):
             emit("[LADDER] stabilize=%g 에서 완주" % _lv)
+            #   [§19.86] 완주 직후 **에너지 비**를 재서 완주가 감쇠로 만든 것인지 판정한다.
+            #     안정화는 스냅스루 정규화 장치라, 비율이 크면 주름을 덮어 손실을 과소평가한다.
+            #     지표: ALLSD(안정화 소산)/ALLIE(내부 에너지) — 관행 기준 max<1% 양호 / <5% 허용
+            #     / >=5% 의심. 점마다 기록해 결과의 자격을 추적한다.
+            _r_last = _r_max = None
+            try:
+                _pe = os.path.join(_HERE, 'probe_energy.py')
+                if os.path.exists(_pe):
+                    _pp = subprocess.run(
+                        'abaqus python "%s" %s Step-Postbuckle' % (_pe, job_name + '.odb'),
+                        shell=True, capture_output=True, text=True)
+                    _mm = re.search(
+                        r'ALLSD/ALLIE\s+last=([0-9.eE+-]+)%\s+max=([0-9.eE+-]+)%',
+                        (_pp.stdout or '') + (_pp.stderr or ''))
+                    if _mm:
+                        _r_last, _r_max = float(_mm.group(1)), float(_mm.group(2))
+                    else:
+                        emit("[LADDER] (에너지 이력 없음 -> probe_energy 출력 참조)")
+            except Exception as _pe_err:
+                emit("[LADDER] 에너지 프로브 실패(무시): %s" % _pe_err)
+            _verdict = 'unknown'
+            if _r_max is not None:
+                _verdict = ('OK' if _r_max < 1.0 else
+                            ('ACCEPT' if _r_max < 5.0 else 'SUSPECT'))
+                emit("[LADDER] ALLSD/ALLIE last=%.4g%% max=%.4g%% -> %s"
+                     % (_r_last, _r_max, _verdict))
+                if _verdict == 'SUSPECT':
+                    emit("!!! WARNING: 안정화 에너지가 5%% 이상 — 이 점의 손실은 과소평가일 수 있다")
             try:
                 with open(os.path.join(os.getcwd(), 'stabilize_used.txt'), 'w',
                           encoding='utf-8') as _f:
-                    _f.write('%g\n' % _lv)
+                    _f.write('stabilize=%g\n' % _lv)
+                    _f.write('allds_allie_last_pct=%s\n'
+                             % ('%.6g' % _r_last if _r_last is not None else 'unknown'))
+                    _f.write('allds_allie_max_pct=%s\n'
+                             % ('%.6g' % _r_max if _r_max is not None else 'unknown'))
+                    _f.write('energy_verdict=%s\n' % _verdict)
+                    _f.write('job=%s\nx_c=%s\nd_c=%s\n'
+                             % (job_name, globals().get('x_c', '?'), globals().get('d_c', '?')))
             except Exception:
                 pass
             return True
