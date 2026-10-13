@@ -161,7 +161,7 @@ def main(argv=None):
     pull_seed = disp * a.seed_clamp_dc         # 시드 클램프 당김 - 고정 비율(§19.69)
     seed_tbl = os.path.join(SEEDS_DIR, 'modes_seed.txt')
     clamp_tbl = os.path.join(SEEDS_DIR, A.seed_table_name(a.x_c, a.seed_clamp_dc, prefix='modes_clamp'))
-    out_tbl = A.seed_table_path(SEEDS_DIR, a.x_c, a.d_c)
+    out_tbl = os.path.join(SEEDS_DIR, A.composite_table_name(a.x_c))   # [§19.77] d_c 무관
     if not a.dry_run:
         os.makedirs(SEEDS_DIR, exist_ok=True)
 
@@ -219,6 +219,14 @@ def main(argv=None):
 
     # ---- 3) 합성 + 헤더 ----
     print("\n[3/3] 합성 2+2 + 설계점 헤더")
+    _fp, _hdr = A.seed_header_lines(a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_SCRIPT),
+                                    seed_tbl, '1,2', clamp_tbl, '1,2')
+    if not a.force and os.path.exists(out_tbl):
+        _cur = A.read_seed_header(out_tbl)
+        if _cur.get('fingerprint') == _fp:
+            print("      합성표 있음 - 건너뜀 (%s, 지문 %s)" % (os.path.basename(out_tbl), _fp))
+            print("\n[make_seed] OK — HF 가 %s 를 읽는다 (d_c 무관, §19.77)" % os.path.basename(out_tbl))
+            return 0
     if a.dry_run:
         _rel_d = lambda p: os.path.relpath(p, HERE)
         print("  $ abaqus python combine_mode_tables.py \"%s\" 1.0:\"%s\":1,2 1.0:\"%s\":1,2"

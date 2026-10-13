@@ -40,18 +40,18 @@ def main():
 
     print("--- 1) 파일명 규칙 ---")
     check('name 0.5/0.0556 -> xc050_dc006',
-          A.seed_table_name(0.5, 0.0556) == 'modes_xc0p5_dc0p0556.txt',
+          A.composite_table_name(0.5) == 'modes_xc0p5.txt',
           A.seed_table_name(0.5, 0.0556))
     check('name 0.25/0.1 -> xc025_dc010',
-          A.seed_table_name(0.25, 0.1) == 'modes_xc0p25_dc0p1.txt',
+          A.composite_table_name(0.25) == 'modes_xc0p25.txt',
           A.seed_table_name(0.25, 0.1))
     check('name 0.3/0.5 -> xc030_dc050',
-          A.seed_table_name(0.3, 0.5) == 'modes_xc0p3_dc0p5.txt',
+          A.composite_table_name(0.3) == 'modes_xc0p3.txt',
           A.seed_table_name(0.3, 0.5))
 
     print("--- 2) 경로 · env 우선 ---")
-    check('path 기본 = seeds/modes_xc050_dc006.txt',
-          A.seed_table_path(tmp, 0.5, 0.0556) == os.path.join(tmp, 'modes_xc0p5_dc0p0556.txt'),
+    check('path 기본 = seeds/modes_xc0p5.txt (d_c 무관, §19.77)',
+          A.seed_table_path(tmp, 0.5, 0.0556) == os.path.join(tmp, 'modes_xc0p5.txt'),
           A.seed_table_path(tmp, 0.5, 0.0556))
     check('path env 오버라이드 우선',
           A.seed_table_path(tmp, 0.5, 0.0556, env='other/t.txt') == os.path.abspath('other/t.txt'))
@@ -61,7 +61,7 @@ def main():
     check('지문 결정적', f0 == A.seed_fingerprint(0.5, 0.0556, 'abc', 's1', 'c1'))
     check('지문 16자', len(f0) == 16, f0)
     check('지문 x_c 민감', f0 != A.seed_fingerprint(0.6, 0.0556, 'abc', 's1', 'c1'))
-    check('지문 d_c 민감', f0 != A.seed_fingerprint(0.5, 0.10, 'abc', 's1', 'c1'))
+    check('[§19.77] 지문 d_c 무관', f0 == A.seed_fingerprint(0.5, 0.10, 'abc', 's1', 'c1'))
     check('지문 buckle 민감', f0 != A.seed_fingerprint(0.5, 0.0556, 'XYZ', 's1', 'c1'))
     check('지문 소스표 민감', f0 != A.seed_fingerprint(0.5, 0.0556, 'abc', 's2', 'c1'))
 
@@ -83,7 +83,7 @@ def main():
     _write(seed_t, 'MODE 1\n1 1.0\nMODE 2\n1 -1.0\n')
     _write(clamp_t, 'MODE 1\n1 1.0\n')
     fp, hdr = A.seed_header_lines(0.5, 0.0556, b1, seed_t, '1,2', clamp_t, '1')
-    tbl = os.path.join(tmp, 'modes_xc0p5_dc0p0556.txt')
+    tbl = os.path.join(tmp, 'modes_xc0p5.txt')
     _write(tbl, '\n'.join(hdr) + '\nMODE 1\n1 1.0\nMODE 2\n1 -1.0\n')
     check('헤더에 지문 기록', fp in '\n'.join(hdr))
     check('table_fingerprint 호환(기존 리더)', A.table_fingerprint(tbl) == fp,
@@ -95,7 +95,7 @@ def main():
     ok2, why2, _ = A.seed_gate(0.6, 0.0556, tbl, sc)
     check('게이트 x_c 불일치 차단', (not ok2) and ('x_c' in why2), why2)
     ok3, why3, _ = A.seed_gate(0.5, 0.10, tbl, sc)
-    check('게이트 d_c 불일치 차단', (not ok3) and ('d_c' in why3), why3)
+    check('[§19.77] 게이트는 d_c 불일치를 허용(같은 표 재사용)', ok3, why3)
     _write(sc, base.replace('N_EIG_BUCKLE = 10', 'N_EIG_BUCKLE = 11'))
     ok4, why4, _ = A.seed_gate(0.5, 0.0556, tbl, sc)
     check('게이트 buckle 드리프트 차단', (not ok4) and ('바뀜' in why4), why4)
@@ -160,6 +160,23 @@ def main():
     _dir = os.path.dirname(os.path.abspath(__file__))
     _bs = io.open(os.path.join(_dir, 'run_abaqus_buckle.py'), encoding='utf-8').read()
     _ms = io.open(os.path.join(_dir, 'make_seed.py'), encoding='utf-8').read()
+    # ---- [§19.77] d_c 무관성: 같은 x_c, 다른 d_c -> 같은 표 이름 + 같은 지문 ----
+    check("[§19.77] 합성표 이름이 d_c 무관",
+          A.composite_table_name(0.5) == 'modes_xc0p5.txt', A.composite_table_name(0.5))
+    _f1 = A.seed_fingerprint(0.5, 0.5, 'bfp', 'ssha', 'csha')
+    _f2 = A.seed_fingerprint(0.5, 1.0, 'bfp', 'ssha', 'csha')
+    check("[§19.77] 지문이 d_c 무관", _f1 == _f2, '%s vs %s' % (_f1, _f2))
+    _f3 = A.seed_fingerprint(0.3, 0.5, 'bfp', 'ssha', 'csha')
+    check("[§19.77] 지문은 x_c 에 의존", _f1 != _f3, '%s vs %s' % (_f1, _f3))
+    _tmp = tempfile.mkdtemp()
+    io.open(os.path.join(_tmp, 'modes_xc0p5_dc0p5.txt'), 'w', encoding='utf-8').write('# legacy\n')
+    check("[§19.77] 구형(d_c 포함) 파일 폴백",
+          os.path.basename(A.composite_table_path(_tmp, 0.5)) == 'modes_xc0p5_dc0p5.txt',
+          A.composite_table_path(_tmp, 0.5))
+    io.open(os.path.join(_tmp, 'modes_xc0p5.txt'), 'w', encoding='utf-8').write('# new\n')
+    check("[§19.77] 신형이 있으면 신형 우선",
+          os.path.basename(A.composite_table_path(_tmp, 0.5)) == 'modes_xc0p5.txt',
+          A.composite_table_path(_tmp, 0.5))
     _fmt = 'Buckle_xc%s_d%03dum_dc%s_'
     check("[§19.76] 잡이름 형식 buckle↔make_seed 동일",
           (_fmt in _bs) and (_fmt in _ms), 'buckle=%s make_seed=%s' % (_fmt in _bs, _fmt in _ms))

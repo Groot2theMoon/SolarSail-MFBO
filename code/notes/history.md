@@ -3326,3 +3326,22 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   `static_leak_check` 이상 없음. `make_seed --dry-run` 으로 새 이름 실측.
 [주의] 기존 파일 이름과 어긋나므로 표·ODB 를 **재생성(또는 리네임)** 해야 한다. 문서·스킬의 옛 이름 표기도
   새 규칙으로 읽어야 한다(§19.72 의 `modes_xc050_dc050.txt` 등).
+
+#### §19.77 합성 시드표에서 d_c 제거 — 같은 x_c 의 다른 d_c 표를 그대로 재사용 (사용자 "진행해") (2026-10-13)
+
+[동기] 모드 내용이 d_c 무관임이 확정됐다(§19.70: 시드 클램프 당김 0.01 고정, clamp 표 태그도 시드
+  비율). 그런데 HF 의 d_c 가 **합성표 이름·지문**에 들어가 새 d_c 마다 합성을 다시 해야 했다.
+[변경]
+  - `aba_imperfection`: `composite_table_name(x_c)` = `modes_xc<tag>.txt`(d_c 없음) ·
+    `composite_table_path` = env > 신형 > **구형 `modes_xc<x>_dc*.txt` 최신 폴백**(기존 파일 그대로 사용) ·
+    `seed_table_path` 는 후자로 위임(시그니처 유지 → run_abaqus 무변경).
+  - 지문: `canon_seed_inputs`/`seed_fingerprint` 에서 **d_c 제거**(인자는 호출부 호환용) ·
+    헤더는 `d_c=...` -> **`d_c_ref=...`**(참고값) · `seed_gate` 의 **d_c 비교 제거**
+    (x_c · buckle 소스 지문 · 지문 재계산은 그대로 유지 → 실질 드리프트는 계속 차단).
+  - `make_seed`: 합성표는 `composite_table_name` 으로, **기대 지문 == 기존 파일 헤더 지문이면 combine 생략**.
+[효과] 새 d_c 에서 추가 작업 **0** (buckle 잡 2개 생략은 이미, 이제 합성도 생략) → 순서 착오·파일 증식 제거.
+[검증] `test_seed_path` **49/49** — d_c 무관 가드(이름·지문) + 폴백 우선순위 + 게이트 d_c 허용.
+  옛 불변식 2건("지문 d_c 민감", "게이트 d_c 불일치 차단")은 새 설계에 맞게 **뒤집었다**.
+  검사기 PASS · `static_leak_check` 이상 없음.
+[주의] 지문 정의가 바뀌었으므로(§19.76 표 포함) 기존 표의 지문은 재계산과 불일치한다 →
+  `make_seed --x_c 0.5 --d_c 0.5` 로 **1회 재생성**(combine 만, 수 초)이 필요하다.

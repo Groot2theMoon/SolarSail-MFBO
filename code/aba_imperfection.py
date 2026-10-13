@@ -438,11 +438,35 @@ def seed_table_name(x_c, d_c, prefix='modes'):
     return '%s_xc%s_dc%s.txt' % (prefix, value_tag(x_c), value_tag(d_c))
 
 
-def seed_table_path(seeds_dir, x_c, d_c, env=None):
-    """시드표 절대경로. env(SOLARSAIL_MODE_TABLE)가 있으면 그것이 이긴다(실험용 오버라이드)."""
+def composite_table_name(x_c, prefix='modes'):
+    """[§19.77] 합성 시드표 파일명 — **d_c 를 넣지 않는다**.
+
+    모드 내용이 d_c 와 무관하기 때문이다(시드 클램프 당김은 0.01 고정, §19.70). 종전에는 HF 의
+    d_c 가 이름에 들어가 새 d_c 마다 합성을 다시 해야 했는데, 그 d_c 는 모드에 아무 영향이 없다.
+    """
+    return '%s_xc%s.txt' % (prefix, value_tag(x_c))
+
+
+def composite_table_path(seeds_dir, x_c, env=None):
+    """합성 시드표 절대경로. env(SOLARSAIL_MODE_TABLE) > 신형 이름 > 구형(d_c 포함) 최신 폴백.
+
+    구형 폴백: §19.77 이전에 만든 'modes_xc<x>_dc<d>.txt' 가 있으면 그중 **최신**을 쓴다.
+    내용이 같으므로 재생성 없이 그대로 쓸 수 있다(어느 쪽을 썼는지는 basename 으로 보인다).
+    """
     if env:
         return os.path.abspath(env)
-    return os.path.join(seeds_dir, seed_table_name(x_c, d_c))
+    import glob
+    new = os.path.join(seeds_dir, composite_table_name(x_c))
+    if os.path.exists(new):
+        return new
+    hits = sorted(glob.glob(os.path.join(seeds_dir, 'modes_xc%s_dc*.txt' % value_tag(x_c))),
+                  key=os.path.getmtime, reverse=True)
+    return hits[0] if hits else new
+
+
+def seed_table_path(seeds_dir, x_c, d_c, env=None):
+    """합성 시드표 경로. [§19.77] d_c 는 이름·지문에서 빠졌다 — 인자는 호출부 호환용."""
+    return composite_table_path(seeds_dir, x_c, env=env)
 
 
 def buckle_fingerprint(script_path, keys=BUCKLE_FINGERPRINT_KEYS):
@@ -478,9 +502,13 @@ def file_token(path):
 
 
 def canon_seed_inputs(x_c, d_c, buckle_fp, seed_sha, clamp_sha):
-    """지문 입력의 정본 문자열 — HF 와 make_seed 가 **같은 문자열**을 만들어야 한다."""
-    return 'x_c=%.4f|d_c=%.5f|buckle=%s|seed=%s|clamp=%s' % (
-        float(x_c), float(d_c), buckle_fp or 'none', seed_sha or 'none', clamp_sha or 'none')
+    """지문 입력의 정본 문자열 — HF 와 make_seed 가 **같은 문자열**을 만들어야 한다.
+
+    [§19.77] **d_c 를 뺀다**: 모드가 d_c 무관이므로(§19.70) d_c 가 다르면 같은 표를 쓰는 게 맞다.
+    인자 d_c 는 호출부 호환을 위해 받기만 하고 지문에는 쓰지 않는다.
+    """
+    return 'x_c=%.4f|buckle=%s|seed=%s|clamp=%s' % (
+        float(x_c), buckle_fp or 'none', seed_sha or 'none', clamp_sha or 'none')
 
 
 def seed_fingerprint(x_c, d_c, buckle_fp, seed_sha, clamp_sha):
@@ -496,7 +524,7 @@ def seed_header_lines(x_c, d_c, buckle_fp, seed_tbl, seed_modes, clamp_tbl, clam
     fp = seed_fingerprint(x_c, d_c, buckle_fp, seed_sha, clamp_sha)
     return fp, [
         '# FINGERPRINT sha1=%s src=%s' % (fp, BUCKLE_SCRIPT_NAME),
-        '# SEED x_c=%g d_c=%g buckle_fp=%s fingerprint=%s'
+        '# SEED x_c=%g d_c_ref=%g buckle_fp=%s fingerprint=%s'
         % (float(x_c), float(d_c), buckle_fp or 'none', fp),
         '# SOURCE seed=%s seed_sha=%s modes=%s'
         % (os.path.basename(seed_tbl), seed_sha or 'none', seed_modes),
@@ -547,8 +575,8 @@ def seed_gate(x_c, d_c, table_path, buckle_script, keys=BUCKLE_FINGERPRINT_KEYS)
         return False, '헤더의 x_c/d_c 를 숫자로 읽지 못함', info
     if abs(_xc - float(x_c)) > 1e-9:
         return False, 'x_c 불일치(표 %.4f vs 런 %.4f)' % (_xc, float(x_c)), info
-    if _dc == _dc and abs(_dc - float(d_c)) > 5e-4:          # nan 은 비교하지 않는다
-        return False, 'd_c 불일치(표 %.5f vs 런 %.5f)' % (_dc, float(d_c)), info
+    #   [§19.77] d_c 는 비교하지 않는다 — 모드 내용이 d_c 무관이므로(§19.70) 다른 d_c 의 표를
+    #     그대로 쓰는 것이 맞다. 표가 어느 d_c 로 만들어졌는지는 d_c_ref 로 참고만 한다.
     _now = buckle_fingerprint(buckle_script, keys)
     if _now != (info.get('buckle_fp') or None):
         return False, ('buckle 소스가 표 생성 이후 바뀜(현재 %s vs 표 %s) -> 재생성 필요'
