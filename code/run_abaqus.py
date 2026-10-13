@@ -94,15 +94,8 @@ RUN_DIR_NAME = "aba"
 # Abaqus 병렬 스레드/도메인 수 (1 = 단일 CPU, 4 = 대략 1.5~2.5배 빠름).
 #   라이선스 토큰이 없으면 잡이 라이선스 오류로 즉시 죽는다 -> 그때는 1 로.
 NUMCPUS = 4
-#   [§19.84] 진단 스위치를 끈다(사용자: "안 쓰이면 지우자").
-#     이 둘이 읽는 `Buckle_Analysis.*` 는 `RUN_SELF_BUCKLE_JOB=False` 라 **생성되지 않는다**
-#     -> 매 런이 옛 파일을 읽어 913 Pa / 609.9 Pa / u_z=1.5e-22 m 처럼 **설계점과 무관한 동일
-#     숫자**를 찍었다(실측: x_c=0.5/d_c=0.3 런과 x_c=0.8/d_c=0.75 런이 완전히 같은 값).
-#     base state 정보는 이제 **LF ODB 의 lf1~lf3**(get_lf)이, 논문 대조용 진폭은
-#     **probe_partial_hf.py**(살아있는 ODB)가 제공하므로 이 진단은 대체됐다.
-#     코드 삭제는 try/except 경계 때문에 별도 작업으로 남긴다(현재는 무력화만).
-BASE_PROBE = False               # base_state_probe.py (R-13) 자동 실행
-EIG_RECORD = False               # 좌굴 고유치 이력 기록 (coalescence_check.py record)
+BASE_PROBE = True                # 각 잡 직후 base_state_probe.py (R-13) 자동 실행
+EIG_RECORD = True                # 좌굴 고유치 이력 기록 (coalescence_check.py record)
 # ---- 코드 상수 끝 ----
 _RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
@@ -1425,7 +1418,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-GlobalTension',  
         nlgeom=ON, 
-        stabilizationMagnitude=0.003,      # Galhofo 참조 2e-4 / [2026-09-29] 0.001 -> 0.003 (살짝만)
+        stabilizationMagnitude=0.01,      # Galhofo 참조 2e-4 / [2026-09-29] 0.001 -> 0.003 (살짝만)
         #   근거: 실측 ALLSD/ALLIE = 0.50%% 인데 allsdtol = 5%% -> 인공감쇠가 약 10배의 여유를 남기고
         #   거의 작동하지 않았다. 즉 "감쇠가 컷백을 만든다"는 과거 반증은 "감쇠를 늘리면 도움이 될 것"을
         #   반증하지 않는다(다른 주장). allsdtol 이 상한을 걸어 자체 제한되므로 위험은 유계다.
