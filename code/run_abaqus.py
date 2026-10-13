@@ -269,8 +269,9 @@ def run_job_safely(job_name, model_name=None, stabilize=None):
     _ncp = NUMCPUS
     emit("[run_abaqus] 케이스: x_c=%.4g  d_c=%.4g  클램프=%s  RUN_MODE=%s  NUMCPUS=%d"
          % (x_c, d_c, "OFF" if NO_CLAMP else "ON", RUN_MODE, _ncp))
-    emit("   DISP_GLOBAL=%.6g m  SEED_DIV=%.6g  THICKNESS=%.3g m  stabilize=0.003"
-         % (DISP_GLOBAL, SEED_DIV, THICKNESS))
+    emit("   DISP_GLOBAL=%.6g m  SEED_DIV=%.6g  THICKNESS=%.3g m  stabilize=%s"
+         % (DISP_GLOBAL, SEED_DIV, THICKNESS,
+            ('%.4g' % stabilize) if stabilize is not None else 'ladder/기본값'))
     emit("   GLOBAL_FINAL=%.6g m  PRETENSION_SCALE=%.6g  비율=%.1f"
          % (GLOBAL_FINAL, PRETENSION_SCALE, GLOBAL_FINAL / (0.0001 * PRETENSION_SCALE)))
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
