@@ -3471,3 +3471,19 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [의미] 이제 HF 결과 한 점은 `(추력손실, 사용 감쇠 레벨, 에너지 자격)` 세 값으로 남는다.
   BO가 저신뢰 점을 구분할 수 있고, 논문에서 "감쇠가 물리를 대신하지 않았다"를 점별로 보일 수 있다.
 [검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
+
+#### §19.87 HF 는 짝 LF 유무와 무관하게 수행한다 — §19.79 중단 로직 삭제 (사용자 지시, 2026-10-13)
+
+[지시] "hf 분기에서 lf 산출물이 없으면 abort 하는 로직을 삭제하고, 짝지을 lf 산출물 유무와 상관
+  없이 hf 수행한 후 hf_eval 수행하도록."
+[변경]
+  - `run_abaqus.py`: 짝 LF 없음 -> `sys.exit(1)` 하던 **§19.79 중단 로직 삭제**. 대신
+    `_have_lf = os.path.exists(LF_ODB)` 로 분기해 eval 명령만 바꾼다.
+  - `eval_abaqus.py`: **`HFONLY` 모드 추가** — `get_hf` 는 HF ODB 의 Postbuckle 프레임만 읽으므로
+    LF 없이 성립한다. LF 자리는 `nan` 으로 채워 `nan,nan,nan,<hf>`(4필드 계약 유지)를
+    `extraction.txt` 에 쓰고 같은 줄을 출력한다.
+[계약] RESULTS 는 여전히 4필드(`lf1,lf2,lf3,hf`)다 — LF 부재 시 앞 세 개가 `nan`.
+[주의 — 중요] LF 가 없으면 그 점의 lf 지표는 **정의되지 않는다**. HF 단독은 완주·hf 확인용이고,
+  **MFBO 의 LF 자료로는 쓸 수 없다**(LF↔HF 증분상관 Δρ² 계산에는 짝 LF 가 필요). `mfbo.py` 의
+  선행 LF 런은 그대로 둔다(짝을 만들기 위해).
+[검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.

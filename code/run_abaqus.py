@@ -1389,20 +1389,14 @@ if fidelity == 'LF':
 
 elif fidelity == 'HF':
 
-    #   [§19.79] §19.74 철회 — 짝 LF 산출물이 **필수**다.
-    #     실측: `eval_abaqus.get_lf` 는 `Step-HighTension` 을 찾는데, 그 스텝은 **LF 전용**이다.
-    #     HF 체인에는 없다(eval 로그: "LF Error: Target step not found.") — HF 는
-    #     GlobalTension -> ClampTension -> Postbuckle, LF 는 그 뒤 HighTension 까지 간다.
-    #     따라서 HF ODB 로는 lf 지표를 얻을 수 없다(LF ODB 가 별도로 필요하다).
-    #   [정정 2026-10-13] "LF 는 클램프가 없는 모델"이라는 서술은 **사실이 아니다**. LF 에도 클램프가
-    #     있고 x_c·d_c 가 MFBO 설계변수다(클램프 없는 모델은 2026-10-01 의 54배 규명용 NO_CLAMP
-    #     진단 실험이지 MFBO 의 LF 가 아니다). LF 와 HF 는 같은 모델 계열이며 스텝 체인과
-    #     포스트버클링 처리만 다르다.
-    if not os.path.exists(LF_ODB):
-        emit("!!! ERROR: 짝지을 LF 산출물이 없습니다 -> %s" % LF_ODB)
-        emit("    먼저: abaqus cae noGUI=run_abaqus.py -- LF %g %g" % (x_c, d_c))
-        sys.stdout.flush()
-        sys.exit(1)
+    #   [§19.87] 짝 LF 유무와 **무관하게** HF 를 수행한다(사용자 지시 — §19.79 의 중단 로직 삭제).
+    #     짝 LF 가 있으면 eval 이 lf1~lf3 + hf 를 모두 내고, 없으면 HF 단독 평가(HFONLY)로 hf 만 낸다.
+    #     주의: LF 가 없으면 그 점의 lf 지표는 nan 이므로 **MFBO 의 LF 자료로는 못 쓴다**
+    #     (LF↔HF 상관 계산에는 LF 산출물이 필요하다). HF 단독은 완주·hf 확인용 경로다.
+    _have_lf = os.path.exists(LF_ODB)
+    if not _have_lf:
+        emit("[eval] 짝 LF 없음(%s) -> HF 단독 평가(HFONLY). lf 지표는 nan 이 된다."
+             % os.path.basename(LF_ODB))
 
     # 좌굴모드와 포스트버클 해석이 '같은 초기응력 상태'에서 계산되도록
     # 초기응력 재생성(500 -> 100 Pa)을 좌굴 잡 제출 '앞'으로 이동.
@@ -1610,7 +1604,12 @@ elif fidelity == 'HF':
 
     #   [§19.79] LF 인자는 **LF ODB** 다 — get_lf 는 LF 전용 `Step-HighTension` 을 읽으므로
     #     HF ODB 로는 대체할 수 없다(§19.74 철회).
-    cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)
+    if _have_lf:
+        cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"),
+                                               LF_ODB, HF_ODB)
+    else:
+        cmd = 'abaqus python "%s" %s HFONLY' % (os.path.join(_HERE, "eval_abaqus.py"),
+                                                HF_ODB)
 
 try:
     #   [§19.79] stale 산출물 차단: eval 이 쓰지 않았다면 옛 extraction.txt 를 읽어

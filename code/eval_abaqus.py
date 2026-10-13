@@ -291,6 +291,18 @@ def main():
             if any(v is None for v in lf_metrics):
                 print("RESULTS:FAIL"); sys.exit(1)   # E-7: 0 은 실패를 숨긴다
             results = list(lf_metrics[:3])
+        elif mode == "HFONLY":
+            #   [§19.87] HF 단독 평가: 짝 LF ODB 가 없어도 **hf 지표만** 낸다.
+            #     get_hf 는 HF ODB 의 Postbuckle 프레임만 읽으므로 LF 없이 성립한다.
+            #     LF 자리에는 nan 을 채운다(LF 지표는 그 점에서 정의되지 않음).
+            hf_metric = get_hf(args[-2])
+            if hf_metric is None:
+                print("HF Error: hf metric extraction failed")
+                return 1
+            with open('extraction.txt', 'w') as _f:
+                _f.write("nan,nan,nan,%s" % hf_metric)
+            print("RESULTS:nan,nan,nan,%s" % hf_metric)
+            return 0
         elif mode == "HF":
             hf_metric = get_hf(args[-2])
             lf_metrics = get_lf(args[-3])
