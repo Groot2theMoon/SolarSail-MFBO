@@ -163,9 +163,9 @@ def main():
     _fmt = 'Buckle_xc%s_d%03dum_dc%s_'
     check("[§19.76] 잡이름 형식 buckle↔make_seed 동일",
           (_fmt in _bs) and (_fmt in _ms), 'buckle=%s make_seed=%s' % (_fmt in _bs, _fmt in _ms))
-    check("lf_odb_name(0.5, 0.5)", A.lf_odb_name(0.5, 0.5) == 'LF_Analysis_xc050_dc050.odb',
+    check("lf_odb_name(0.5, 0.5)", A.lf_odb_name(0.5, 0.5) == 'LF_Analysis_xc0p5_dc0p5.odb',
           A.lf_odb_name(0.5, 0.5))
-    check("lf_job_name(0.5, 0.5)", A.lf_job_name(0.5, 0.5) == 'LF_Analysis_xc050_dc050',
+    check("lf_job_name(0.5, 0.5)", A.lf_job_name(0.5, 0.5) == 'LF_Analysis_xc0p5_dc0p5',
           A.lf_job_name(0.5, 0.5))
     check("LF 이름 x_c 로 구분", A.lf_odb_name(0.5, 0.5) != A.lf_odb_name(0.6, 0.5))
     check("LF 이름 d_c 로 구분", A.lf_odb_name(0.5, 0.5) != A.lf_odb_name(0.5, 0.6))

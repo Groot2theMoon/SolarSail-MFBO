@@ -3321,7 +3321,7 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   (반올림 없음). 적용처: `seed_table_name` · `point_tag` · `run_abaqus_buckle.JOB_NAME`
   (로컬 `_value_tag`, 같은 규칙 — CAE 안에서 import 실패 위험을 피하려 복제) · `make_seed.expected_odb`
   (+glob 폴백). 예: `modes_xc0p5_dc0p5.txt`, `Buckle_xc0p5_d018um_dc0p01_..._plv01000`(74자 < 80 한계).
-[검증] `test_seed_path.py` 47항목 PASS — 충돌 가드 4개 추가(0 vs 0.001 / x_c 0.1234 vs 0.1249 /
+[검증] `test_seed_path.py` **44/44 PASS** — 충돌 가드 4개 추가(0 vs 0.001 / x_c 0.1234 vs 0.1249 /
   d_c 1e-4 vs 0 / 잡이름 형식 buckle↔make_seed 일치). 검사기 **PASS**(HF↔buckle 30 · HF↔모드소스 27).
   `static_leak_check` 이상 없음. `make_seed --dry-run` 으로 새 이름 실측.
 [주의] 기존 파일 이름과 어긋나므로 표·ODB 를 **재생성(또는 리네임)** 해야 한다. 문서·스킬의 옛 이름 표기도
