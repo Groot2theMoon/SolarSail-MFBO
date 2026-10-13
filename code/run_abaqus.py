@@ -1508,7 +1508,8 @@ elif fidelity == 'HF':
     run_job_safely('HF_Postbuckle')
 
 
-    #   [§19.74] LF 인자로 **HF ODB 자신**을 넘긴다(get_lf 는 Step-HighTension 프레임만 본다).
+    #   [§19.79] LF 인자는 **LF ODB** 다 — get_lf 는 LF 전용 `Step-HighTension` 을 읽으므로
+    #     HF ODB 로는 대체할 수 없다(§19.74 철회).
     cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB, HF_ODB)
 
 try:
