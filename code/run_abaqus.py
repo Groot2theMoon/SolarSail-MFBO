@@ -1311,8 +1311,13 @@ elif fidelity == 'HF':
 
     #   [§19.79] §19.74 철회 — 짝 LF 산출물이 **필수**다.
     #     실측: `eval_abaqus.get_lf` 는 `Step-HighTension` 을 찾는데, 그 스텝은 **LF 전용**이다.
-    #     HF 체인에는 없다(eval 로그: "LF Error: Target step not found."). LF 모델은 클램프가
-    #     없는(NO_CLAMP) 모델이라 HF 의 중간 상태로 대체될 수 없다 — 물리적으로 다른 상태다.
+    #     HF 체인에는 없다(eval 로그: "LF Error: Target step not found.") — HF 는
+    #     GlobalTension -> ClampTension -> Postbuckle, LF 는 그 뒤 HighTension 까지 간다.
+    #     따라서 HF ODB 로는 lf 지표를 얻을 수 없다(LF ODB 가 별도로 필요하다).
+    #   [정정 2026-10-13] "LF 는 클램프가 없는 모델"이라는 서술은 **사실이 아니다**. LF 에도 클램프가
+    #     있고 x_c·d_c 가 MFBO 설계변수다(클램프 없는 모델은 2026-10-01 의 54배 규명용 NO_CLAMP
+    #     진단 실험이지 MFBO 의 LF 가 아니다). LF 와 HF 는 같은 모델 계열이며 스텝 체인과
+    #     포스트버클링 처리만 다르다.
     if not os.path.exists(LF_ODB):
         emit("!!! ERROR: 짝지을 LF 산출물이 없습니다 -> %s" % LF_ODB)
         emit("    먼저: abaqus cae noGUI=run_abaqus.py -- LF %g %g" % (x_c, d_c))
