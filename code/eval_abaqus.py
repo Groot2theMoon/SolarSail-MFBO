@@ -149,7 +149,7 @@ def get_lf(odb_path):
         except Exception: pass
         return [None, None, None]
 
-def calc_thrust_loss(frame, instance, connectivity, max_node_label):
+def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=None):
     """
     메쉬의 각 요소 법선 벡터를 계산하고,
     SRP 모델을 적용하여 실제 추력 벡터를 적분, 이상적 추력과의 차이를 계산함.
@@ -230,8 +230,13 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label):
     #     정규화용으로 누적한 `ideal_area_sum` 을 쓰지 않았다(의도는 상대화였는데 빠져 있었다).
     #     절대량을 비율로 오독하면 "0.00755 = 0.7%" 처럼 100배 작게 보인다.
     #     상대 = 손실 / (총면적 × IDEAL_THRUST_COEFF) = 평판 이상추력 대비 손실률.
-    if ideal_area_sum > 0.0 and IDEAL_THRUST_COEFF > 0.0:
-        return float(max(loss_sum, 0.0) / (ideal_area_sum * IDEAL_THRUST_COEFF))
+    #   [§19.89] 분모는 **미변형(pristine) 기준 면적**을 쓴다(사용자 지시).
+    #     종전 `ideal_area_sum` 은 *변형 후* 총면적이라 설계점마다 기준이 미세하게 달라진다.
+    #     원형 평면적을 기준으로 고정하면 `hf` 가 "원형 평면 대비 성능 손실률"로 정의되어
+    #     설계 간 비교가 정합해진다. area_ref 를 못 구하면 종전 동작으로 폴백한다.
+    _den_area = area_ref if (area_ref and area_ref > 0.0) else ideal_area_sum
+    if _den_area > 0.0 and IDEAL_THRUST_COEFF > 0.0:
+        return float(max(loss_sum, 0.0) / (_den_area * IDEAL_THRUST_COEFF))
     return float(max(loss_sum, 1e-12))
 
 def get_hf(odb_path):
@@ -269,7 +274,43 @@ def get_hf(odb_path):
         else:
             max_label = 100000
 
-        hf_metric = calc_thrust_loss(last_frame, instance, connectivity, max_label)
+        #   [§19.89] 미변형 기준 면적: 첫 스텝의 frameValue=0 프레임(원형 메쉬 기하)에서 계산.
+        _area_ref = None
+        try:
+            _f0 = None
+            for _sn in odb.steps.keys():
+                for _fr in odb.steps[_sn].frames:
+                    if abs(_fr.frameValue) < 1e-12:
+                        _f0 = _fr
+                        break
+                if _f0 is not None:
+                    break
+            if _f0 is not None and 'COORD' in _f0.fieldOutputs.keys():
+                _cf = _f0.fieldOutputs['COORD'].getSubset(region=instance)
+                _nc = np.zeros((max_label + 1, 3), dtype=np.float64)
+                for _b in _cf.bulkDataBlocks:
+                    if _b.nodeLabels is not None:
+                        _nc[_b.nodeLabels] = _b.data
+                _sum = 0.0
+                _q = [c for c in connectivity if len(c) == 4]
+                if _q:
+                    _a = np.array(_q, dtype=np.int32)
+                    _sum += 0.5 * np.linalg.norm(
+                        np.cross(_nc[_a[:, 2]] - _nc[_a[:, 0]],
+                                 _nc[_a[:, 3]] - _nc[_a[:, 1]]), axis=1).sum()
+                _t = [c for c in connectivity if len(c) == 3]
+                if _t:
+                    _a = np.array(_t, dtype=np.int32)
+                    _sum += 0.5 * np.linalg.norm(
+                        np.cross(_nc[_a[:, 1]] - _nc[_a[:, 0]],
+                                 _nc[_a[:, 2]] - _nc[_a[:, 0]]), axis=1).sum()
+                if _sum > 0.0:
+                    _area_ref = float(_sum)
+                    print("[HF] undeformed area (pristine) = %.4f m^2" % _area_ref)
+        except Exception as _are:
+            print("[HF] undeformed area probe failed (%s) -> deformed area fallback" % _are)
+        hf_metric = calc_thrust_loss(last_frame, instance, connectivity, max_label,
+                                     area_ref=_area_ref)
         
         odb.close()
         return float(hf_metric)
