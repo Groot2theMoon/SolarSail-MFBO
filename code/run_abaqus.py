@@ -254,8 +254,13 @@ def _archive_result(x_c, d_c, fidelity, results_csv, extra=None):
         with io.open(os.path.join(_dir, _tag), 'w', encoding='utf-8') as _f:
             for _k in sorted(_kv):
                 _f.write('%s=%s\n' % (_k, _kv[_k]))
+        #   [§19.91] 열 스키마를 **고정**한다 — 진단키(stabilize/에너지/flip_bias)도 CSV 에 실제로
+        #     실려야 스윕 분석이 한 파일로 된다(헤더가 1회만 쓰이므로 열 목록은 상수여야 한다).
         _cols = ['x_c', 'd_c', 'fidelity', 'timestamp', 'stabilize_used',
-                 'allds_allie_max_pct', 'energy_verdict', 'lf1', 'lf2', 'lf3', 'hf']
+                 'allds_allie_last_pct', 'allds_allie_max_pct', 'energy_verdict',
+                 'backward_area_pct', 'backward_elems', 'total_elems',
+                 'hf_flip', 'hf_true_normal', 'delta_pct',
+                 'lf1', 'lf2', 'lf3', 'hf']
         _csv = os.path.join(_dir, 'all_results.csv')
         _new = not os.path.exists(_csv)
         with io.open(_csv, 'a', encoding='utf-8') as _f:

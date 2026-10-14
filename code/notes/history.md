@@ -3538,8 +3538,12 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
     (n_z<0) 요소 수/면적을 `extra_out` 에 계수한다. `flip_normals=False` 면 뒤집기를 끈다.
   - `get_hf`: 같은 프레임을 **두 번** 적분 → `hf`(뒤집기 ON, 현행) + `hf_true_normal`(OFF),
     역방향 면적비 `backward_area_pct` 와 `delta_pct` 를 로그로 찍고 `flip_bias.txt` 에 기록.
-  - `run_abaqus._archive_result`: `stabilize_used.txt` 와 함께 **`flip_bias.txt` 도 동봉**
-    (all_results.csv 열 추가: backward_area_pct, hf_true_normal, delta_pct).
+  - `run_abaqus._archive_result`: `stabilize_used.txt` 와 함께 **`flip_bias.txt` 도 동봉**.
+  - [§19.91 정정] 누적 CSV 의 열 스키마를 상수로 고정하고 진단키를 **실제로 싣는다**:
+    x_c,d_c,fidelity,timestamp,stabilize_used,allds_allie_last_pct,allds_allie_max_pct,
+    energy_verdict,backward_area_pct,backward_elems,total_elems,hf_flip,hf_true_normal,
+    delta_pct,lf1,lf2,lf3,hf. (헤더는 파일 생성 시 1회만 쓰이므로 열 목록을 동적으로
+    만들면 이후 행과 어긋난다 — 그래서 상수 목록으로 고정한다.)
 [해석 기준] `backward_area_pct` < 0.15% → 뒤집기 편향 무시 가능(측정값으로 논문 기재).
   ≥ 0.15% → true-normal 로 전환. β>0(비스듬 입사)에서는 뒤집기 해제 필수.
 [계약] RESULTS 4필드는 그대로 — 부가 진단은 별도 파일로만 낸다(파서 호환).
