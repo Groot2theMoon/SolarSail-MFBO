@@ -3487,3 +3487,22 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   **MFBO 의 LF 자료로는 쓸 수 없다**(LF↔HF 증분상관 Δρ² 계산에는 짝 LF 가 필요). `mfbo.py` 의
   선행 LF 런은 그대로 둔다(짝을 만들기 위해).
 [검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
+
+#### §19.88 설계점별 결과 아카이빙 (사용자 지시, 2026-10-13)
+
+[문제] HF 잡 이름이 `HF_Postbuckle` **고정**이라 `run_job_safely` 가 다음 런에서 직전 산출물
+  (odb/dat/msg)을 삭제한다. 그래서 (0.5,0.3) 점의 ODB 를 이미 잃었고, 결과를 재측정하려면
+  다시 40분을 돌려야 했다. 스윕(설계점 여러 개)에는 치명적이다.
+[변경] `run_abaqus.py`
+  - `_archive_result(x_c, d_c, fidelity, results_csv, extra)`: 결과를 설계점 이름으로 남긴다.
+    - `code/results/results_xc<tag>_dc<tag>.txt` — key=value (x_c, d_c, fidelity, timestamp,
+      stabilize_used, allds_allie_last/max_pct, energy_verdict, job, lf1/lf2/lf3/hf)
+    - `code/results/all_results.csv` — 헤더 1회 + **런마다 1행 누적**(스윕 분석용 단일 파일)
+    - 태그는 §19.76 `value_tag` 재사용(import 목록에 추가) → 예: `results_xc0p8_dc1.txt`
+  - HF 브랜치의 eval 결과(`extraction.txt`) 읽는 지점에서 아카이빙. `stabilize_used.txt`(§19.86)가
+    있으면 그 내용(stabilize/에너지 비/판정)을 **같은 기록에 동봉**한다.
+  - 실패해도 런을 죽이지 않는다(진단성 산출물).
+[왜 HF만] HF 의 eval 이 이미 `lf1,lf2,lf3` 을 LF ODB 에서 함께 내므로, HF 1회 기록이
+  `(lf1,lf2,lf3,hf)` **완전한 짝**을 담는다. LF 단독 런의 행은 중복이라 넣지 않았다(필요해지면 추가).
+[검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
+[남은 것] `code/results/` 를 git 에 넣을지(권장: 시드표처럼 추적 제외 + README). gitignore 결정 필요.

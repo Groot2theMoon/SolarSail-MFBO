@@ -111,7 +111,7 @@ from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: 
                               verify_inp_element_types,
                               point_tag, lf_odb_name, lf_job_name,
                               seed_table_path, seed_gate, BUCKLE_SCRIPT_NAME,
-                              SEED_DIR_NAME, job_completed_from_logs)
+                              SEED_DIR_NAME, job_completed_from_logs, value_tag)
 # aba_grid_mesh: boundary_node_labels / clamp_exclude_labels / make_set (면외 z 구속 노드셋). §9
 #   격자는 이제 사용 중이다: USE_GRID_MESH=True -> aba_grid_mesh.import_grid_part
 #   (.inp -> PartFromInputFile). fill_part 는 Part.addNodes 가 없어 폐기했다(§19.15).
@@ -228,6 +228,44 @@ except:
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
                   'dat', 'res', 'abq', 'ipm', 'mdl', 'stt', 'cid')
+
+def _archive_result(x_c, d_c, fidelity, results_csv, extra=None):
+    """[§19.88] 설계점별 결과 아카이빙.
+
+    왜: HF 잡 이름이 `HF_Postbuckle` 고정이라 다음 런이 **직전 산출물을 지운다**
+    (`run_job_safely` 가 odb/dat/msg 를 제거). 그래서 (0.5,0.3)의 ODB 를 이미 잃었다 —
+    결과를 설계점 이름의 텍스트 + 누적 CSV 로 남겨 스윕 분석이 한 파일로 가능하게 한다.
+
+    남기는 것: RESULTS 4필드(lf1,lf2,lf3,hf) + 사다리가 쓴 stabilize_used/에너지 비/판정 + 시각.
+    """
+    try:
+        import time
+        _dir = os.path.join(_HERE, 'results')
+        if not os.path.isdir(_dir):
+            os.makedirs(_dir)
+        _p = [str(v).strip() for v in (results_csv or '').split(',')]
+        while len(_p) < 4:
+            _p.append('nan')
+        _kv = {'x_c': x_c, 'd_c': d_c, 'fidelity': fidelity,
+               'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
+               'lf1': _p[0], 'lf2': _p[1], 'lf3': _p[2], 'hf': _p[3]}
+        _kv.update(extra or {})
+        _tag = 'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c))
+        with io.open(os.path.join(_dir, _tag), 'w', encoding='utf-8') as _f:
+            for _k in sorted(_kv):
+                _f.write('%s=%s\n' % (_k, _kv[_k]))
+        _cols = ['x_c', 'd_c', 'fidelity', 'timestamp', 'stabilize_used',
+                 'allds_allie_max_pct', 'energy_verdict', 'lf1', 'lf2', 'lf3', 'hf']
+        _csv = os.path.join(_dir, 'all_results.csv')
+        _new = not os.path.exists(_csv)
+        with io.open(_csv, 'a', encoding='utf-8') as _f:
+            if _new:
+                _f.write(','.join(_cols) + '\n')
+            _f.write(','.join(str(_kv.get(_c, '')) for _c in _cols) + '\n')
+        emit("[ARCHIVE] %s + all_results.csv (1행 추가)" % _tag)
+    except Exception as _e:
+        emit("[ARCHIVE] 실패(무시): %s" % _e)
+
 
 def run_job_safely(job_name, model_name=None, stabilize=None):
     """
@@ -1643,8 +1681,21 @@ try:
         emit("!!! ERROR: eval_abaqus.py 가 실패했습니다(LF 스텝/입력 확인) -> RESULTS:FAIL")
         emit("RESULTS:FAIL")
     elif os.path.exists('extraction.txt'):
-        with open('extraction.txt', 'r') as f:
-            emit("RESULTS:" + f.read().strip())
+        with open('extraction.txt', 'r', encoding='utf-8', errors='replace') as f:
+            _rc = f.read().strip()
+        emit("RESULTS:" + _rc)
+        #   [§19.88] 점별 아카이빙(+사다리가 남긴 stabilize/에너지 비 동봉)
+        _extra = {}
+        try:
+            if os.path.exists('stabilize_used.txt'):
+                with open('stabilize_used.txt', 'r', encoding='utf-8', errors='replace') as _sf:
+                    for _ln in _sf:
+                        if '=' in _ln:
+                            _k2, _v2 = _ln.strip().split('=', 1)
+                            _extra[_k2] = _v2
+        except Exception:
+            pass
+        _archive_result(x_c, d_c, 'HF', _rc, _extra)
     else:
         emit("!!! ERROR: Extraction failed. 'extraction.txt' not found.") 
         emit("RESULTS:FAIL")   # 상위(mfbo)가 원인을 식별하도록 명시적 실패 신호
