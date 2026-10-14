@@ -149,7 +149,8 @@ def get_lf(odb_path):
         except Exception: pass
         return [None, None, None]
 
-def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=None):
+def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=None,
+                     flip_normals=True, extra_out=None):
     """
     메쉬의 각 요소 법선 벡터를 계산하고,
     SRP 모델을 적용하여 실제 추력 벡터를 적분, 이상적 추력과의 차이를 계산함.
@@ -189,7 +190,15 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         valid = norms > 1e-12
         normals[valid] = cross_prod[valid] / norms[valid, np.newaxis]
         
-        normals[normals[:, 2] < 0.0] *= -1.0
+        #   [§19.90] 뒤집기 **전에** 진짜 역방향(n_z<0) 요소를 계수한다 — 뒤집기 편향 진단용.
+        if extra_out is not None:
+            _bw = normals[:, 2] < 0.0
+            extra_out['n_total'] += int(len(areas))
+            extra_out['n_backward'] += int(np.count_nonzero(_bw))
+            extra_out['area_total'] += float(np.sum(areas))
+            extra_out['area_backward'] += float(np.sum(areas[_bw]))
+        if flip_normals:
+            normals[normals[:, 2] < 0.0] *= -1.0
         
         # SRP 계산
         cos_theta = np.clip(np.dot(normals, -U_SUN), 0.0, 1.0)
@@ -215,7 +224,15 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         normals = np.zeros_like(cross_prod)
         valid = norms > 1e-12
         normals[valid] = cross_prod[valid] / norms[valid, np.newaxis]
-        normals[normals[:, 2] < 0.0] *= -1.0
+        #   [§19.90] 뒤집기 **전에** 진짜 역방향(n_z<0) 요소를 계수한다 — 뒤집기 편향 진단용.
+        if extra_out is not None:
+            _bw = normals[:, 2] < 0.0
+            extra_out['n_total'] += int(len(areas))
+            extra_out['n_backward'] += int(np.count_nonzero(_bw))
+            extra_out['area_total'] += float(np.sum(areas))
+            extra_out['area_backward'] += float(np.sum(areas[_bw]))
+        if flip_normals:
+            normals[normals[:, 2] < 0.0] *= -1.0
         
         cos_theta = np.clip(np.dot(normals, -U_SUN), 0.0, 1.0)
         f_abs = A0 * cos_theta[:, np.newaxis] * areas[:, np.newaxis] * U_SUN
@@ -309,8 +326,29 @@ def get_hf(odb_path):
                     print("[HF] undeformed area (pristine) = %.4f m^2" % _area_ref)
         except Exception as _are:
             print("[HF] undeformed area probe failed (%s) -> deformed area fallback" % _are)
+        #   [§19.90] 뒤집기 편향 실측: 같은 프레임을 뒤집기 ON/OFF 두 번 적분한다.
+        #     진짜 n_z<0 요소의 면적비가 편향을 결정한다 → 가정하지 않고 매 런 기록.
+        _st = {'n_total': 0, 'n_backward': 0, 'area_total': 0.0, 'area_backward': 0.0}
         hf_metric = calc_thrust_loss(last_frame, instance, connectivity, max_label,
-                                     area_ref=_area_ref)
+                                     area_ref=_area_ref, extra_out=_st)
+        hf_true = calc_thrust_loss(last_frame, instance, connectivity, max_label,
+                                   area_ref=_area_ref, flip_normals=False)
+        _fb = (100.0 * _st['area_backward'] / _st['area_total']
+               if _st['area_total'] > 0.0 else float('nan'))
+        _dl = (100.0 * (hf_metric - hf_true) / hf_true) if hf_true else float('nan')
+        print("[HF] flip bias: backward area=%.4f%% (%d/%d elem) hf_flip=%.6e "
+              "hf_true=%.6e delta=%.3f%%"
+              % (_fb, _st['n_backward'], _st['n_total'], hf_metric, hf_true, _dl))
+        try:
+            with open('flip_bias.txt', 'w') as _bf:
+                _bf.write("backward_area_pct=%.6f\n" % _fb)
+                _bf.write("backward_elems=%d\n" % _st['n_backward'])
+                _bf.write("total_elems=%d\n" % _st['n_total'])
+                _bf.write("hf_flip=%.10e\n" % hf_metric)
+                _bf.write("hf_true_normal=%.10e\n" % hf_true)
+                _bf.write("delta_pct=%.6f\n" % _dl)
+        except Exception as _be:
+            print("[HF] flip_bias.txt write failed: %s" % _be)
         
         odb.close()
         return float(hf_metric)

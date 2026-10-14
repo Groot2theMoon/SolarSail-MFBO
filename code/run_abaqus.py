@@ -1687,12 +1687,13 @@ try:
         #   [§19.88] 점별 아카이빙(+사다리가 남긴 stabilize/에너지 비 동봉)
         _extra = {}
         try:
-            if os.path.exists('stabilize_used.txt'):
-                with open('stabilize_used.txt', 'r', encoding='utf-8', errors='replace') as _sf:
-                    for _ln in _sf:
-                        if '=' in _ln:
-                            _k2, _v2 = _ln.strip().split('=', 1)
-                            _extra[_k2] = _v2
+            for _fn in ('stabilize_used.txt', 'flip_bias.txt'):
+                if os.path.exists(_fn):
+                    with open(_fn, 'r', encoding='utf-8', errors='replace') as _sf:
+                        for _ln in _sf:
+                            if '=' in _ln:
+                                _k2, _v2 = _ln.strip().split('=', 1)
+                                _extra[_k2] = _v2
         except Exception:
             pass
         _archive_result(x_c, d_c, 'HF', _rc, _extra)

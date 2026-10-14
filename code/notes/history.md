@@ -3525,3 +3525,22 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [미해결 — ② 뒤집기 편향] 크기 미측정. 판단 근거는 대화 기록 참조: 뒤집기가 만드는 오차는
   **역방향(진짜 n_z<0) 요소의 면적비 × (1−L_e)** 규모이고, `hf` 자체가 0.05% 로 매우 작아
   작은 인공항도 상대적으로 커질 수 있다 → **가정 금지, 같은 ODB에서 실측**해야 한다.
+
+#### §19.90 뒤집기 편향 **실측** — 가정 금지 (사용자 지시, 2026-10-13)
+
+[왜] §19.89 판정의 ② 항목(법선 뒤집기 `n_z<0 → −n̂`)은 편향이 **항상 손실 과소평가** 방향이다.
+  뒤집기가 만드는 오차 = Σ_backward area·(A0|c|+2R0|c|³) / (area_ref·IDEAL) 규모이고,
+  `hf` 자체가 0.056% 로 극히 작아 **상쇄 잔차**에 가깝다 → 작은 인공항도 상대적으로 커진다.
+  실측 계산: 뒤집기 편향만으로 hf 가 **2배**가 되는 역방향 면적비는 c̄=45° 에서 0.153%
+  (= 요소 15.4개 / 10100), c̄=30° 에서 0.085%(8.6개). → **가정 불가, 측정 필수.**
+[변경] `eval_abaqus.py`
+  - `calc_thrust_loss(..., flip_normals=True, extra_out=None)`: 뒤집기 **직전에** 진짜 역방향
+    (n_z<0) 요소 수/면적을 `extra_out` 에 계수한다. `flip_normals=False` 면 뒤집기를 끈다.
+  - `get_hf`: 같은 프레임을 **두 번** 적분 → `hf`(뒤집기 ON, 현행) + `hf_true_normal`(OFF),
+    역방향 면적비 `backward_area_pct` 와 `delta_pct` 를 로그로 찍고 `flip_bias.txt` 에 기록.
+  - `run_abaqus._archive_result`: `stabilize_used.txt` 와 함께 **`flip_bias.txt` 도 동봉**
+    (all_results.csv 열 추가: backward_area_pct, hf_true_normal, delta_pct).
+[해석 기준] `backward_area_pct` < 0.15% → 뒤집기 편향 무시 가능(측정값으로 논문 기재).
+  ≥ 0.15% → true-normal 로 전환. β>0(비스듬 입사)에서는 뒤집기 해제 필수.
+[계약] RESULTS 4필드는 그대로 — 부가 진단은 별도 파일로만 낸다(파서 호환).
+[검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
