@@ -24,6 +24,7 @@ from __future__ import print_function
 import sys
 import math
 import os
+import time               # [§19.94] ODB mtime / 프로브 실행시각 비교용 (ODB 신원 로그)
 
 TARGET_STRESS = 7000.0   # Pa, R-13 목표 운용점(미검증)
 
@@ -133,14 +134,19 @@ def _fmt(lab, n, cm, cmin, mavg, s1mx, s2mn):
             % (lab, n, cm, cmin, mavg, s1mx, s2mn))
 
 
-BUILD = '2026-10-01b (uzave-paper-def)'
-#   개정 이력: (a) 중앙 영역(CENTRE) 통계 추가, (b) 4번째 인자로 중앙 반경 덮어쓰기.
+BUILD = '2026-10-15a (§19.94: odb-identity + centre-undeformed + minP-ratio)'
+#   개정 이력: (a) 중앙 영역(CENTRE) 통계 추가, (b) 4번째 인자로 중앙 반경 덮어쓰기,
+#             (c) [§19.94] ODB 신원(절대경로·mtime·크기) 로그 + 중앙 영역을 **미변형(재료) 좌표**로
+#                 선택 + 7000 Pa 대비 비율을 평균/최소주응력 **두 라벨**로 병기.
 #   사용자 실행형 도구이므로 빌드를 첫 줄에 찍는다. 출력에 이 줄이 없거나 반경이 반영되지
 #   않으면 옛 리비전이다(실제로 2026-10-01 에 이 함정에 한 번 걸렸다).
 
 
 def main():
     print('[R-13] build %s' % BUILD)
+    # [§19.94] 프로브 실행 시각 — 아래 ODB 신원 로그에서 mtime 과 **나란히** 찍어
+    #   "이 런이 만든 파일인가"를 로그만으로 판정할 수 있게 한다.
+    _t_start = time.time()
     try:
         from odbAccess import openOdb
     except ImportError:
@@ -175,6 +181,34 @@ def main():
     except Exception as e:
         print("[R-13] odb 열기 실패 (%s): %s" % (odb_path, e))
         return 1
+
+    # [§19.94] ODB 신원 로그 — stale ODB 차단.
+    #   감사에서 발견: 서로 다른 (x_c, d_c) 설계점인데 R-13 숫자가 **완전히 동일**한 사례가 있었다
+    #   (913 Pa / 609.9 Pa / 1.547e-22 m). 어느 파일을 언제 만든 것인지 로그에 없어 stale 인지
+    #   판정할 수 없었다. 절대경로 + mtime(사람이 읽는 형식) + 크기(MB)를 찍고, 프로브 실행 시각과
+    #   mtime 을 나란히 두어 '이 런의 ODB인가'를 로그만으로 판정 가능하게 한다.
+    #   실패해도 런을 죽이지 않는다(경고만) — 진단 전용.
+    try:
+        _odb_abs = os.path.abspath(odb_path)
+        _st = os.stat(_odb_abs)
+        _age = _t_start - _st.st_mtime
+        if _age < 600.0:
+            _age_txt = '%.1f 초' % _age
+        elif _age < 86400.0:
+            _age_txt = '%.2f 시간' % (_age / 3600.0)
+        else:
+            _age_txt = '%.2f 일' % (_age / 86400.0)
+        print("[R-13] ODB 신원: %s | 크기 %.2f MB (%d B) | mtime %s | 프로브 실행 %s | 나이 %s"
+              % (_odb_abs, _st.st_size / 1048576.0, _st.st_size,
+                 time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_st.st_mtime)),
+                 time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_t_start)), _age_txt))
+        #   나이 임계는 6시간(넉넉히): 좌굴 잡 자체가 수십 분 걸릴 수 있으므로 '같은 런'의 정당한
+        #   파일도 나이가 있다. **정확한 판정(런 시작 시각 대조)은 호출부(run_abaqus.py)가** 한다.
+        if _age > 21600.0:
+            print("[R-13] !!! ODB 나이 %s (>6시간) — 이 런에서 만든 파일이 아닐 가능성이 높다(stale). "
+                  "이 숫자를 이 설계점의 base state 로 읽지 마라." % _age_txt)
+    except Exception as e:
+        print("[R-13] ODB 신원 확인 실패(무시): %s" % e)
 
     try:
         if step_name not in odb.steps.keys():
@@ -217,24 +251,41 @@ def main():
         except Exception:
             sf = frame.fieldOutputs['S']
 
-        # 요소 라벨 -> 중심 좌표. 실패해도 치명적이지 않다(중앙 통계만 생략).
-        cent = {}
+        # [§19.94] 중앙 영역(**누가 속하는가**)은 **미변형(재료) 좌표**로 결정한다.
+        #   감사 지적: 좌표를 변형(변위) 기준으로 잡으면 응력이 실린 재료가 설계점 (x_c, d_c)마다
+        #   다른 위치로 밀려나 '같은 재료 영역' 비교가 흐려진다. ODB 인스턴스 메시 좌표
+        #   (inst.nodes[i].coordinates)는 **파트 원형 좌표**이므로 프레임(변형 형상)이 필요 없다.
+        #   응력 값 자체는 기존처럼 프레임(S, CENTROID)에서 읽고, 소속 판정만 재료 좌표로 한다.
+        #   실패해도 치명적이지 않다(중앙 통계만 생략).
+        #   키에 **인스턴스 이름까지** 넣는 이유: 멤브레인(MEMBRANE-1)과 케이블(Inst_Cable_*)은
+        #   요소 라벨이 각자 1..N 으로 겹친다. 라벨만으로 키를 잡으면 나중에 순회된 인스턴스의
+        #   좌표가 앞의 것을 덮어써 영역 소속이 조용히 틀어진다(진단이면 더 나쁘다 — 조용하다).
+        cent = {}            # (inst_name, elem_label) -> (x, y)  미변형(재료) 좌표
+        cent_by_label = {}   # elem_label -> (x, y)  구형 폴백(인스턴스 이름을 못 읽을 때만)
         try:
             for inst in odb.rootAssembly.instances.values():
+                try:
+                    _iname = inst.name
+                except Exception:
+                    _iname = ''
                 nl = {}
                 for nd in inst.nodes:
                     nl[nd.label] = nd.coordinates
                 for el in inst.elements:
                     cs = [nl[c] for c in el.connectivity if c in nl]
                     if cs:
-                        cent[el.label] = (sum(c[0] for c in cs) / len(cs),
-                                          sum(c[1] for c in cs) / len(cs))
-            print("[R-13] 요소 중심 좌표 %d개 확보 (중앙 반경 %.3g m)" % (len(cent), R_CENTRE))
+                        _xy = (sum(c[0] for c in cs) / len(cs),
+                               sum(c[1] for c in cs) / len(cs))
+                        cent[(_iname, el.label)] = _xy
+                        cent_by_label[el.label] = _xy
+            print("[R-13] 요소 중심 좌표 %d개 확보 (미변형/재료 좌표, 중앙 반경 %.3g m)"
+                  % (len(cent), R_CENTRE))
         except Exception as e:
             print("[R-13] 요소 좌표를 못 읽음 -> 중앙 영역 통계 생략 (%s)" % e)
 
         groups = {}      # section number -> rows
         centrerows = []  # 중앙 반경 안의 rows
+        _centre_els = set()  # [§19.94] 중앙 반경 안의 요소 라벨(영역 요소 개수 로그용)
         mapitems = []    # (x, y, minP, w) — 압축지도용(2026-10-07)
         for v in sf.values:
             d = v.data
@@ -247,7 +298,19 @@ def main():
             w = vols.get(v.elementLabel, 0.0)
             row = (float(d[0]), float(d[1]), float(d[2]), w if w > 0 else 0.0)
             groups.setdefault(num, []).append(row)
-            xy = cent.get(v.elementLabel)
+            #   [§19.94] 소속 조회는 (인스턴스, 요소라벨) 로 — 같은 라벨이 다른 인스턴스에 있어도
+            #     엉뚱한 좌표를 집지 않는다. 인스턴스 이름을 못 읽은 경우에만 라벨 단독 폴백.
+            try:
+                _v_iname = v.instance.name
+            except Exception:
+                _v_iname = ''
+            _ckey = (_v_iname, v.elementLabel)
+            if _ckey in cent:
+                xy = cent[_ckey]
+            elif not _v_iname:
+                xy = cent_by_label.get(v.elementLabel)
+            else:
+                xy = None
             if xy is not None:
                 mapitems.append((xy[0], xy[1],
                                  _principal(row[0], row[1], row[2])[1], row[3]))
@@ -255,6 +318,7 @@ def main():
                 dy = xy[1] - CENTRE_XY[1]
                 if dx * dx + dy * dy <= R_CENTRE * R_CENTRE:
                     centrerows.append((row, num))
+                    _centre_els.add(v.elementLabel)
 
         if not groups:
             print("[R-13] S 값 0개")
@@ -284,6 +348,11 @@ def main():
                   "0.2 이상이면 slack·주름 상태(문서상 '예압>좌굴하중' 케이스)")
         # 논문과 직접 비교되는 지표: 사분면 중앙 영역(반경 R_CENTRE)의 응력
         if centrerows:
+            #   [§19.94] 영역 요소 개수를 남긴다 — 좌표 기준을 미변형으로 바꿨고 라벨 중복도 제거했으므로
+            #     기존 런과 n/값이 **달라질 수 있다**(그게 정상). 로그가 없으면 값 변화의 원인을 못 쫓는다.
+            print("[R-13] 중앙 영역(미변형 좌표): 요소 %d개 / 면적가중 행 %d개 "
+                  "(중심 (%.3g, %.3g), R=%.3g m)"
+                  % (len(_centre_els), len(centrerows), CENTRE_XY[0], CENTRE_XY[1], R_CENTRE))
             for lab, sel in (('CENTRE(mid)', [r for r, nm in centrerows if nm == mid]),
                              ('CENTRE(all)', [r for r, nm in centrerows])):
                 if not sel:
@@ -291,12 +360,24 @@ def main():
                 n, cm, cmin, mavg, s1mx, s2mn = _aggregate(sel)
                 print(_fmt('%s r=%.3g' % (lab, R_CENTRE), n, cm, cmin, mavg, s1mx, s2mn))
             sel_all = [r for r, nm in centrerows]
-            mavg_c = _aggregate(sel_all)[3]
+            _ag_c = _aggregate(sel_all)
+            mavg_c = _ag_c[3]          # 면적가중 평균 면내응력 (S11+S22)/2
+            minp_c = _ag_c[5]          # 중앙 영역 최소주응력(가장 압축적인 min principal)
             print("[R-13] >>> CENTRE 헤드라인: 중심 (%.3g, %.3g) 반경 %.3g m / n=%d / "
                   "평균 면내응력=%+.4g Pa" % (CENTRE_XY[0], CENTRE_XY[1], R_CENTRE,
                                               len(sel_all), mavg_c))
-            print("[R-13] >>> 논문 대조용: 7000 Pa 대비 중앙 평균 면내응력 배율 = %.3f"
+            #   [§19.94] 7000 Pa 의 **대상이 어느 양인지 미확정**이다(논문 Fig.11/본문 대조 전까지).
+            #     Galhofo2022 는 "7000 Pa [36] at the centre of each solar sail quadrant" 라 하고
+            #     별도 문장에서 "The minimum principal stresses are measured in the membrane" 라 한다
+            #     -> 7000 Pa 이 평균 면내응력인지 최소주응력인지 단정할 수 없다. 그래서 **두 비율을
+            #     구분되는 라벨로 병기**하고, 미확정 사실을 로그에 남긴다(한쪽만 찍으면 그 라벨이
+            #     확정된 것처럼 읽힌다).
+            print("[R-13] >>> 논문 대조용(평균): 7000 Pa 대비 중앙 평균 면내응력 배율 = %.3f"
                   % (mavg_c / TARGET_STRESS))
+            print("[R-13] >>> 논문 대조용(최소주응력): 7000 Pa 대비 중앙 최소주응력 배율 = %.3f"
+                  % (minp_c / TARGET_STRESS))
+            print("[R-13] >>> (미확정) 7000 Pa 의 대상이 평균 면내응력인지 최소주응력인지는 "
+                  "Galhofo2022 Fig.11/본문 대조 전까지 단정하지 않는다.")
         elif mid is not None:
             print("[R-13] >>> 헤드라인: 면내평균<0 비율=%.4f  minP<0 비율=%.4f" % (cm, cmin))
 

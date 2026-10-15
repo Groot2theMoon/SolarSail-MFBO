@@ -199,6 +199,9 @@ def emit_start():
             pass
 
 
+# [§19.94] 런 시작 시각. R-13 이 읽은 ODB 의 mtime 이 이보다 오래되었으면 '이 런이 만든 파일이
+#   아니다' -> stale 가능 경고를 찍는다(그 숫자를 이 설계점의 base state 로 읽으면 안 된다).
+_RUN_T0 = time.time()
 emit_start()
 
 
@@ -1548,21 +1551,57 @@ elif fidelity == 'HF':
     try:
         if BASE_PROBE:
             _probe = os.path.join(_HERE, 'base_state_probe.py')
-            _bodb = _first_existing(BUCKLE_ODB,
-                                    os.path.join(_HERE, os.path.basename(BUCKLE_ODB)),
-                                    os.path.join('..', os.path.basename(BUCKLE_ODB)))
+            #   [§19.94] 이 런이 써야 할 좌굴 ODB 의 **명시 경로**(cwd = code\aba, run_job_safely 의 출력
+            #     위치)를 먼저 본다. 예전에는 _first_existing 폴백 체인만 썼기 때문에, 이 런이 ODB 를
+            #     만들지 못하면 code\ 나 code\aba\ 밖의 **지난 런 ODB** 를 조용히 열어 R-13 을 찍을 수
+            #     있었다(감사: 서로 다른 (x_c,d_c) 인데 R-13 숫자가 완전히 동일).
+            #     → 이제는 (i) 명시 경로 우선, (ii) 폴백 시 경고, (iii) mtime 이 런 시작보다 오래되면
+            #       stale 경고. 진단이 본 런을 죽이지 않도록 전부 경고만 낸다.
+            _bodb_run = os.path.abspath(BUCKLE_ODB)
+            _bodb = _bodb_run if os.path.exists(_bodb_run) else None
+            _bodb_src = '이 런 cwd'
+            if _bodb is None:
+                _bodb = _first_existing(os.path.join(_HERE, os.path.basename(BUCKLE_ODB)),
+                                        os.path.join('..', os.path.basename(BUCKLE_ODB)))
+                _bodb_src = '폴백(다른 디렉터리)'
+                if _bodb:
+                    emit("[R-13] !!! 이 런의 ODB 가 없다(%s) -> 폴백 경로 사용: %s (stale 가능)"
+                         % (_bodb_run, _bodb))
             if os.path.exists(_probe) and _bodb:
-                emit("[R-13] base state ODB: %s" % _bodb)
+                emit("[R-13] base state ODB: %s  [%s]" % (_bodb, _bodb_src))
+                #   [§19.94] stale 판정: mtime < 런 시작 이면 이 런이 만든 파일이 아니다.
+                try:
+                    _mt = os.path.getmtime(_bodb)
+                    _age = _RUN_T0 - _mt
+                    _mt_txt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_mt))
+                    if _age > 0.0:
+                        emit("[R-13] !!! stale ODB 가능: 파일 mtime(%s) 이 런 시작(%s) 보다 %.1f 초 "
+                             "오래됨 — R-13 숫자는 **이 설계점의 base state 가 아닐 수 있다**."
+                             % (_mt_txt,
+                                time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_RUN_T0)), _age))
+                        if not RUN_SELF_BUCKLE_JOB:
+                            emit("[R-13]     (원인) 이 런은 자기 좌굴 잡을 돌리지 않는다"
+                                 "(RUN_SELF_BUCKLE_JOB=False) -> 좌굴 ODB 는 모드소스 런의 산출물이다.")
+                    else:
+                        emit("[R-13] ODB 신선도 OK: 런 시작 후 %.1f 초에 생성됨 (mtime %s)"
+                             % (-_age, _mt_txt))
+                except Exception as _mt_err:
+                    emit("[R-13] ODB mtime 확인 실패(무시): %s" % _mt_err)
                 _pcmd = ('abaqus python "%s" "%s" Step-GlobalTension'
                          % (_probe, _bodb))
                 _pr = subprocess.run(_pcmd, shell=True, capture_output=True, text=True)
                 # probe 는 40여 줄을 쏟는다(요소 좌표·단면별 통계·RF 상위 8개·인스턴스별 max|u3|).
-                # 로그에 필요한 것은 ">>>" 가 붙은 요약뿐이므로 그것만 남긴다.
+                # 로그에 필요한 것은 ">>>" 가 붙은 요약 + [§19.94] 신원/경고/영역 개수 줄이다.
                 _pr_all = ((_pr.stdout or "") + (_pr.stderr or "")).splitlines()
                 _n_kept = 0
+                #   [§19.94] '>>>' 요약만 통과시키면 **새로 추가한 ODB 신원/경고 줄이 통째로 사라진다**
+                #     (신원 로그가 hf_run_log.txt 에 없으면 stale 판정 자체가 불가능하다). 그래서
+                #     신원·경고·영역 개수 줄도 함께 남긴다.
+                _pass_pf = ('[R-13] ODB 신원', '[R-13] !!!', '[R-13] 중앙 영역')
                 for _ln in _pr_all:
-                    if ">>>" in _ln:
-                        emit("   %s" % _ln.strip()); _n_kept += 1
+                    _ls = _ln.strip()
+                    if ">>>" in _ls or _ls.startswith(_pass_pf):
+                        emit("   %s" % _ls); _n_kept += 1
                 emit("[R-13] 요약 %d줄 / 원본 %d줄 (상세 생략)" % (_n_kept, len(_pr_all)))
             else:
                 emit("[R-13] base state 측정 건너뜀 (probe=%s, odb=%s : 후보 %s / %s)"
