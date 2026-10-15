@@ -1685,6 +1685,12 @@ elif fidelity == 'HF':
 
     if not run_job_with_ladder('HF_Postbuckle'):
         emit("!!! ERROR: HF 완주 실패(안정화 사다리 소진) -> RESULTS:FAIL")
+        #   [§19.93] **실패도 아카이빙**한다. 완주 실패가 조용히 사라지면 스윕 데이터의 절반
+        #     (설계 불가능 영역)을 잃는다 — MFBO 에서 실패는 제약 위반이므로 그 자체가 데이터다.
+        #     fidelity 열에 HF_FAIL 을 넣어 스키마 변경 없이 구분한다(헤더는 1회만 쓰이므로 열 추가 불가).
+        _archive_result(x_c, d_c, 'HF_FAIL', 'nan,nan,nan,nan',
+                        {'status': 'LADDER_EXHAUSTED',
+                         'stabilize_ladder': str(STABILIZE_LADDER)})
         emit("RESULTS:FAIL")
         sys.stdout.flush()
         sys.exit(1)

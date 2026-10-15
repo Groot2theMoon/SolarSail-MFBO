@@ -3594,3 +3594,17 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [로컬 검증] 3스텝 가짜 덱(0.003 / 0.01 / 0.001)에 `stabilize=0.02` 요청 →
   Step-Postbuckle 만 0.02, 나머지 두 값 불변. 통과.
 [다음] (0.5, d_c=1.0) 재실행 → 네 레벨이 **실제로 다른 감쇠**로 돌고, 완주 레벨이 나오는지 확인.
+
+#### §19.93 실패 아카이빙 — `RESULTS:FAIL` 도 기록한다 (2026-10-15)
+
+[왜] §19.88 아카이빙은 **완주 성공 경로**에서만 호출됐다. 그런데 (0.5, d_c=1.0) 처럼 감쇠
+  사다리를 다 소진해 실패하는 점이 실제로 존재한다 → 실패가 조용히 사라져 스윕 데이터에서
+  **설계 불가능 영역이 통째로 유실**됐다. MFBO 에서 실패는 제약 위반이므로 그 자체가 데이터다.
+[변경] `run_abaqus.py` — 사다리 소진 분기에서
+  `_archive_result(x_c, d_c, 'HF_FAIL', 'nan,nan,nan,nan', {'status':'LADDER_EXHAUSTED',
+   'stabilize_ladder': ...})` 호출.
+  - **스키마 변경 없음**: `fidelity` 열에 `HF_FAIL` 을 넣어 구분한다(CSV 헤더는 파일 생성 시
+    1회만 쓰이므로 열을 나중에 추가하면 기존 행과 어긋난다 — §19.91 에서 배운 제약).
+  - 점별 `.txt` 에는 status/stabilize_ladder 가 추가된다.
+  - 같은 점이 나중에 완주하면 별도 행으로 누적된다(시도 이력 보존).
+[검증] py_compile · `test_seed_path` 49/49 · `static_leak_check` 이상 없음.
