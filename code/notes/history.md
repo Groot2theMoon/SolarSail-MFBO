@@ -3548,3 +3548,29 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   ≥ 0.15% → true-normal 로 전환. β>0(비스듬 입사)에서는 뒤집기 해제 필수.
 [계약] RESULTS 4필드는 그대로 — 부가 진단은 별도 파일로만 낸다(파서 호환).
 [검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.
+
+#### §19.92 감쇠 사다리가 실제로는 작동하지 않았다 — 원인 2개 (실측 로그로 발견, 2026-10-15)
+
+[증상] (0.5, 1.0) HF 에서 `stabilize=0.005` 한 레벨만 시도하고 그대로 `!!! ERROR: Job
+  HF_Postbuckle failed. Actual Status: None` 으로 종료. 사다리가 상향(0.01/0.02/0.05)하지 않음.
+
+[원인 1 — 실패가 사다리에 전달되지 않음]
+  `run_job_safely` 는 잡 실패 시 `emit(...)` 뒤 **`sys.exit(1)`** 로 프로세스를 끝낸다.
+  사다리는 `if run_job_safely(...)` 의 **bool 반환**을 보고 상향하는 구조인데,
+  실패 경로가 프로세스를 죽이므로 **사다리가 실패를 볼 기회 자체가 없었다** → §19.85 이후
+  자동 상향은 **한 번도 실행된 적이 없다**(과거의 완주는 모두 첫 레벨에서 성공한 경우).
+[원인 2 — 사다리 레벨이 덱에 반영되지 않음]
+  패처(`riks_patch_input.py`)는 **자기 기본값 `stabilize=0.01`** 로 `*Static` 줄을 써 넣는다.
+  `run_patcher` 안에 `_set_stabilize` 헬퍼는 있었으나 **호출되지 않아**, 사다리가 넘긴 값이
+  덱에 들어가지 않았다. 실측 로그: `[LADDER] stabilize=0.005 시도` 인데 패치된 덱은
+  `*Static, stabilize=0.01`. → **지금까지 "0.005 로 완주" 기록은 실제로 0.01 실행**이었다.
+  (교차 확인: (0.8,1.0)이 "0.005 완주"였고, 수동 시험에서도 0.01 이 필요했다 — 같은 값이었던 것.)
+
+[수정] `run_abaqus.py`
+  - `run_job_safely(..., hard_fail=True)`: False 면 실패 시 `sys.exit(1)` 대신 **`return False`**.
+  - 사다리 호출에 `hard_fail=False` 전달 → 실패를 보고 **다음 레벨로 상향**한다.
+  - 패처 성공 직후 **덱의 `*Static, stabilize=` 값을 사다리 레벨로 확정**(정규식 1건 치환 +
+    로그 `[LADDER] 덱의 stabilize=%g 확정`). 실패 시 경고만 내고 진행(멱등).
+[함의] `stabilize_used.txt` 와 실제 실행이 이제 일치한다 — 점 간 감쇠 레벨 비교가 성립한다.
+  기존 기록(0.005 로 적힌 점들)은 **사실상 0.01** 이었으므로 재측정이 필요하다.
+[검증] py_compile · `test_seed_path` 49/49 · 검사기 PASS · `static_leak_check` 이상 없음.

@@ -272,7 +272,7 @@ def _archive_result(x_c, d_c, fidelity, results_csv, extra=None):
         emit("[ARCHIVE] 실패(무시): %s" % _e)
 
 
-def run_job_safely(job_name, model_name=None, stabilize=None):
+def run_job_safely(job_name, model_name=None, stabilize=None, hard_fail=True):
     """
     job 실행 중 .odb, .lck 파일 충돌을 방지하고, 완료까지 대기하는 함수
 
@@ -355,6 +355,22 @@ def run_job_safely(job_name, model_name=None, stabilize=None):
             emit("RESULTS:FAIL")
             sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
             sys.exit(1)
+        #   [§19.92] 패처(riks_patch_input.py)는 **자기 기본값(stabilize=0.01)** 으로 `*Static` 줄을
+        #     써 넣는다. 사다리가 넘긴 레벨을 실제 덱에 반영하는 단계가 빠져 있어서, 지금까지
+        #     "0.005 시도"는 사실상 전부 0.01 로 돌았다(그래서 (0.8,1.0)이 수동 시험(0.01)과
+        #     같은 결과를 냈다). 여기서 덱의 값을 확정한다 — 기록(stabilize_used.txt)과
+        #     실제 실행이 일치해야 점 간 비교가 성립한다.
+        if _needs_patch and stabilize is not None:
+            with open(job_name + '.inp', 'r', encoding='utf-8', errors='replace') as _fh2:
+                _t2 = _fh2.read()
+            _t3, _n3 = re.subn(r'(\*Static,\s*stabilize=)[0-9.eE+-]+',
+                               r'\g<1>%g' % stabilize, _t2)
+            if _n3 == 1:
+                with open(job_name + '.inp', 'w', encoding='utf-8') as _fh2:
+                    _fh2.write(_t3)
+                emit("[LADDER] 덱의 stabilize=%g 확정 (기록과 실제 실행을 일치시킨다)" % stabilize)
+            else:
+                emit("[LADDER] !!! 덱 stabilize 치환 실패(%d건) — 기본값으로 진행" % _n3)
     else:
         emit("[run_abaqus] RUN_MODE='plain' : 패처 없이 원본 덱을 제출한다(진단용).")
     job.submit(consistencyChecking=OFF)
@@ -369,6 +385,12 @@ def run_job_safely(job_name, model_name=None, stabilize=None):
             or not job_completed_from_logs(job_name)):
         print_job_diag(job_name)   # 원인 판별용 — 실패했을 때만(완주 잡에는 노이즈)
         emit("!!! ERROR: Job %s failed. Actual Status: %s" % (job_name, str(job.status)))
+        if not hard_fail:
+            #   [§19.92] 사다리(run_job_with_ladder)가 이 실패를 **보고 다음 감쇠 레벨로 올라갈 수**
+            #     있게 bool 을 돌려준다. 종전에는 여기서 sys.exit(1) 로 프로세스가 끝나
+            #     사다리가 실패를 볼 기회 자체가 없었다 → §19.85 자동 상향이 한 번도 작동하지 않음.
+            emit("    -> 사다리 모드: 실패를 반환하고 다음 레벨로 넘긴다(§19.92)")
+            return False
         sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(1)
         
@@ -386,7 +408,8 @@ def run_job_with_ladder(job_name, model_name=None):
     """
     for _lv in STABILIZE_LADDER:
         emit("[LADDER] stabilize=%g 시도 (%s)" % (_lv, job_name))
-        if run_job_safely(job_name, model_name=model_name, stabilize=_lv):
+        if run_job_safely(job_name, model_name=model_name, stabilize=_lv,
+                          hard_fail=False):
             emit("[LADDER] stabilize=%g 에서 완주" % _lv)
             #   [§19.86] 완주 직후 **에너지 비**를 재서 완주가 감쇠로 만든 것인지 판정한다.
             #     안정화는 스냅스루 정규화 장치라, 비율이 크면 주름을 덮어 손실을 과소평가한다.
