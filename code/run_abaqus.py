@@ -361,16 +361,38 @@ def run_job_safely(job_name, model_name=None, stabilize=None, hard_fail=True):
         #     같은 결과를 냈다). 여기서 덱의 값을 확정한다 — 기록(stabilize_used.txt)과
         #     실제 실행이 일치해야 점 간 비교가 성립한다.
         if _needs_patch and stabilize is not None:
+            #   [§19.92b] **스텝 범위 한정** 치환. 덱에는 `*Static, stabilize=` 가 여러 곳에 있다
+            #     (다른 스텝들의 자체 감쇠값) — 전역 정규식으로 바꾸면 2건이 잡혀 아무것도 못 바꾼다
+            #     (실측: "치환 실패(2건)" → 네 레벨이 전부 기본 0.01 로 돌았다).
+            #     `Step-Postbuckle` 스텝 헤더 다음의 첫 `*Static, stabilize=` 만 교체한다.
+            #     줄바꿈은 CRLF 이므로 `newline=''` 로 열어 번역(\r 중복)을 막는다.
             with open(job_name + '.inp', 'r', encoding='utf-8', errors='replace') as _fh2:
-                _t2 = _fh2.read()
-            _t3, _n3 = re.subn(r'(\*Static,\s*stabilize=)[0-9.eE+-]+',
-                               r'\g<1>%g' % stabilize, _t2)
-            if _n3 == 1:
-                with open(job_name + '.inp', 'w', encoding='utf-8') as _fh2:
-                    _fh2.write(_t3)
-                emit("[LADDER] 덱의 stabilize=%g 확정 (기록과 실제 실행을 일치시킨다)" % stabilize)
+                _ls2 = _fh2.read().splitlines(True)
+            _in_ps, _done2 = False, False
+            for _i2, _l2 in enumerate(_ls2):
+                _ll = _l2.lstrip().lower()
+                if _ll.startswith('*step'):
+                    _in_ps = ('step-postbuckle' in _ll)
+                    continue
+                if _in_ps and _ll.startswith('*static') and 'stabilize=' in _ll:
+                    _nw, _n2 = re.subn(r'(stabilize=)[0-9.eE+-]+',
+                                       r'\g<1>%g' % stabilize, _l2)
+                    if _n2 == 1:
+                        _ls2[_i2] = _nw
+                        _done2 = True
+                    break
+            if _done2:
+                with io.open(job_name + '.inp', 'w', encoding='utf-8', newline='') as _fh2:
+                    _fh2.write(''.join(_ls2))
+                with open(job_name + '.inp', 'r', encoding='utf-8', errors='replace') as _vf:
+                    _vt = _vf.read()
+                _chk = re.search(
+                    r'\*Step,\s*name=Step-Postbuckle.*?\*Static,\s*stabilize=([0-9.eE+-]+)',
+                    _vt, re.S)
+                emit("[LADDER] 덱 확인: Step-Postbuckle stabilize=%s (요청 %g)"
+                     % (_chk.group(1) if _chk else '?', stabilize))
             else:
-                emit("[LADDER] !!! 덱 stabilize 치환 실패(%d건) — 기본값으로 진행" % _n3)
+                emit("[LADDER] !!! Step-Postbuckle 안에서 stabilize 줄을 찾지 못함")
     else:
         emit("[run_abaqus] RUN_MODE='plain' : 패처 없이 원본 덱을 제출한다(진단용).")
     job.submit(consistencyChecking=OFF)
