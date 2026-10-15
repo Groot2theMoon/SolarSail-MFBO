@@ -12,7 +12,19 @@
 읽기 전용. 해석에는 전혀 영향을 주지 않는다.
 
 사용:
-    abaqus python base_state_probe.py Buckle_Analysis.odb Step-GlobalTension
+    abaqus python base_state_probe.py <odb> [step] [step_time] [R_centre_m]
+
+[§19.97] step 인자(기본 'Step-GlobalTension'):
+  * 'Step-GlobalTension'    = 클램프 **당김 없는** 말단(좌굴모드 추출용 base). 접두 '[R-13]'.
+  * 'Step-ClampTension'     = 꼭짓점 당김 + 클램프 당김이 **모두** 가해진 후좌굴 직전
+                              = 이 설계점의 실제 프리텐션. 접두 '[R-13:CT]'.
+    (클램프 구속(Tie_CL/CR + BC_CL/CR)은 Initial 에서 생성돼 GlobalTension 내내 살아 있고,
+     Step-ClampTension 에서 추가되는 것은 클램프 당김(CLAMP_PULL = DISP_GLOBAL*d_c)뿐이다 - §19.96.)
+  * 스텝 이름을 주면 출력 접두가 '[R-13:<약어>]' 로 바뀌어 **어느 상태의 값인지** 로그만 보고
+    알 수 있다(기본 스텝은 기존 '[R-13]' 그대로 - 하위 호환).
+  * 지정한 스텝이 ODB 에 없으면 **경고 1줄 + rc=0** 으로 끝난다(진단기가 런을 죽이지 않는다).
+  * 마지막에 요약 1줄 + `>>> KV: ...` 1줄을 찍는다(호출부가 점별 results_*.txt 로 아카이빙).
+    읽지 못한 항목은 'nan' 이다.
 
 판독:
   * 면내 평균응력<0 면적비 ~0 : base state 인장 지배 -> 좌굴 추출 실패는 '수치' 문제
@@ -134,23 +146,67 @@ def _fmt(lab, n, cm, cmin, mavg, s1mx, s2mn):
             % (lab, n, cm, cmin, mavg, s1mx, s2mn))
 
 
-BUILD = '2026-10-15a (§19.94: odb-identity + centre-undeformed + minP-ratio)'
+BUILD = '2026-10-15b (§19.97: step-arg + step-prefix + rc=0 if step missing)'
 #   개정 이력: (a) 중앙 영역(CENTRE) 통계 추가, (b) 4번째 인자로 중앙 반경 덮어쓰기,
 #             (c) [§19.94] ODB 신원(절대경로·mtime·크기) 로그 + 중앙 영역을 **미변형(재료) 좌표**로
 #                 선택 + 7000 Pa 대비 비율을 평균/최소주응력 **두 라벨**로 병기.
+#             (d) [§19.97] 스텝 이름을 인자로 일반화(기본 Step-GlobalTension = 하위 호환) +
+#                 스텝별 출력 접두([R-13:CT]) + 스텝이 없으면 **경고 후 rc=0**(진단은 런을 죽이지 않는다)
+#                 + 끝에 요약/KV 2줄(호출부가 점별 results_*.txt 로 아카이빙).
 #   사용자 실행형 도구이므로 빌드를 첫 줄에 찍는다. 출력에 이 줄이 없거나 반경이 반영되지
 #   않으면 옛 리비전이다(실제로 2026-10-01 에 이 함정에 한 번 걸렸다).
 
+# [§19.97] 스텝별 출력 접두.
+#   기본 스텝(Step-GlobalTension)은 기존 '[R-13]' **그대로** -> 기존 로그 문자열과 대조하는
+#   파서(run_abaqus.py 의 stdout 필터 등)와 하위 호환(출력이 바이트 단위로 동일하다).
+#   다른 스텝은 '[R-13:CT]' 처럼 약어가 붙어 **어느 상태의 값인지**를 로그만 보고 알 수 있다.
+#   Step-ClampTension 말단 = 꼭짓점 당김 + 클램프 당김이 모두 가해진 후좌굴 직전 = 이 설계점의
+#   실제 프리텐션이다(§19.96 정정: GlobalTension 말단은 클램프 당김이 빠진 상태).
+#   메시지 접두는 각 print 에서 `_PFX + " <메시지>"` 로 붙인다(41곳 전부, 누락 없음).
+#   (`%` 가 `+` 보다 우선순위가 높으므로 `_PFX + "a %s" % x` = `_PFX + ("a %s" % x)` - 의도한 대로다.)
+STEP_ABBR = {
+    'Step-GlobalTension': None,     # None = 접두 추가 없음 -> 기존 '[R-13]' 유지(하위 호환)
+    'Step-ClampTension': 'CT',      # 꼭짓점 + 클램프 당김 후(후좌굴 직전) = 실제 프리텐션
+    'Step-Postbuckle': 'PB',
+    'Step-HighTension': 'HT',
+    'Step-Buckle': 'BK',
+    'Step-Trigger': 'TR',
+}
+_PFX = '[R-13]'                     # main() 이 _set_step_prefix() 로 덮어쓴다
+
+
+def _set_step_prefix(step_name):
+    """스텝 이름 -> _PFX. 미등록 스텝은 이름 뒤 대문자 머리글자 2자로 약어를 만든다.
+
+    em-dash/en-dash 문자 금지(U+2014/U+2013 - 실제 문자는 쓰지 않는다): Windows cp949 콘솔에서
+    UnicodeEncodeError 로 진단기 **자체가** 죽는다(§19.95 실사고). 이 파일에서 새로 쓰는 문자열은
+    ASCII 하이픈만 쓴다.
+    """
+    global _PFX
+    if step_name in STEP_ABBR:
+        abbr = STEP_ABBR[step_name]
+    else:
+        abbr = ''.join(c for c in step_name.split('-')[-1] if c.isupper())[:2] or 'X'
+    _PFX = ('[R-13:%s]' % abbr) if abbr else '[R-13]'
+
+
+def _fnum(x, fmt='%.6g'):
+    """[§19.97] 요약/KV 값 포맷. None(읽지 못함)은 'nan' - 조용한 0 금지(이유는 로그에 남긴다)."""
+    return 'nan' if x is None else (fmt % x)
+
 
 def main():
-    print('[R-13] build %s' % BUILD)
+    # [§19.97] 스텝 이름은 **인자**다(기본 Step-GlobalTension). 접두를 먼저 정해야 build 줄부터
+    #   '어느 스텝의 판독인지'가 구분된다. (파싱은 아래 step_name 과 같은 규칙: argv[2].)
+    _set_step_prefix(sys.argv[2] if len(sys.argv) > 2 else 'Step-GlobalTension')
+    print(_PFX + ' build %s' % BUILD)
     # [§19.94] 프로브 실행 시각 - 아래 ODB 신원 로그에서 mtime 과 **나란히** 찍어
     #   "이 런이 만든 파일인가"를 로그만으로 판정할 수 있게 한다.
     _t_start = time.time()
     try:
         from odbAccess import openOdb
     except ImportError:
-        print("[R-13] odbAccess 를 못 읽었습니다 - 'abaqus python' 으로 실행해야 합니다.")
+        print(_PFX + " odbAccess 를 못 읽었습니다 - 'abaqus python' 으로 실행해야 합니다.")
         return 2
 
     odb_path = sys.argv[1] if len(sys.argv) > 1 else 'Buckle_Analysis.odb'
@@ -163,9 +219,9 @@ def main():
     if len(sys.argv) > 4:
         try:
             R_CENTRE = float(sys.argv[4])
-            print("[R-13] 중앙 반경을 인자로 덮어씀: R_CENTRE = %.4g m (기본 1.0)" % R_CENTRE)
+            print(_PFX + " 중앙 반경을 인자로 덮어씀: R_CENTRE = %.4g m (기본 1.0)" % R_CENTRE)
         except ValueError:
-            print("[R-13] 4번째 인자는 숫자(중앙 반경, m)여야 합니다: %r" % sys.argv[4])
+            print(_PFX + " 4번째 인자는 숫자(중앙 반경, m)여야 합니다: %r" % sys.argv[4])
             return 2
 
     t_target = None
@@ -173,13 +229,13 @@ def main():
         try:
             t_target = float(sys.argv[3])
         except ValueError:
-            print("[R-13] 3번째 인자는 숫자(step time)여야 합니다: %r" % sys.argv[3])
+            print(_PFX + " 3번째 인자는 숫자(step time)여야 합니다: %r" % sys.argv[3])
             return 2
 
     try:
         odb = openOdb(odb_path, readOnly=True)
     except Exception as e:
-        print("[R-13] odb 열기 실패 (%s): %s" % (odb_path, e))
+        print(_PFX + " odb 열기 실패 (%s): %s" % (odb_path, e))
         return 1
 
     # [§19.94] ODB 신원 로그 - stale ODB 차단.
@@ -198,26 +254,32 @@ def main():
             _age_txt = '%.2f 시간' % (_age / 3600.0)
         else:
             _age_txt = '%.2f 일' % (_age / 86400.0)
-        print("[R-13] ODB 신원: %s | 크기 %.2f MB (%d B) | mtime %s | 프로브 실행 %s | 나이 %s"
+        print(_PFX + " ODB 신원: %s | 크기 %.2f MB (%d B) | mtime %s | 프로브 실행 %s | 나이 %s"
               % (_odb_abs, _st.st_size / 1048576.0, _st.st_size,
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_st.st_mtime)),
                  time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_t_start)), _age_txt))
         #   나이 임계는 6시간(넉넉히): 좌굴 잡 자체가 수십 분 걸릴 수 있으므로 '같은 런'의 정당한
         #   파일도 나이가 있다. **정확한 판정(런 시작 시각 대조)은 호출부(run_abaqus.py)가** 한다.
         if _age > 21600.0:
-            print("[R-13] !!! ODB 나이 %s (>6시간) - 이 런에서 만든 파일이 아닐 가능성이 높다(stale). "
+            print(_PFX + " !!! ODB 나이 %s (>6시간) - 이 런에서 만든 파일이 아닐 가능성이 높다(stale). "
                   "이 숫자를 이 설계점의 base state 로 읽지 마라." % _age_txt)
     except Exception as e:
-        print("[R-13] ODB 신원 확인 실패(무시): %s" % e)
+        print(_PFX + " ODB 신원 확인 실패(무시): %s" % e)
 
     try:
         if step_name not in odb.steps.keys():
-            print("[R-13] step '%s' 없음. 있는 step: %s" % (step_name, list(odb.steps.keys())))
-            return 1
+            #   [§19.97] 스텝이 없으면 **경고 후 rc=0** - 진단기가 런을 죽이지 않는다(§19.94 관례).
+            #     새 스텝 판독(Step-ClampTension)은 ODB 에 그 스텝이 없을 수 있다(HF 런은 포스트버클
+            #     제출 직전에 Step-ClampTension 을 삭제한다). 그래도 호출부 런은 계속돼야 한다.
+            #     있는 스텝 목록을 함께 찍어 **어디를 읽어야 하는지**를 로그만 보고 알 수 있게 한다.
+            print(_PFX + " !!! step '%s' 가 이 ODB 에 없다 -> 이 스텝 판독을 건너뛴다(rc=0, 런은 계속). "
+                  "있는 step: %s" % (step_name, list(odb.steps.keys())))
+            return 0
         step = odb.steps[step_name]
         nf = len(step.frames)
         if nf == 0:
-            print("[R-13] '%s' 프레임 0개 - 해석이 이 스텝을 끝내지 못했습니다." % step_name)
+            print(_PFX + " !!! '%s' 프레임 0개 - 해석이 이 스텝을 끝내지 못했습니다(판독 불가)."
+                  % step_name)
             return 1
         frame = step.frames[-1]
         sel_idx = nf
@@ -229,10 +291,22 @@ def main():
                 if best_d is None or d < best_d:
                     best_d, best_i, frame = d, i, f
             sel_idx = best_i + 1
-            print("[R-13] 목표 step time %.6g -> 가장 가까운 프레임 (frame %d/%d, step time %s)"
+            print(_PFX + " 목표 step time %.6g -> 가장 가까운 프레임 (frame %d/%d, step time %s)"
                   % (t_target, sel_idx, nf, frame.frameValue))
-        print("[R-13] base state = %s / %s  (frame %d/%d, step time %s)"
+        print(_PFX + " base state = %s / %s  (frame %d/%d, step time %s)"
               % (odb_path, step_name, sel_idx, nf, frame.frameValue))
+        #   [§19.97] 판독 상태를 **한 줄로 못박는다**: 어느 스텝의 몇 번째 프레임인가.
+        #     로그 소비자가 '이 숫자가 GlobalTension 인지 ClampTension 인지'를 추측하지 않게 한다.
+        print(_PFX + " 스텝=%s 프레임=%d/%d step time=%s"
+              % (step_name, sel_idx, nf, frame.frameValue))
+
+        #   [§19.97] 끝의 요약/KV 줄에 쓸 값 보관소(None = 읽지 못함 -> 'nan').
+        _v_centre_mean = None    # 중앙 영역 면적가중 평균 면내응력 [Pa]
+        _v_centre_minp = None    # 중앙 영역 최소주응력(가장 압축적인 min principal) [Pa]
+        _v_frac_meanneg = None   # 전막 면적가중 면내평균<0 비율
+        _v_frac_minpneg = None   # 전막 면적가중 minP<0 비율
+        _v_uz_max = None         # 부호 있는 u3 최대값 [m]
+        _v_uz_ave = None         # (|u3,max|+|u3,min|)/2 [m] - 논문 정의
 
         # 요소 체적 (면적 가중용; 쉘은 두께 균일 -> 면적비와 동일)
         vols = {}
@@ -240,9 +314,9 @@ def main():
             for v in frame.fieldOutputs['EVOL'].values:
                 d = v.data
                 vols[v.elementLabel] = float(d[0]) if isinstance(d, (tuple, list)) else float(d)
-            print("[R-13] EVOL 요소 %d개 확보 (면적 가중 사용)" % len(vols))
+            print(_PFX + " EVOL 요소 %d개 확보 (면적 가중 사용)" % len(vols))
         except Exception as e:
-            print("[R-13] EVOL 없음 -> 균등 가중으로 대체 (%s)" % e)
+            print(_PFX + " EVOL 없음 -> 균등 가중으로 대체 (%s)" % e)
 
         # CENTROID 로 요소당 1개 값 (쉘은 단면점마다 1개)
         try:
@@ -278,10 +352,10 @@ def main():
                                sum(c[1] for c in cs) / len(cs))
                         cent[(_iname, el.label)] = _xy
                         cent_by_label[el.label] = _xy
-            print("[R-13] 요소 중심 좌표 %d개 확보 (미변형/재료 좌표, 중앙 반경 %.3g m)"
+            print(_PFX + " 요소 중심 좌표 %d개 확보 (미변형/재료 좌표, 중앙 반경 %.3g m)"
                   % (len(cent), R_CENTRE))
         except Exception as e:
-            print("[R-13] 요소 좌표를 못 읽음 -> 중앙 영역 통계 생략 (%s)" % e)
+            print(_PFX + " 요소 좌표를 못 읽음 -> 중앙 영역 통계 생략 (%s)" % e)
 
         groups = {}      # section number -> rows
         centrerows = []  # 중앙 반경 안의 rows
@@ -321,11 +395,11 @@ def main():
                     _centre_els.add(v.elementLabel)
 
         if not groups:
-            print("[R-13] S 값 0개")
+            print(_PFX + " S 값 0개")
             return 1
 
         key = lambda x: (x is None, x)
-        print("[R-13] 단면점 %d개: %s" % (len(groups), sorted(groups.keys(), key=key)))
+        print(_PFX + " 단면점 %d개: %s" % (len(groups), sorted(groups.keys(), key=key)))
         for num in sorted(groups.keys(), key=key):
             n, cm, cmin, mavg, s1mx, s2mn = _aggregate(groups[num])
             print(_fmt('sec %s' % ('-' if num is None else num), n, cm, cmin, mavg, s1mx, s2mn))
@@ -333,24 +407,28 @@ def main():
         allrows = [r for rows in groups.values() for r in rows]
         n, cm, cmin, mavg, s1mx, s2mn = _aggregate(allrows)
         print(_fmt('ALL', n, cm, cmin, mavg, s1mx, s2mn))
+        #   [§19.97] 전막 기준 '면내평균<0 비율'/'minP<0 면적비' 를 보관한다(요약/KV 줄용).
+        #     아래에서 cm/cmin 이 MIDSECTION/CENTRE 집계로 **덮어써지므로** 여기서 잡아야 한다.
+        _v_frac_meanneg = cm
+        _v_frac_minpneg = cmin
 
         nums = sorted([k for k in groups.keys() if k is not None])
         mid = nums[len(nums) // 2] if nums else None
         if mid is not None and len(nums) > 1:
             n, cm, cmin, mavg, s1mx, s2mn = _aggregate(groups[mid])
             print(_fmt('MIDSECTION(%s)' % mid, n, cm, cmin, mavg, s1mx, s2mn))
-            print("[R-13] >>> 헤드라인(중앙단면 면적가중): 면내평균<0 비율=%.4f  "
+            print(_PFX + " >>> 헤드라인(중앙단면 면적가중): 면내평균<0 비율=%.4f  "
                   "min principal<0 비율=%.4f  평균 면내응력=%+.4g Pa" % (cm, cmin, mavg))
             if TARGET_STRESS:
-                print("[R-13] >>> (참고용) 전막 평균 대비 TARGET_STRESS 배율 = %.3f  -- 논문 대조 대상 아님(논문은 전막 평균을 언급하지 않음). 대조는 아래 CENTRE"
+                print(_PFX + " >>> (참고용) 전막 평균 대비 TARGET_STRESS 배율 = %.3f  -- 논문 대조 대상 아님(논문은 전막 평균을 언급하지 않음). 대조는 아래 CENTRE"
                       % (mavg / TARGET_STRESS))
-            print("[R-13] >>> 판정: 면내평균<0 비율 ~0 이면 base state 인장지배(수치문제) / "
+            print(_PFX + " >>> 판정: 면내평균<0 비율 ~0 이면 base state 인장지배(수치문제) / "
                   "0.2 이상이면 slack·주름 상태(문서상 '예압>좌굴하중' 케이스)")
         # 논문과 직접 비교되는 지표: 사분면 중앙 영역(반경 R_CENTRE)의 응력
         if centrerows:
             #   [§19.94] 영역 요소 개수를 남긴다 - 좌표 기준을 미변형으로 바꿨고 라벨 중복도 제거했으므로
             #     기존 런과 n/값이 **달라질 수 있다**(그게 정상). 로그가 없으면 값 변화의 원인을 못 쫓는다.
-            print("[R-13] 중앙 영역(미변형 좌표): 요소 %d개 / 면적가중 행 %d개 "
+            print(_PFX + " 중앙 영역(미변형 좌표): 요소 %d개 / 면적가중 행 %d개 "
                   "(중심 (%.3g, %.3g), R=%.3g m)"
                   % (len(_centre_els), len(centrerows), CENTRE_XY[0], CENTRE_XY[1], R_CENTRE))
             for lab, sel in (('CENTRE(mid)', [r for r, nm in centrerows if nm == mid]),
@@ -363,7 +441,11 @@ def main():
             _ag_c = _aggregate(sel_all)
             mavg_c = _ag_c[3]          # 면적가중 평균 면내응력 (S11+S22)/2
             minp_c = _ag_c[5]          # 중앙 영역 최소주응력(가장 압축적인 min principal)
-            print("[R-13] >>> CENTRE 헤드라인: 중심 (%.3g, %.3g) 반경 %.3g m / n=%d / "
+            #   [§19.97] 요약/KV 줄에 쓸 중앙 영역 값 보관. 7000 Pa 대조의 두 후보(평균/최소주응력)를
+            #     모두 남긴다 - 어느 쪽이 논문의 양인지 미확정(§19.94)이라 한쪽만 저장하면 오독된다.
+            _v_centre_mean = mavg_c
+            _v_centre_minp = minp_c
+            print(_PFX + " >>> CENTRE 헤드라인: 중심 (%.3g, %.3g) 반경 %.3g m / n=%d / "
                   "평균 면내응력=%+.4g Pa" % (CENTRE_XY[0], CENTRE_XY[1], R_CENTRE,
                                               len(sel_all), mavg_c))
             #   [§19.94] 7000 Pa 의 **대상이 어느 양인지 미확정**이다(논문 Fig.11/본문 대조 전까지).
@@ -372,24 +454,24 @@ def main():
             #     -> 7000 Pa 이 평균 면내응력인지 최소주응력인지 단정할 수 없다. 그래서 **두 비율을
             #     구분되는 라벨로 병기**하고, 미확정 사실을 로그에 남긴다(한쪽만 찍으면 그 라벨이
             #     확정된 것처럼 읽힌다).
-            print("[R-13] >>> 논문 대조용(평균): 7000 Pa 대비 중앙 평균 면내응력 배율 = %.3f"
+            print(_PFX + " >>> 논문 대조용(평균): 7000 Pa 대비 중앙 평균 면내응력 배율 = %.3f"
                   % (mavg_c / TARGET_STRESS))
-            print("[R-13] >>> 논문 대조용(최소주응력): 7000 Pa 대비 중앙 최소주응력 배율 = %.3f"
+            print(_PFX + " >>> 논문 대조용(최소주응력): 7000 Pa 대비 중앙 최소주응력 배율 = %.3f"
                   % (minp_c / TARGET_STRESS))
-            print("[R-13] >>> (미확정) 7000 Pa 의 대상이 평균 면내응력인지 최소주응력인지는 "
+            print(_PFX + " >>> (미확정) 7000 Pa 의 대상이 평균 면내응력인지 최소주응력인지는 "
                   "Galhofo2022 Fig.11/본문 대조 전까지 단정하지 않는다.")
         elif mid is not None:
-            print("[R-13] >>> 헤드라인: 면내평균<0 비율=%.4f  minP<0 비율=%.4f" % (cm, cmin))
+            print(_PFX + " >>> 헤드라인: 면내평균<0 비율=%.4f  minP<0 비율=%.4f" % (cm, cmin))
 
         # ---- 압축지도: "모드가 최소 면내주응력<0 영역에 있는가" (2026-10-07) ----
         if mapitems:
             grid, cfrac, cc = compression_map(mapitems)
-            print("[R-13] === 면내 최소주응력<0 압축지도 (칸 1 m, 숫자=압축 면적비x9, '.'=요소없음) ===")
+            print(_PFX + " === 면내 최소주응력<0 압축지도 (칸 1 m, 숫자=압축 면적비x9, '.'=요소없음) ===")
             print(" " * 9 + ''.join(str(i % 10) for i in range(20)) + "   <- x [m]")
             for k, rowtxt in enumerate(grid):
                 iy = (len(grid) - 1) - k
                 print("  y=%4.1f %s" % (iy + 0.5, rowtxt))
-            print("[R-13] >>> 압축지도 헤드라인: minP<0 면적비=%.4f  압축 무게중심=%s"
+            print(_PFX + " >>> 압축지도 헤드라인: minP<0 면적비=%.4f  압축 무게중심=%s"
                   % (cfrac, ('(%.2f, %.2f)  <- buckle_mode_report 의 모드 centroid 와 비교'
                              % (cc[0], cc[1])) if cc else 'None(압축 없음)'))
 
@@ -409,11 +491,11 @@ def main():
                     best.append((mag, v.nodeLabel, inst,
                                  tuple(round(float(x), 8) for x in d)))
             best.sort(reverse=True)
-            print("[R-13] RF 비영 노드 %d개, 상위 8개:" % len(best))
+            print(_PFX + " RF 비영 노드 %d개, 상위 8개:" % len(best))
             for mag, lab, inst, comp in best[:8]:
                 print("       %.6g N  node %s  inst=%s  %s" % (mag, lab, inst, comp))
         except Exception as e:
-            print("[R-13] RF 읽기 실패: %s" % e)
+            print(_PFX + " RF 읽기 실패: %s" % e)
 
         # 면외변위 |u3| 통계 - B안(trigger + 자연 주름)에서 '주름이 실제로 발생했는지'를
         # 같은 로그로 확인하기 위한 것. A안/프리텐션 단계에서는 u3=0 고정이라 ~0 이 나온다.
@@ -441,29 +523,48 @@ def main():
                 n3 = len(u3s)
                 f2 = sum(1 for x in u3s if x > 2.0 * T_MEMB) / float(n3)
                 f20 = sum(1 for x in u3s if x > 20.0 * T_MEMB) / float(n3)
-                print("[R-13] |u3| 통계 (n=%d): max=%.3e m  p99=%.3e  median=%.3e  "
+                print(_PFX + " |u3| 통계 (n=%d): max=%.3e m  p99=%.3e  median=%.3e  "
                       "|u3|>2t 비율=%.4f  |u3|>20t 비율=%.4f"
                       % (n3, u3s[-1], u3s[int(0.99 * (n3 - 1))], u3s[n3 // 2], f2, f20))
                 _uzmax = max(u3sgn)
                 _uzmin = min(u3sgn)
                 # 논문 정의: u_z,ave = (u_z,max + u_z,min)/2, 절대값 기준 -> (|max|+|min|)/2 = peak-to-peak/2
                 _uzave = (abs(_uzmax) + abs(_uzmin)) / 2.0
-                print("[R-13] >>> 논문 대조용 진폭: u_z,max=%.4g m  u_z,min=%.4g m  u_z,ave=(|max|+|min|)/2=%.4g m"
+                #   [§19.97] 요약/KV 줄에 쓸 면외변위 값 보관(u_z,max 는 **부호 유지** 최대값).
+                _v_uz_max = _uzmax
+                _v_uz_ave = _uzave
+                print(_PFX + " >>> 논문 대조용 진폭: u_z,max=%.4g m  u_z,min=%.4g m  u_z,ave=(|max|+|min|)/2=%.4g m"
                       % (_uzmax, _uzmin, _uzave))
-                print("[R-13] >>> t 정규화(%.1e m): u_z,max=%.1f t   u_z,min=%.1f t   u_z,ave=%.1f t"
+                print(_PFX + " >>> t 정규화(%.1e m): u_z,max=%.1f t   u_z,min=%.1f t   u_z,ave=%.1f t"
                       % (T_MEMB, _uzmax / T_MEMB, _uzmin / T_MEMB, _uzave / T_MEMB))
-                print("[R-13] >>> (참고) mean|u3| = %.4g m (=%.1f t) -- 논문 지표 아님(내부 참고용)"
+                print(_PFX + " >>> (참고) mean|u3| = %.4g m (=%.1f t) -- 논문 지표 아님(내부 참고용)"
                       % (sum(u3s) / float(n3), (sum(u3s) / float(n3)) / T_MEMB))
-                print("[R-13] >>> 참조 Galhofo2022 (t=2.5e-06 m): u_z,max=2.284e-04 m (91.4 t), u_z,min=-2.269e-04 m")
-                print("[R-13] >>>   Table3 modes1,2,3,4: u_z,ave=2.2765e-04 m (91.1 t) / TableA.1 u_z,max 2.003~2.474e-04 m (80~99 t)")
-                print("[R-13] >>> 주름 수/파장은 요소 종류에 극민감(논문 자체 4배 산포) -> 요소 맞추기 전 비교 불가")
+                print(_PFX + " >>> 참조 Galhofo2022 (t=2.5e-06 m): u_z,max=2.284e-04 m (91.4 t), u_z,min=-2.269e-04 m")
+                print(_PFX + " >>>   Table3 modes1,2,3,4: u_z,ave=2.2765e-04 m (91.1 t) / TableA.1 u_z,max 2.003~2.474e-04 m (80~99 t)")
+                print(_PFX + " >>> 주름 수/파장은 요소 종류에 극민감(논문 자체 4배 산포) -> 요소 맞추기 전 비교 불가")
                 for inst in sorted(inst_u3.keys()):
                     arr = sorted(inst_u3[inst])
                     print("       inst=%-18s n=%-6d max|u3|=%.3e m" % (inst, len(arr), arr[-1]))
-                print("[R-13] >>> 판정(주름): max|u3| 가 막 두께(%.1e m)의 수백배 이상이면 "
+                print(_PFX + " >>> 판정(주름): max|u3| 가 막 두께(%.1e m)의 수백배 이상이면 "
                       "주름 발달 / ~0 이면 평탄(주름 미발생)" % T_MEMB)
         except Exception as e:
-            print("[R-13] U(u3) 읽기 실패: %s" % e)
+            print(_PFX + " U(u3) 읽기 실패: %s" % e)
+
+        # [§19.97] 마지막 2줄.
+        #   1) 사람이 읽는 요약: 어느 스텝의 값인지 + 중앙 응력 + 압축 면적 + 평탄 여부.
+        #   2) KV 1줄: 호출부(run_abaqus.py)가 파싱해 점별 results_*.txt 에 key=value 로 남긴다
+        #      (CSV 열은 늘리지 않는다 - 스키마 고정, §19.91).
+        #   읽지 못한 항목은 'nan' 이다(0 으로 채우지 않는다) - 이유는 위 경고줄/호출부 로그에 남는다.
+        print(_PFX + (' >>> 요약(스텝=%s): 중앙 평균 면내응력=%s Pa / 중앙 최소주응력=%s Pa / '
+                      '면내평균<0 비율=%s / minP<0 면적비=%s / u_z,max=%s m / u_z,ave=%s m'
+                      % (step_name, _fnum(_v_centre_mean, '%.4g'), _fnum(_v_centre_minp, '%.4g'),
+                         _fnum(_v_frac_meanneg, '%.4f'), _fnum(_v_frac_minpneg, '%.4f'),
+                         _fnum(_v_uz_max, '%.4g'), _fnum(_v_uz_ave, '%.4g'))))
+        print(_PFX + (' >>> KV: centre_mean_pa=%s centre_minp_pa=%s area_frac_neg=%s '
+                      'minp_frac_neg=%s uz_max_m=%s uz_ave_m=%s'
+                      % (_fnum(_v_centre_mean), _fnum(_v_centre_minp),
+                         _fnum(_v_frac_meanneg, '%.6f'), _fnum(_v_frac_minpneg, '%.6f'),
+                         _fnum(_v_uz_max), _fnum(_v_uz_ave))))
         return 0
     finally:
         try:

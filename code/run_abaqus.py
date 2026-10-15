@@ -186,6 +186,26 @@ def _first_existing(*cands):
     return None
 
 
+def _probe_keep_line(_ls):
+    """[§19.97] R-13 프로브 stdout 필터 - 로그(hf_run_log.txt)에 남길 줄만 True.
+
+    probe 는 40여 줄을 쏟는다(요소 좌표·단면별 통계·압축지도·RF 상위 8개·인스턴스별 max|u3|).
+    로그에 필요한 것은 (i) '>>>' 요약, (ii) ODB 신원/경고 줄, (iii) 중앙 영역 개수,
+    (iv) 스텝 못박기 줄('스텝=...')이다.
+
+    [§19.94] '>>>' 만 통과시키면 신원/경고 줄이 통째로 사라져 stale 판정 자체가 불가능해진다.
+    [§19.97] 스텝 접미사([R-13:CT] / [R-13:GT])를 **떼고** 판정한다 -> 스텝이 늘어도 필터를
+      고칠 필요가 없고, 접미사를 못 떼면 CT 판독이 통째로 로그에서 사라진다(같은 유형의 사고).
+    """
+    tag = _ls
+    if tag.startswith('[R-13:'):
+        _i = tag.find(']')
+        if _i > 0:
+            tag = '[R-13]' + tag[_i + 1:]
+    return ('>>>' in tag) or tag.startswith(('[R-13] ODB 신원', '[R-13] !!!',
+                                             '[R-13] 중앙 영역', '[R-13] 스텝='))
+
+
 def emit_start():
     """런 시작 표식(파일을 truncate). 호출되면 이 파일이 실행된 것이 증명된다."""
     global _EMIT_PATHS
@@ -202,6 +222,9 @@ def emit_start():
 # [§19.94] 런 시작 시각. R-13 이 읽은 ODB 의 mtime 이 이보다 오래되었으면 '이 런이 만든 파일이
 #   아니다' -> stale 가능 경고를 찍는다(그 숫자를 이 설계점의 base state 로 읽으면 안 된다).
 _RUN_T0 = time.time()
+# [§19.97] R-13 Step-ClampTension 판독 결과(점별 results_*.txt 아카이빙용). BASE_PROBE 블록이 채운다.
+#   비어 있으면 점별 txt 에는 'nan' + 이유가 들어간다(_r13_ct_keys 참조).
+_R13_CT = {}
 emit_start()
 
 
@@ -273,6 +296,22 @@ def _archive_result(x_c, d_c, fidelity, results_csv, extra=None):
         emit("[ARCHIVE] %s + all_results.csv (1행 추가)" % _tag)
     except Exception as _e:
         emit("[ARCHIVE] 실패(무시): %s" % _e)
+
+
+def _r13_ct_keys():
+    """[§19.97] 점별 results_*.txt 에 넣을 R-13 Step-ClampTension 판독 키.
+
+    **CSV(all_results.csv) 열은 건드리지 않는다** - 헤더가 1회만 쓰이므로 열을 추가하면 기존 행과
+    어긋난다(§19.91). 그래서 진단값은 점별 txt(key=value)로만 남긴다.
+    읽지 못한 항목은 'nan' + r13_ct_note 에 이유를 남긴다(조용한 0 금지).
+    """
+    _d = {'r13_ct_centre_mean_pa': 'nan', 'r13_ct_centre_minp_pa': 'nan',
+          'r13_ct_area_frac_neg': 'nan', 'r13_ct_minp_frac_neg': 'nan',
+          'r13_ct_uz_max_m': 'nan', 'r13_ct_uz_ave_m': 'nan',
+          'r13_ct_odb': 'nan', 'r13_ct_odb_mtime': 'nan', 'r13_ct_stale': 'nan',
+          'r13_ct_note': 'probe 미실행(BASE_PROBE=False, ODB 없음, 또는 비-HF 경로)'}
+    _d.update(_R13_CT or {})
+    return _d
 
 
 def run_job_safely(job_name, model_name=None, stabilize=None, hard_fail=True):
@@ -1602,10 +1641,12 @@ elif fidelity == 'HF':
                 #   [§19.94] '>>>' 요약만 통과시키면 **새로 추가한 ODB 신원/경고 줄이 통째로 사라진다**
                 #     (신원 로그가 hf_run_log.txt 에 없으면 stale 판정 자체가 불가능하다). 그래서
                 #     신원·경고·영역 개수 줄도 함께 남긴다.
-                _pass_pf = ('[R-13] ODB 신원', '[R-13] !!!', '[R-13] 중앙 영역')
+                #   [§19.97] 스텝 접미사([R-13:CT] / [R-13:GT])를 **떼고** 판정하는 공용 필터로 교체:
+                #     `_pass_pf` 를 스텝마다 늘리는 방식은 스텝이 추가될 때마다 고쳐야 하고, 한 곳을
+                #     빠뜨리면 CT 판독이 로그에서 통째로 사라진다(§19.94 와 같은 유형의 사고).
                 for _ln in _pr_all:
                     _ls = _ln.strip()
-                    if ">>>" in _ls or _ls.startswith(_pass_pf):
+                    if _probe_keep_line(_ls):
                         emit("   %s" % _ls); _n_kept += 1
                 emit("[R-13] 요약 %d줄 / 원본 %d줄 (상세 생략)" % (_n_kept, len(_pr_all)))
             else:
@@ -1613,6 +1654,117 @@ elif fidelity == 'HF':
                       % (os.path.exists(_probe), bool(_bodb), BUCKLE_ODB, _HERE))
     except Exception as _probe_err:
         emit("[R-13] base state 측정 실패(무시): %s" % _probe_err)
+
+    # ============================================================================================
+    # [§19.97] R-13 2차 판독: `Step-ClampTension` 말단 = 꼭짓점 당김 + 클램프 당김이 **모두** 가해진
+    #   후좌굴 직전 = **이 설계점의 실제 프리텐션**(§19.96 정정: GlobalTension 말단은 클램프 당김이
+    #   빠진 상태라 '실제 프리텐션'이 아니다). 위 1차 판독(GlobalTension)은 그대로 둔다.
+    #   배경 질문: 이 상태의 중앙 응력 Pa 스케일이 7000 Pa 운용점과 얼마나 다른가.
+    #
+    #   **주의** 이 시점에 이 런의 HF ODB(HF_Postbuckle.odb)는 **아직 없다** - 포스트버클 잡은 아래에서
+    #     제출된다. 게다가 HF 모델은 포스트버클 제출 **직전에 Step-ClampTension 을 삭제**하므로
+    #     (아래 '기존 Step 정리' 블록) HF_Postbuckle.odb 에는 그 스텝이 **영원히 없다**.
+    #     -> 지금 존재하는 파일로 읽되, **어느 파일을 읽었는지 + 신선도**를 항상 함께 찍는다.
+    #        '이 런의 값'으로 오독되지 않게 하는 것이 이 블록의 핵심이다.
+    #   우선순위: (1) 짝 LF ODB(설계점별 이름 = 오염 없음, 스텝 보유) -> (2) 좌굴 ODB(GT 판독과 같은
+    #     폴백 체인) -> (3) 둘 다 없으면 건너뜀(로그 + 점별 txt 에 nan + 이유).
+    try:
+        if BASE_PROBE:
+            _probe2 = os.path.join(_HERE, 'base_state_probe.py')
+            _ct_odb = None
+            _ct_src = ''
+            _lf_abs = os.path.abspath(LF_ODB)
+            if os.path.exists(_lf_abs):
+                _ct_odb = _lf_abs
+                _ct_src = '짝 LF ODB(같은 설계점 이름, Step-ClampTension 보유)'
+            if _ct_odb is None:
+                _c1 = os.path.abspath(BUCKLE_ODB)
+                if os.path.exists(_c1):
+                    _ct_odb = _c1
+                    _ct_src = '좌굴 ODB(이 런 cwd)'
+                else:
+                    _ct_odb = _first_existing(os.path.join(_HERE, os.path.basename(BUCKLE_ODB)),
+                                              os.path.join('..', os.path.basename(BUCKLE_ODB)))
+                    _ct_src = '폴백(다른 디렉터리의 좌굴 ODB)'
+            if os.path.exists(_probe2) and _ct_odb:
+                emit("[R-13:CT] --- Step-ClampTension 말단 판독(꼭짓점 + 클램프 당김 후 = 실제 프리텐션) ---")
+                emit("[R-13:CT] ODB 선택: %s  [%s]" % (_ct_odb, _ct_src))
+                emit("[R-13:CT] !!! 이 런의 HF ODB(%s)는 아직 없다(포스트버클 제출 전) -> 위 파일로 "
+                     "**대체 판독**했다. 이 숫자를 '이 런의 HF 값'으로 읽지 마라." % HF_ODB)
+                if not _ct_src.startswith('짝 LF'):
+                    emit("[R-13:CT]     (주의) LF ODB 가 없어 좌굴 ODB 로 대체했다 -> 스텝 이름이 "
+                         "있더라도 **다른 설계점/다른 런의 산출물**일 수 있다(아래 신선도 확인).")
+                #   [§19.94] 신선도 판정 - mtime 이 런 시작보다 오래되면 이 런이 만든 파일이 아니다.
+                _mt2_txt = 'nan'
+                _stale2 = 'nan'
+                try:
+                    _mt2 = os.path.getmtime(_ct_odb)
+                    _age2 = _RUN_T0 - _mt2
+                    _mt2_txt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_mt2))
+                    if _age2 > 0.0:
+                        _stale2 = '1'
+                        emit("[R-13:CT] !!! stale: mtime(%s) 이 런 시작(%s) 보다 %.1f 초 오래됨 "
+                             "-> 이 런의 산출물이 아니다(짝 LF ODB 라면 정상: LF 런이 먼저 돌았다)."
+                             % (_mt2_txt, time.strftime('%Y-%m-%d %H:%M:%S',
+                                                        time.localtime(_RUN_T0)), _age2))
+                    else:
+                        _stale2 = '0'
+                        emit("[R-13:CT] 신선도 OK: 런 시작 후 %.1f 초에 생성됨 (mtime %s)"
+                             % (-_age2, _mt2_txt))
+                except Exception as _mt2_err:
+                    emit("[R-13:CT] mtime 확인 실패(무시): %s" % _mt2_err)
+                #   사후(authoritative) 재판독 안내. **스텝을 실제로 보유한 파일**로 안내한다 -
+                #     HF_Postbuckle.odb 를 안내하면 '스텝 없음' 경고만 돌아온다(위 **주의** 참조).
+                emit("[R-13:CT] 사후 재판독: abaqus python \"%s\" \"%s\" Step-ClampTension"
+                     % (_probe2, _ct_odb))
+                emit("[R-13:CT] (한계) HF_Postbuckle.odb 에서는 이 스텝을 읽을 수 없다 - HF 런이 "
+                     "포스트버클 직전에 Step-ClampTension 을 삭제한다. HF 프리텐션을 확정하려면 "
+                     "그 스텝을 유지하도록 배선을 바꿔야 한다(이번 §19.97 은 진단 전용).")
+                _pcmd2 = 'abaqus python "%s" "%s" Step-ClampTension' % (_probe2, _ct_odb)
+                _pr2 = subprocess.run(_pcmd2, shell=True, capture_output=True, text=True)
+                _pr2_all = ((_pr2.stdout or "") + (_pr2.stderr or "")).splitlines()
+                _n_kept2 = 0
+                _kv2 = {}
+                for _ln in _pr2_all:
+                    _ls = _ln.strip()
+                    if not _ls:
+                        continue
+                    if 'KV:' in _ls:            # 프로브가 찍는 기계 판독용 1줄
+                        for _tok in _ls.split('KV:', 1)[1].split():
+                            if '=' in _tok:
+                                _k2, _v2 = _tok.split('=', 1)
+                                _kv2[_k2] = _v2
+                    if _probe_keep_line(_ls):
+                        emit("   %s" % _ls); _n_kept2 += 1
+                emit("[R-13:CT] 요약 %d줄 / 원본 %d줄 (rc=%d, 상세 생략)"
+                     % (_n_kept2, len(_pr2_all), _pr2.returncode))
+                _R13_CT.update({
+                    'r13_ct_centre_mean_pa': _kv2.get('centre_mean_pa', 'nan'),
+                    'r13_ct_centre_minp_pa': _kv2.get('centre_minp_pa', 'nan'),
+                    'r13_ct_area_frac_neg': _kv2.get('area_frac_neg', 'nan'),
+                    'r13_ct_minp_frac_neg': _kv2.get('minp_frac_neg', 'nan'),
+                    'r13_ct_uz_max_m': _kv2.get('uz_max_m', 'nan'),
+                    'r13_ct_uz_ave_m': _kv2.get('uz_ave_m', 'nan'),
+                    'r13_ct_odb': _ct_odb,
+                    'r13_ct_odb_mtime': _mt2_txt,
+                    'r13_ct_stale': _stale2,
+                    'r13_ct_note': '%s / %s%s' % (
+                        _ct_src, ('stale(런 시작 이전 파일)' if _stale2 == '1' else
+                                  ('fresh(런 시작 이후 생성)' if _stale2 == '0' else 'mtime 미확인')),
+                        '' if _kv2 else ' / KV 줄 없음: 스텝 없음 또는 S/프레임 없음(프로브 rc=%d)'
+                        % _pr2.returncode)})
+                if not _kv2:
+                    emit("[R-13:CT] !!! KV 줄이 없다 -> 판독 실패(스텝 없음/프레임 0/S 없음). "
+                         "점별 txt 는 nan 으로 남기고 이유는 r13_ct_note 에 남긴다.")
+            else:
+                emit("[R-13:CT] 판독 건너뜀 (probe=%s, odb=%s : 후보 %s / %s)"
+                     % (os.path.exists(_probe2), bool(_ct_odb), LF_ODB, BUCKLE_ODB))
+                _R13_CT['r13_ct_note'] = ('probe=%s odb=%s 로 판독 불가(파일 없음)'
+                                          % (os.path.exists(_probe2), bool(_ct_odb)))
+    except Exception as _probe2_err:
+        emit("[R-13:CT] 판독 실패(무시): %s" % _probe2_err)
+        #   예외로 끝나도 이유를 남긴다(기본 note 'probe 미실행' 은 이 경우 사실이 아니다).
+        _R13_CT.setdefault('r13_ct_note', 'CT 판독 예외: %s' % _probe2_err)
 
     # 기존 Step 정리: Post-buckling은 GlobalTension 직후에서 시작하며,
     # 중간 단계(ClampTension)를 건너뛰고 바로 최종 하중으로 Ramping함
@@ -1733,8 +1885,9 @@ elif fidelity == 'HF':
         #     (설계 불가능 영역)을 잃는다 — MFBO 에서 실패는 제약 위반이므로 그 자체가 데이터다.
         #     fidelity 열에 HF_FAIL 을 넣어 스키마 변경 없이 구분한다(헤더는 1회만 쓰이므로 열 추가 불가).
         _archive_result(x_c, d_c, 'HF_FAIL', 'nan,nan,nan,nan',
-                        {'status': 'LADDER_EXHAUSTED',
-                         'stabilize_ladder': str(STABILIZE_LADDER)})
+                        dict({'status': 'LADDER_EXHAUSTED',
+                              'stabilize_ladder': str(STABILIZE_LADDER)},
+                             **_r13_ct_keys()))
         emit("RESULTS:FAIL")
         sys.stdout.flush()
         sys.exit(1)
@@ -1796,6 +1949,8 @@ try:
                                 _extra[_k2] = _v2
         except Exception:
             pass
+        #   [§19.97] R-13 Step-ClampTension 판독값을 점별 txt 에 함께 남긴다(CSV 열은 불변).
+        _extra.update(_r13_ct_keys())
         _archive_result(x_c, d_c, 'HF', _rc, _extra)
     else:
         emit("!!! ERROR: Extraction failed. 'extraction.txt' not found.") 

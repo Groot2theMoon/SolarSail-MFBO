@@ -3704,3 +3704,71 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   부정 고유값 405/9607 개와 **같은 물리 원인**일 가능성이 높다: d_c 가 커질수록 클램프 당김이
   시스템을 부정정화한다. 검증법: Step-ClampTension 말단의 최소주응력/음수 고유값을 d_c 별로 측정.
 [검증] py_compile · check_model_consistency · test_seed_path 49/49.
+
+#### §19.97 R-13 스텝 인자 - Step-ClampTension(꼭짓점 + 클램프 당김 후) 프리텐션 판독 추가 (2026-10-15)
+
+[왜] §19.96 정정에 따르면 후좌굴 직전 상태는 **Step-ClampTension 말단**(꼭짓점 당김 + 클램프 당김이
+  모두 가해진 상태 = 이 설계점의 실제 프리텐션)이고, R-13 이 그동안 읽던 Step-GlobalTension 말단은
+  **클램프 당김이 빠진** 상태다. 7000 Pa 대조의 전제(운용점의 Pa 스케일)를 로그로 확인할 수 있어야 한다.
+  이번 수정은 **진단 전용** - 물리·해석·목적함수·RESULTS 계약·CSV 스키마를 바꾸지 않았다.
+
+**(1) `base_state_probe.py` - 스텝별 판독**
+  - 스텝 이름은 원래 `argv[2]`(기본 Step-GlobalTension)였다. 이번에 추가한 것:
+    * **스텝별 출력 접두**: `STEP_ABBR = {GlobalTension: None(기존 '[R-13]' 유지), ClampTension: 'CT',
+      Postbuckle:'PB', HighTension:'HT', Buckle:'BK', Trigger:'TR'}`, 미등록 스텝은 이름 뒤 대문자 2자.
+      메시지 41곳 전부 `_PFX + " <메시지>"` 로 통일(누락 0) -> **기본 스텝에서는 출력이 바이트 단위로
+      동일**(스텁 diff: 기존 줄 변경 0, BUILD 1줄 교체 + 신규 3줄).
+    * **스텝이 없으면 경고 + rc=0**: `!!! step 'X' 가 이 ODB 에 없다 -> 이 스텝 판독을 건너뛴다
+      (rc=0, 런은 계속). 있는 step: [...]`. (진단기가 런을 죽이지 않는다 - §19.94 관례.)
+      프레임 0개는 기존대로 rc=1(다른 실패 유형).
+    * **스텝 못박기 1줄**: `[R-13:CT] 스텝=Step-ClampTension 프레임=i/n step time=t`
+    * **요약 1줄 + `>>> KV:` 1줄**: 중앙 평균/최소주응력, 면내평균<0 비율, minP<0 면적비,
+      u_z,max, u_z,ave. 읽지 못한 값은 `nan`(조용한 0 금지).
+  - 프레임 선택 규칙(`frames[-1]`, 선택 인자 step_time)은 **손대지 않았다**.
+
+**(2) `run_abaqus.py` - HF 런에서 두 번 호출**
+  - 1차(기존 그대로): `Step-GlobalTension`. 2차(신규): `Step-ClampTension`.
+  - **이 시점에 이 런의 HF ODB 는 없다**(포스트버클 잡 제출 전). 게다가 HF 모델은 포스트버클 직전에
+    `Step-ClampTension` 을 **삭제**하므로(아래 '기존 Step 정리') HF_Postbuckle.odb 에는 그 스텝이
+    **영원히 없다**. -> 지금 존재하는 파일로 읽고 **어느 파일을 왜 골랐는지 + 신선도(stale)** 를 항상 찍는다.
+    우선순위: (1) 짝 LF ODB(설계점별 이름 = 오염 없음, 스텝 보유) -> (2) 좌굴 ODB(cwd -> `..` 폴백)
+    -> (3) 둘 다 없으면 건너뜀 + 이유(점별 txt 에 nan + note).
+  - **사후 재판독 명령**을 로그에 안내하되, **스텝을 실제로 보유한 파일**로 안내한다
+    (`abaqus python .../base_state_probe.py <LF/좌굴 ODB> Step-ClampTension`).
+    HF_Postbuckle.odb 를 안내하면 '스텝 없음' 경고만 돌아오므로 로그에 그 한계를 명시했다.
+  - stdout 필터를 `_probe_keep_line(_ls)` 로 일원화: `[R-13:XX]` 접미사를 **떼고** 판정
+    -> 스텝이 늘어도 필터를 고칠 필요가 없고, 접미사 때문에 CT 판독이 통째로 사라지는 일이 없다
+    (§19.94 의 '>>>' 필터 사고와 같은 유형 방지). 실측: CT 원본 48줄 -> 로그 보존 20줄, 필수줄 누락 0.
+  - **점별 아카이빙(CSV 열 불변)**: 모듈 전역 `_R13_CT` -> `_r13_ct_keys()` 가 txt 전용 키 10개를 내고
+    HF 완주/HF_FAIL 두 아카이빙 호출에 병합한다: `r13_ct_centre_mean_pa`, `r13_ct_centre_minp_pa`,
+    `r13_ct_area_frac_neg`, `r13_ct_minp_frac_neg`, `r13_ct_uz_max_m`, `r13_ct_uz_ave_m`,
+    `r13_ct_odb`, `r13_ct_odb_mtime`, `r13_ct_stale`, `r13_ct_note`. 읽히지 않으면 `nan` + 이유.
+    (헤더가 1회만 쓰이는 CSV 에 열을 추가하면 기존 행과 어긋난다 - §19.91.)
+
+[검증] py_compile · `test_seed_path` 49/49 · `check_model_consistency` PASS(30+27, 위반 0) ·
+  `static_leak_check` 이상 없음.
+  + 스텁 하네스(`cache/scratch/r13_stub_test.py`, Abaqus 불필요) 실행 -> OK:
+    (i) 기본 호출 = GT: 접두 `[R-13]`, 중앙 평균 2500 Pa(0.357)/최소주응력 700 Pa(0.100)(= §19.94 값 유지),
+        KV 6키 동일. (ii) `Step-ClampTension` -> 접두 `[R-13:CT]`, 필수 4줄 + 면적비 + u_z 줄,
+        값이 GT 와 **다르다**(3750 Pa) = 인자가 실제로 다른 스텝을 읽는다. (iii) 없는 스텝 -> 경고 + rc=0.
+    (iv) 금지문자 0 / 출력 전체 cp949 인코딩 OK / **run_abaqus.py 소스에서 추출한 실제 `_probe_keep_line`**
+        이 CT 줄을 버리지 않음(필수줄 누락 0) / 새로 쓴 302줄 검사 금지문자 0.
+    (v) run_abaqus.py 의 CT 배선 블록을 **소스에서 떼어 실제 실행**(subprocess 만 가짜):
+        LF 우선 선택 -> `Step-ClampTension` 호출 -> stale=1 -> KV 파싱 -> `_r13_ct_keys()` 10키,
+        LF 없음 -> 좌굴 ODB 폴백 + (주의) 경고, 둘 다 없음 -> 건너뜀 + 이유.
+    (§19.94 회귀도 함께 통과: 신원 1줄 / 3일 파일 stale 경고 / 없는 파일 rc=0 / 라벨충돌 [3] vs [1,3].)
+
+[한계 - 정직하게]
+  - **HF 프리텐션 자체는 아직 확정 못 한다**: HF 런이 포스트버클 직전에 Step-ClampTension 을 삭제하므로
+    이 런의 산출물(HF_Postbuckle.odb)에는 그 스텝이 없다. 이번 배선은 '그 시점에 존재하는 파일'(주로
+    짝 LF ODB)로 **Pa 스케일**만 본다. HF 스텝을 유지하도록 바꾸려면 좌굴모드 base 를 건드리지 않는
+    별도 작업이 필요하다(§19.96 함의 2: ClampTension 말단은 시스템행렬을 부정정화해 좌굴모드 0개).
+  - 짝 LF ODB 로 읽는 값은 **선형 LF 모델**의 값이다(주름 없음, 요소/메쉬 상이) -> 스케일 비교용이지
+    HF 응력의 대체가 아니다(로그에 그 사실을 남긴다).
+  - 같은 설계점의 LF/HF 런은 `results_xc*_dc*.txt` 파일명이 **같다**(나중 실행이 덮어씀) -> 그 점의
+    LF 를 나중에 다시 돌리면 `r13_ct_*` 가 nan 으로 덮일 수 있다. 스윕 분석 시 주의.
+  - 관찰(범위 밖, 고치지 않음): `run_abaqus.py` 의 **기존** emit 문자열에 em-dash(U+2014) 가 50곳 있다
+    (예: §19.94 의 stale 경고 줄). emit 이 예외를 삼키므로 런은 죽지 않지만 cp949 콘솔에서는 그 줄이
+    콘솔에 안 찍힌다(hf_run_log.txt 에는 utf-8 로 남는다). §19.95 는 프로브만 고쳤다.
+  - 도구 관찰: `base_state_probe.py selftest` 는 `__main__` 이 `main()` 만 부르므로 실행되지 않는다
+    (`_selftest_compression_map` 이 죽은 코드). 범위 밖이라 그대로 두었다.
