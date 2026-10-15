@@ -3772,3 +3772,35 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
     콘솔에 안 찍힌다(hf_run_log.txt 에는 utf-8 로 남는다). §19.95 는 프로브만 고쳤다.
   - 도구 관찰: `base_state_probe.py selftest` 는 `__main__` 이 `main()` 만 부르므로 실행되지 않는다
     (`_selftest_compression_map` 이 죽은 코드). 범위 밖이라 그대로 두었다.
+
+#### §19.98 HF 스텝 순서 확정 - §19.96 함의 1/2 를 뒤집는다 (2026-10-15)
+
+[코드 실측] run_abaqus.py 1769-1777:
+    # 기존 Step 정리: Post-buckling은 GlobalTension 직후에서 시작하며,
+    # 중간 단계(ClampTension)를 건너뛰고 바로 최종 하중으로 Ramping함
+    if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
+    if 'Step-ClampTension' in my_model.steps: del my_model.steps['Step-ClampTension']
+    my_model.StaticStep(name='Step-Postbuckle', previous='Step-GlobalTension', ...)
+
+[결론] HF 모델의 실제 스텝 순서는 **GlobalTension -> Postbuckle** 뿐이다.
+  - 클램프 **구속**(Initial 생성: Tie_CL/CR + BC_CL/CR u3=0 + Disp_Control_CL/CR u1=u2=0)은
+    GlobalTension 내내 살아 있다 (§19.96 이 맞다).
+  - 그러나 클램프 **당김**(Step-ClampTension 의 CLAMP_PULL)은 HF 에서 **아예 적용되지 않는다**
+    - 그 스텝이 삭제되고, 포스트버클은 GlobalTension 직후에서 시작한다.
+  - 따라서 HF 에는 'ClampTension 말단' 상태가 **존재하지 않는다**(ODB 에 그 스텝이 없다).
+
+[정정 - 내가 두 번 틀렸다]
+  1) 세션 중 "좌굴 잡 GlobalTension 말단 = HF base state" -> **맞았다**(원래 주장이 옳았음).
+  2) §19.96 에서 그것을 '틀렸다'고 정정한 것 -> **그 정정이 틀렸다**(§19.96 함의 1/2 폐기).
+  3) "ClampTension 말단을 HF ODB 에서 읽을 수 있다(추가 런 0회)" -> **틀렸다**(그 스텝이 없다).
+  ⇒ R-13 의 기본 스텝(Step-GlobalTension)은 **HF 의 base state 로 옳은 선택**이다.
+
+[함의 A - 문헌 대조] 7000 Pa 프리텐션 대조 대상 = GlobalTension 말단. 단 이 모델은 클램프
+  구속(하중 분담)을 포함하므로, 순수 프리텐션 대조는 `NO_CLAMP=True` 모델이어야 한다(§19.96 함의 1 유지).
+[함의 B - 운용점] "꼭짓점 + 클램프 당김이 모두 최종값인 상태"는 HF ODB 의 **마지막 Postbuckle
+  프레임**이다(CLAMP_FINAL=GLOBAL_FINAL*d_c + 꼭짓점 GLOBAL_FINAL). 그것이 hf 를 계산한 바로 그 상태다.
+[함의 C - LF/HF 모델 차이 (★ 미검증, 최우선 확인 항목)] LF 모델은 Step-ClampTension 을 **보유**하므로
+  클램프 당김이 **별도 스텝**(CLAMP_PULL)으로, HF 는 **포스트버클 동안 램프**(CLAMP_FINAL)로 들어간다.
+  즉 두 모델은 '임퍼펙션 유무'만 다른 게 아닐 수 있다 -> LF-HF 상관(MFBO 전제)에 직접 영향.
+  확인법: run_abaqus.py 에서 CLAMP_FINAL 이 어느 스텝의 어느 BC 에 설정되는지 grep.
+[검증] py_compile · test_seed_path 49/49 · check_model_consistency PASS · static_leak_check 이상 없음.
