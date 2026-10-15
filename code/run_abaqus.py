@@ -1246,7 +1246,12 @@ emit("[run_abaqus] buckle eigensolver=%s numEigen=%d vectors=%s"
 if _EIGENSOLVER == 'LANCZOS':
     my_model.BuckleStep(
         name='Step-Buckle',
-        # (B) base state = '클램프 없는(GlobalTension 말단)' 상태.
+        # (B) base state = '클램프 당김 없는(GlobalTension 말단)' 상태.
+        #   [§19.96 정정] 클램프 자체는 Initial 에서 생성되어 GlobalTension 내내 구속이 살아 있다
+        #     (Tie_CL/Tie_CR + BC_CL/BC_CR u3=0 + Disp_Control_CL/CR u1=u2=0 — 위 구속조건 블록).
+        #     이 상태에서 빠지는 것은 '클램프 당김'(Step-ClampTension 의 CLAMP_PULL=DISP_GLOBAL*d_c) 뿐이다.
+        #     따라서 이 값은 클램프 구속(하중 분담)을 포함한다 — Galhofo 7000 Pa 같은
+        #     '클램프 없는 프리텐션'과 대조하려면 NO_CLAMP=True 모델의 GlobalTension 말단을 써야 한다.
         #   ClampTension 말단을 base 로 쓰면 시스템행렬이 부정정(음수 고유값 수천 개)이 되어
         #   좌굴모드 0개 -> 임퍼펙션 seed 없음 -> 포스트버클 불가.
         previous='Step-GlobalTension',

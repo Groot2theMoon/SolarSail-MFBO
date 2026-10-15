@@ -3684,3 +3684,23 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   609.9 Pa / u_z=1.547e-22)는 **이 런의 base state 가 아니라 9월 22일 구성의 값**이다.
   현행 `RUN_SELF_BUCKLE_JOB=False` 때문에 HF 런은 좌굴 ODB 를 만들지 않는다 → **유효한 프리텐션
   판독을 위해서는 좌굴(모드소스) 런을 그 설계점에서 돌려야 한다.**
+
+#### §19.96 클램프 활성 구간 정정 — R-13의 스텝 선택 (2026-10-15)
+
+[사용자 지적] "global_tension 에 클램프가 작동하지 않나?" -> **맞다.**
+[코드 확인] 클램프는 **Initial 스텝에서 생성**된다: `Tie_CL`/`Tie_CR`(케이블-막 결합),
+  `BC_CL`/`BC_CR`(u3=0), `Disp_Control_CL`/`Disp_Control_CR`(u1=u2=0). 따라서
+  **Step-GlobalTension 내내 클램프 구속이 살아 있다.** `Step-ClampTension` 에서 추가되는 것은
+  클램프 **당김**(`CLAMP_PULL = DISP_GLOBAL*d_c`)뿐이다.
+[정정 1] `BuckleStep` 주석의 '클램프 없는(GlobalTension 말단)' -> '클램프 당김 없는(GlobalTension 말단)'.
+  (클램프가 없다는 서술은 `NO_CLAMP=True` 대조 모델에만 참이다.)
+[정정 2] 직전 세션에서 "좌굴 잡의 GlobalTension 말단 = HF 런의 base state" 라고 한 설명은 **틀렸다**.
+  HF/LF 런의 후좌굴 직전 상태는 **Step-ClampTension 말단**이고, R-13 이 읽는 GlobalTension 말단은
+  **클램프 당김이 빠진** 상태다. 두 상태는 다르다.
+[함의 1 - 프리텐션 축] 7000 Pa 대조 대상은 **클램프 없는 프리텐션**이므로 `NO_CLAMP=True` 모델의
+  GlobalTension 말단이어야 한다. 클램프 있는 모델의 값은 하중 분담을 포함해 과소/과대평가된다.
+[함의 2 - HF 실패 해석] ClampTension 말단을 좌굴 base로 쓰면 시스템행렬 부정정(음수 고유값 수천 개)
+  -> 좌굴모드 0개 (코드 주석에 기존 기록). 이는 (0.1,1.0)/(0.5,1.0) 실패에서 관측된
+  부정 고유값 405/9607 개와 **같은 물리 원인**일 가능성이 높다: d_c 가 커질수록 클램프 당김이
+  시스템을 부정정화한다. 검증법: Step-ClampTension 말단의 최소주응력/음수 고유값을 d_c 별로 측정.
+[검증] py_compile · check_model_consistency · test_seed_path 49/49.
