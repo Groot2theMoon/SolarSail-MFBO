@@ -448,7 +448,7 @@ def run_job_safely(job_name, model_name=None, stabilize=None, hard_fail=True):
     if RUN_MODE == 'write':
         emit("[run_abaqus] RUN_MODE='write' : 덱만 생성(%s.inp)하고 제출하지 않는다." % job_name)
         emit("             다음: python riks_patch_input.py aba\\%s.inp <out>.inp Step-Postbuckle "
-             "--line-search --ran=2e-2 --can=1e-2 --i0=8 --ir=10" % job_name)
+             "--line-search --ran=5e-3 --can=1e-2 --i0=8 --ir=10" % job_name)
         sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
         sys.exit(0)
     # 'auto' 는 제출 전에 *Controls 를 주입한다. 제자리 덮어쓰기라 잡 이름/입력명이 유지된다.
@@ -595,7 +595,7 @@ def run_job_with_ladder(job_name, model_name=None):
     return False
 
 
-def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=2e-2',
+def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=5e-3,
                                                      '--can=1e-2', '--i0=8', '--ir=10'),
                 stabilize=None):
     """패치 전 덱에 *Controls 를 주입해 같은 파일명으로 덮어쓴다.
