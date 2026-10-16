@@ -3857,3 +3857,96 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
     max(loss,0) 으로 자르므로 음수 표본이 0 에 뭉친다 -> clip 개수를 함께 찍어 노출한다.
   - hemi(입체각 균일)는 스칠 때 1/cos 꼬리가 있어 수렴이 disk 보다 느릴 수 있다(SE 병기).
   - 실제 ODB 로는 아직 돌려보지 않았다(로컬에 ODB 가 없다). 스텁은 배선/로직만 검증한다.
+
+#### §19.100 방향평균 실측 판정 - 폐기 (2026-10-16)
+
+[실행] `abaqus python eval_abaqus_avg.py aba/HF_Postbuckle.odb --n-mc 100000` (설계점 (0.5,0.3), Step-Postbuckle, frame 8/8).
+[자기검증] hf_normal_self=3.9408139326e-05 vs hf_ref=3.9408139330e-05 (calc_thrust_loss) -> rel=1.02e-10 OK.
+  즉 독립 재구현이 기존 hf 와 1e-10 로 일치(교차검증). 다른 확인: 미변형 area_ref=100.000000 m^2
+  (frame 0) vs 변형 100.002466 -> 면적비 1.000025; 뒤집기 편향 0/10100 = 0.0000%.
+[MC 결과] N=100000, seed=12345
+  hemi_total    mean=7.397148e-01 (73.97%)  SE=8.98e-04
+  hemi_wrinkle  mean=9.622732e-06 (0.00096%) SE=4.48e-08  **clip=62329 (62.3%)**
+  disk_total    mean=5.899928e-01 (59.00%)  SE=9.40e-04
+  disk_wrinkle  mean=1.540228e-05 (0.00154%) SE=4.95e-08  **clip=42631 (42.6%)**
+[판정 - 폐기] 수직입사값 3.9408e-05 대비 비 = hemi 0.244 / disk 0.391 (모두 폐기 기준 1.3 미만).
+  방향평균은 주름 신호를 키우지 못하고 오히려 줄인다. 총손실(total)은 기하(입사각) 지배라
+  목적함수 부적합(평판만으로도 0.59~0.74).
+[원인 - 정량] SRP 총손실 f(t)=1-(A0 cos t + 2R0 cos^3 t)/IDEAL 의 볼록/오목 전환 = **35.6도**.
+  대칭 주름 분포(+-0.298도)를 씌운 기여: 0도 +1.98e-05 / 2도 +3.94e-05(최대) / 35도 +8.9e-06 /
+  45도 -1.34e-05. 즉 **주름 기여는 0~36도에서 양수, 그 바깥에서 음수** -> 반구 질량의 대부분이
+  바깥(입체각 균일의 중앙값 60도)이라 균일 평균이 눌린다. 실측 max=3.9411e-05 = 수직값과 동일
+  -> **수직 입사가 주름 손실의 극대 방향**.
+[결론 1] **목적함수를 바꿀 필요가 없다.** 현재 `hf`(수직 입사)가 곧 최악 방향(worst-case) 값이다.
+  방향평균 기반 기대값도, risk-averse 재정의도 근거 없음(폐기).
+[결론 2 - 부수] 주름은 경사에서 손실을 오히려 **줄인다**(각도 평균 관점). 단 이는 SRP 모델
+  (A0+2R0)의 cos^3 항 볼록/오목 전환에 기인한 모델 결과이며 보편 법칙 주장이 아니다.
+[결론 3 - 다음 레버] 형상 오차 자체가 완만(0.3도)하므로 어떤 각도평균도 신호를 못 키운다.
+  레버는 **파장(λ)** 이고 그건 설계변수(클램프)로 움직여야 한다 - `hf ∝ (A/λ)^2` 경로.
+[검증] py_compile · test_seed_path 49/49 · check_model_consistency PASS · static_leak_check 이상 없음.
+
+#### §19.101 기울기 분포 진단 slope_stats.py - 절대/요동 분리 + hf 사슬 검증 (2026-10-16)
+
+[동기 - 사용자 질문] 삼각 돛의 주름은 **비균질**하다. 실측(R-13, 설계점 (0.5,0.3)):
+  u_z,max 2.376 mm vs median 0.0304 mm = **78배 산포**, 압축면적비 전막 21.4% / 중앙 49.5%,
+  압축 무게중심 (10.00, 1.73). 따라서 "단일 파장"은 나쁜 서술자다. 파장/스펙트럼을 가정하는
+  대신 **목적함수와 직접 연결되는 기울기 분포**를 측정한다.
+
+[새 도구] `code/slope_stats.py` (독립 스크립트. 기존 3개 + run_abaqus.py **수정 없음**)
+  사용: `abaqus python slope_stats.py <odb> [--step NAME] [--frame N] [--json PATH]`
+  기본 스텝 Step-Postbuckle(없으면 마지막), 기본 프레임 = 그 스텝 마지막.
+  기하 읽기/법선 식/area_ref 는 eval_abaqus.get_hf / eval_abaqus_avg.py 와 문자 그대로 동일
+  (quad cross(v2-v0,v3-v1) / tri cross(v1-v0,v2-v0), 면적 0.5*|cross|, n_z<0 뒤집기).
+  JSON 기본 경로 results/slope_<odb stem>_<step>.json.
+
+  (1) 두 기울기를 **구분**한다
+      theta_abs,e   = angle(n_e, z_hat)          설계평면 기준(거시 형상 + 주름). hf 와 직접 연결.
+      theta_fluct,e = angle(n_e, n_local_mean)   주변 국소 평균 법선 기준 -> 순수 주름 몫.
+      국소 평균 = 요소 중심 k-최근접(반경 R = 3*요소크기) 이웃 법선의 면적가중 평균(단위화).
+      k-NN 은 2D 격자 셀 버킷(셀 = R) + 3x3 조회다. (요소 x 요소) 행렬을 만들지 않는다
+      (10100x10100 float64 = 2.4 GB 회피). 거리는 설계평면(x,y) 2D 로 잰다.
+  (2) 면적가중 분포 통계(mean/rms/p50/p95/p99/max, rad + deg), 10x10 패치별 rms + 최악 패치(위치),
+      방위각 18빈 히스토그램 + 배향성비(2배각: 0=등방, 1=정렬).
+  (3) 사슬 검증: hf_actual(참조구현 그대로) vs k*<theta_abs^2> vs k*<theta_fluct^2> vs 정확식.
+  (4) 압축장 요약 1줄 - R-13 정의 재사용(minP<0 면적비 / 면내평균<0 면적비 / minP 면적가중 평균).
+      base_state_probe.py 에서 최소만 복사하고(import 안 함) 출처 주석을 달았다. 가중은 EVOL 대신
+      요소 면적(쉘은 두께 균일 -> 사실상 같은 정의).
+
+[k=1.461716 의 출처] 작은 각 전개: 1 - (A0 cos + 2R0 cos^3)/(A0+2R0) = [(A0/2+3R0)/IDEAL]*theta^2
+  + O(theta^4) 이므로 k_theory = (A0/2+3R0)/IDEAL = 1.4617164. 코드는 주어진 k 를 쓰되
+  k_theory 와 차이(4.1e-07)를 매 런 찍는다.
+
+[핵심 - 실측에서 드러난 함정] 요구된 정확식 `hf_pred_exact = 1 - Sum(A_e*f_e)/(area_ref*IDEAL)` 은
+  **분모를 미변형 area_ref 로 고정**하는데 분자는 **변형 A_e** 를 쓴다. 참조구현은
+      loss = Sum(A_e)*IDEAL - Sum(A_e*f_e)   ->   hf_actual = (Sum(A_e)/area_ref)*(1 - <f_e>_A)
+  이므로 두 식은 앞의 (Sum(A_e)/area_ref) 항만큼 다르다.
+  실측 (0.5,0.3): area_ref = 100.000000 vs 변형 100.002466 -> 비 = 1.0000247 인데,
+  hf(3.9408e-05)와 **같은 자릿수**라 요구식 비율이 **0.374** 로 나온다 = 구현 드리프트로 오독된다.
+  -> 그래서 면적 정규화판 `hf_pred_exact_norm = 1 - <f_e>_A` 를 함께 낸다. 그 비율이 드리프트
+     지표이고 1(정확히는 면적비)에 가까우면 정합이다. 요구식도 그대로 출력해 둘을 나란히 본다.
+
+[검증 - Abaqus 없이] `code/slope_stats_stub.py`(가짜 odbAccess + 가짜 ODB, **실제 실행**) 80/80 OK:
+  - (i) 평평 프레임: theta=0, hf_actual = 2.3e-16(~0), hf_pred=0 -> 비율 nan(0으로 나눠 inf 없음).
+  - (ii) 해석 앵커: 모든 법선을 z_hat 에서 **0.298도** 균일 기울인 fixture
+         theta_abs rms = 0.2980도, theta_fluct = 0(법선이 모두 같다 -> 국소평균 = 자기 법선),
+         hf_pred_abs = 3.95412e-05 (실측 (0.5,0.3) 3.9408139330e-05 와 0.34% 차 - 목표 1% 이내),
+         hf_pred_exact_norm = 3.95406e-05 -> 비율 0.999986 (**정확 SRP 식이 참조구현과 일치**),
+         면적비 = 1/cos(0.298도) 항등식, 요구식 항등식(hf_pred_exact = 1 - area_ratio*(1-norm)) 확인.
+  - (iii) 1D 사인파 주름(lam=4 m, A=0.05 m): theta_abs rms 3.175도 vs theta_fluct rms 0.081도
+          = 비 0.025 -> **거시 형상과 주름이 실제로 분리된다**(요동 지표가 작동).
+  - (iv) 패치맵 10행 x 10칸, 최악 패치 위치 - 가우스 bump(0.8,3.2) fixture 에서 최악 패치
+         (ix=2, iy=7) 중심 (1.058, 2.967) 로 bump 근처(1 m 이내)에 온다.
+  - (v) 스텝/프레임 선택(기본 Step-Postbuckle, 없으면 마지막), --frame 1 = 미변형(theta=0),
+        실패경로 rc=1(없는 ODB/스텝/범위 밖 프레임) 과 rc=2(사용법), JSON 기본/지정 경로,
+        JSON 에 NaN/Infinity 비표준 토큰 0(_json_safe 로 null), odb.close() 호출.
+  - (vi) 금지문자(em/en-dash, 화살표, smart quote, NBSP, bullet, ellipsis) 0,
+         출력 전체 cp949 인코딩 가능(§19.95), 기존 4개 스크립트 git diff 무수정.
+
+[한계 - 정직하게]
+  - 기하만 읽는다(하중/재료/경계조건 재실행 없음).
+  - k 는 작은 각 근사다. 각이 큰 요소에서는 정확식이 맞다 - 둘 다 출력하므로 차이를 볼 수 있다.
+  - 국소평균 반경 R = 3*요소크기는 **고정 상수**다. 파장/스펙트럼을 가정하지 않는 대신
+    R 을 바꾸면 theta_fluct 가 달라진다(매 런 R 과 평균 이웃수를 로그에 찍는다).
+  - 실제 ODB 로는 아직 돌려보지 않았다(로컬에 ODB 가 없다). 스텁은 배선/로직/해석앵커만 검증한다.
+  - 결과 해석(절대 기울기 중 거시 형상 몫과 주름 몫의 실제 배분)은 실측 ODB 로만 판정된다.
+[검증] py_compile + test_seed_path 49/49 + check_model_consistency PASS + static_leak_check 이상 없음.
