@@ -31,9 +31,11 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -359,6 +361,214 @@ def pure_tests():
     check('local_mean_normals 이웃수 >= 1 (자기 포함)', bool(np.all(cnt >= 1)), cnt.tolist())
 
 
+# ------------------------------------------------------------------ §19.102 검증 헬퍼
+def _unsetenv(k):
+    if k in os.environ:
+        del os.environ[k]
+
+
+def _enc_ok(s):
+    try:
+        s.encode('cp949')
+        return True
+    except Exception:
+        return False
+
+
+def _isnum(v):
+    try:
+        float(v)
+        return True
+    except Exception:
+        return False
+
+
+def _csv_cols_block(src):
+    m = re.search(r"_cols = \[(.*?)\]", src, re.S)
+    return m.group(0) if m else ''
+
+
+def _new_run_abaqus_lines(src):
+    """§19.102 로 새로 쓴 run_abaqus.py 줄만 골라낸다(마커 기반 - 커밋 전후 무관하게 결정적)."""
+    marks = ('[SLOPE]', '[ODBCOPY]', '§19.102', '_archive_slope',
+             'SOLARSAIL_NO_SLOPE', 'SOLARSAIL_NO_ODB_COPY')
+    return [ln for ln in src.splitlines() if any(m in ln for m in marks)]
+
+
+def extract_wiring(src_path):
+    """run_abaqus.py 에서 _archive_slope 함수 소스만 떼어낸다(다음 def _r13_ct_keys 전까지)."""
+    src = io.open(src_path, encoding='utf-8').read()
+    m = re.search(r'\ndef _archive_slope\(.*?\n(?=def _r13_ct_keys\()', src, re.S)
+    return (m.group(0) if m else None), src
+
+
+# ------------------------------------------------------------------ §19.102 (i) compute_stats API
+def stats_api_tests(fake, M, np):
+    print('--- §19.102 (i) compute_stats dict + 목적함수 후보 f1~f4 ---')
+    _CUR['odb'] = build_odb(nx=10, ny=8, cell=0.5, shape=shape_sine)
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        S = M.compute_stats(fake)
+    check('compute_stats -> dict', isinstance(S, dict), type(S))
+    if not isinstance(S, dict):
+        return
+    need = ('theta_abs_rms_deg', 'theta_abs_p95_deg', 'theta_abs_p99_deg', 'theta_abs_max_deg',
+            'worst_patch_rms_deg', 'worst_patch_xy', 'orient_ratio', 'minp_frac_neg',
+            'area_ratio', 'hf_actual', 'ratio_abs', 'hf_pred_exact',
+            'f1_hf_pred', 'f2_p95', 'f3_worst_patch', 'f4_cvar90')
+    check('필수 키 전부 존재 (목적함수 + 기존 통계)',
+          all(k in S for k in need), [k for k in need if k not in S])
+    check('f1_hf_pred == hf_pred_abs (항등)',
+          abs(S['f1_hf_pred'] - S['hf_pred_abs']) < 1e-18,
+          (S['f1_hf_pred'], S['hf_pred_abs']))
+    check('f2_p95 >= f1_hf_pred', S['f2_p95'] >= S['f1_hf_pred'] - 1e-18,
+          (S['f2_p95'], S['f1_hf_pred']))
+    check('f4_cvar90 >= f2_p95', S['f4_cvar90'] >= S['f2_p95'] - 1e-18,
+          (S['f4_cvar90'], S['f2_p95']))
+    check('f3_worst_patch >= f1_hf_pred', S['f3_worst_patch'] >= S['f1_hf_pred'] - 1e-18,
+          (S['f3_worst_patch'], S['f1_hf_pred']))
+    check('theta2_q95 >= theta2_mean (면적가중 분위수 정의)',
+          S['theta2_q95'] >= S['theta2_mean'] - 1e-18, None)
+    check('theta2_cvar90_mean >= theta2_q95', S['theta2_cvar90_mean'] >= S['theta2_q95'] - 1e-18,
+          (S['theta2_cvar90_mean'], S['theta2_q95']))
+    print('    sine fixture: f1=%.6e f2=%.6e f3=%.6e f4=%.6e'
+          % (S['f1_hf_pred'], S['f2_p95'], S['f3_worst_patch'], S['f4_cvar90']))
+    items = M.scalar_items(S, prefix='slope_')
+    check('scalar_items: 전부 slope_ 접두 + key=value',
+          bool(items) and all(t.startswith('slope_') and '=' in t for t in items), items[:2])
+    check('scalar_items: f1~f4 포함',
+          any(t.startswith('slope_f1_hf_pred=') for t in items)
+          and any(t.startswith('slope_f4_cvar90=') for t in items), None)
+    check('scalar_items: 중첩(dict/list) 키 제외 (patches/theta_abs/grid/note 없음)',
+          not any(t.startswith(('slope_patches=', 'slope_theta_abs=', 'slope_grid_abs_rad=',
+                                'slope_note=')) for t in items), None)
+    _CUR['odb'] = build_odb(nx=8, ny=8, cell=0.5, shape=None)
+    with contextlib.redirect_stdout(io.StringIO()):
+        S0 = M.compute_stats(fake)
+    check('평평 프레임: f1=f2=f3=f4 ~ 0',
+          all(abs(S0[k]) < 1e-30 for k in ('f1_hf_pred', 'f2_p95', 'f3_worst_patch', 'f4_cvar90')),
+          [S0[k] for k in ('f1_hf_pred', 'f2_p95', 'f3_worst_patch', 'f4_cvar90')])
+
+
+# ------------------------------------------------------------------ §19.102 (ii) run_abaqus 배선
+def wiring_tests(fake, tmpd, M):
+    print('--- §19.102 (ii) run_abaqus 배선: ODB 태깅 + slope_ 아카이빙 + 환경변수 스위치 ---')
+    rasrc_path = os.path.join(CODE, 'run_abaqus.py')
+    fn_src, rasrc = extract_wiring(rasrc_path)
+    check('run_abaqus.py 에서 _archive_slope 소스 추출', bool(fn_src))
+    if not fn_src:
+        return
+    cdir = os.path.join(tmpd, 'code')
+    rdir = os.path.join(cdir, 'aba')
+    os.makedirs(rdir)
+    with io.open(os.path.join(rdir, 'HF_Postbuckle.odb'), 'wb') as fh:
+        fh.write(b'o' * 2048)
+    os.makedirs(os.path.join(cdir, 'results'))
+    ptxt = os.path.join(cdir, 'results', 'results_xc0p5_dc0p3.txt')
+    base = 'x_c=0.5\nd_c=0.3\nfidelity=HF\nhf=3.9e-05\n'
+    with io.open(ptxt, 'w', encoding='utf-8') as fh:
+        fh.write(base)
+
+    logs = []
+
+    def _emit(*a):
+        logs.append(' '.join(str(x) for x in a))
+
+    from aba_imperfection import value_tag
+    ns = {'os': os, 'sys': sys, 'io': io, 'shutil': shutil, 'math': math, 'time': time,
+          'value_tag': value_tag, 'emit': _emit, 'slope_stats': M,
+          '_RUN': rdir, '_HERE': cdir, 'HF_ODB': 'HF_Postbuckle.odb'}
+    exec(compile(fn_src, '<run_abaqus:_archive_slope>', 'exec'), ns)
+    fn = ns['_archive_slope']
+
+    dst = os.path.join(cdir, 'results', 'odb', 'HF_xc0p5_dc0p3.odb')
+    jp = os.path.join(cdir, 'results', 'slope_HF_xc0p5_dc0p3_Step-Postbuckle.json')
+
+    # (a) 정상 경로 (스위치 미설정)
+    _unsetenv('SOLARSAIL_NO_SLOPE')
+    _unsetenv('SOLARSAIL_NO_ODB_COPY')
+    _CUR['odb'] = build_odb(nx=8, ny=8, cell=0.5, shape=shape_tilt, folded=(3,))
+    with contextlib.redirect_stdout(io.StringIO()):
+        fn(0.5, 0.3)
+    txt = io.open(ptxt, encoding='utf-8').read()
+    check('정상: ODB 태깅 복사 results/odb/HF_xc0p5_dc0p3.odb', os.path.exists(dst))
+    check('정상: 점별 txt 에 slope_ 접두 key=value append',
+          'slope_f1_hf_pred=' in txt and 'slope_worst_patch_rms_deg=' in txt
+          and 'slope_theta_abs_rms_deg=' in txt, None)
+    check('정상: 기존 RESULTS 계약 필드 유지 (fidelity/hf)',
+          'fidelity=HF' in txt and 'hf=3.9e-05' in txt, None)
+    check('정상: JSON 저장 (slope_HF_xc0p5_dc0p3_Step-Postbuckle.json)', os.path.exists(jp), jp)
+    check('정상: [ODBCOPY] 로그에 대상 경로/크기', any(l.startswith('[ODBCOPY]')
+          and 'HF_xc0p5_dc0p3.odb' in l and '2048 B' in l for l in logs), logs[-3:])
+    check('정상: [SLOPE] 로그', any(l.startswith('[SLOPE]') for l in logs), logs[-3:])
+    #   (iii) txt 파서: slope_ 키 개수 + 수치 파싱
+    parsed = {}
+    for ln in txt.splitlines():
+        if ln.startswith('slope_') and '=' in ln:
+            k, v = ln.split('=', 1)
+            parsed[k] = v
+    check('(iii) txt 파서: slope_ 키 >= 20 개', len(parsed) >= 20, len(parsed))
+    check('(iii) txt 파서: f1~f4 + 통계 키 수치 파싱',
+          all(_isnum(parsed.get(k, 'x')) for k in
+              ('slope_f1_hf_pred', 'slope_f2_p95', 'slope_f3_worst_patch', 'slope_f4_cvar90',
+               'slope_theta_abs_rms_deg', 'slope_worst_patch_rms_deg', 'slope_orient_ratio',
+               'slope_minp_frac_neg', 'slope_area_ratio', 'slope_hf_actual',
+               'slope_hf_pred_exact')),
+          {k: parsed.get(k) for k in ('slope_f1_hf_pred', 'slope_worst_patch_rms_deg')})
+    if os.path.exists(jp):
+        rec = json.load(io.open(jp, encoding='utf-8'))
+        check('JSON objectives 블록에 f1~f4',
+              all(k in rec.get('objectives', {})
+                  for k in ('f1_hf_pred', 'f2_p95', 'f3_worst_patch', 'f4_cvar90')),
+              sorted(rec.get('objectives', {}).keys()))
+
+    # (b) SOLARSAIL_NO_SLOPE=1 -> 배선 전체 생략
+    for f in (dst, jp):
+        if os.path.exists(f):
+            os.remove(f)
+    with io.open(ptxt, 'w', encoding='utf-8') as fh:
+        fh.write(base)
+    logs[:] = []
+    os.environ['SOLARSAIL_NO_SLOPE'] = '1'
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            fn(0.5, 0.3)
+    finally:
+        _unsetenv('SOLARSAIL_NO_SLOPE')
+    txt = io.open(ptxt, encoding='utf-8').read()
+    check('NO_SLOPE=1: ODB 복사 안 함', not os.path.exists(dst))
+    check('NO_SLOPE=1: slope_ 줄 없음', 'slope_f1_hf_pred=' not in txt)
+    check('NO_SLOPE=1: SKIP 로그 1줄', any('SOLARSAIL_NO_SLOPE=1' in l and 'SKIP' in l
+                                          for l in logs), logs)
+
+    # (c) SOLARSAIL_NO_ODB_COPY=1 -> 복사만 생략, slope_ 는 남음 (경로 분기)
+    logs[:] = []
+    with io.open(ptxt, 'w', encoding='utf-8') as fh:
+        fh.write(base)
+    os.environ['SOLARSAIL_NO_ODB_COPY'] = '1'
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            fn(0.5, 0.3)
+    finally:
+        _unsetenv('SOLARSAIL_NO_ODB_COPY')
+    txt = io.open(ptxt, encoding='utf-8').read()
+    check('NO_ODB_COPY=1: ODB 복사 안 함', not os.path.exists(dst))
+    check('NO_ODB_COPY=1: slope_ 는 남음 + SKIP 로그',
+          'slope_f1_hf_pred=' in txt and any('[ODBCOPY] SKIP' in l for l in logs), None)
+
+    # (iv) ASCII/금지문자/cp949 + CSV 열 스키마 불변
+    check('(iv) 추출 배선 소스 금지문자 0', len(FORBIDDEN_RE.findall(fn_src)) == 0,
+          sorted(set(FORBIDDEN_RE.findall(fn_src))))
+    _add = '\n'.join(_new_run_abaqus_lines(rasrc))
+    check('(iv) run_abaqus.py **추가분** 금지문자 0 (기존 줄은 불변)',
+          len(FORBIDDEN_RE.findall(_add)) == 0 and len(_add) > 0,
+          sorted(set(FORBIDDEN_RE.findall(_add))))
+    check('(iv) 점별 txt cp949 인코딩 가능 (Windows 콘솔/파일)', _enc_ok(txt), None)
+    check('(iv) all_results.csv 열 스키마 불변 (slope 미포함, hf 마지막)',
+          "'lf1', 'lf2', 'lf3', 'hf']" in _csv_cols_block(rasrc)
+          and 'slope' not in _csv_cols_block(rasrc), None)
+
+
 # ------------------------------------------------------------------ main
 def main():
     tmpd = tempfile.mkdtemp(prefix='slopestub_')
@@ -382,6 +592,10 @@ def main():
 
     outdir = os.path.join(tmpd, 'run')
     os.makedirs(outdir)
+
+    # ================= §19.102: compute_stats API + run_abaqus 배선 =================
+    stats_api_tests(fake, M, np)
+    wiring_tests(fake, tmpd, M)
 
     # ================= (i) 평평한 프레임 =================
     print('--- (i) 평평한 프레임: theta=0 / hf=0 / 비율 nan ---')
@@ -580,7 +794,9 @@ def main():
     except Exception as e:
         enc = 'FAIL(%s)' % e
     check('출력 전체 cp949 인코딩 가능(Windows 콘솔)', enc == 'OK', enc)
-    for f in ('eval_abaqus.py', 'eval_abaqus_avg.py', 'base_state_probe.py', 'run_abaqus.py'):
+    for f in ('eval_abaqus.py', 'eval_abaqus_avg.py', 'base_state_probe.py',
+              'aba_imperfection.py'):
+        #   run_abaqus.py 는 §19.102 의 **수정 대상**이므로 여기서 제외한다(배선 검증은 (ii)).
         r = subprocess.run(['git', 'diff', '--quiet', '--', f], cwd=CODE)
         check('기존 스크립트 무수정: %s' % f, r.returncode == 0, r.returncode)
 

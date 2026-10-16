@@ -61,6 +61,18 @@
 사용 (code/ 에서)
     abaqus python slope_stats.py <odb> [--step NAME] [--frame N] [--json PATH]
 
+재사용 API (§19.102)
+    compute_stats(odb_path, step=None, frame=None) -> dict | None
+        main() 의 계산부를 그대로 감싼 것. 면적가중 통계 + 사슬검증 + 목적함수 후보 f1~f4 를
+        dict 로 돌려준다. run_abaqus.py 가 성공한 HF 런에서 **인프로세스로** 호출해 점별
+        results txt 에 'slope_' 접두로 아카이빙한다(scalar_items). 서브프로세스 금지.
+    목적함수 후보(전부 면적가중 theta_abs^2 기반, 단위 = hf 와 동일):
+        f1_hf_pred     = k*mean(theta_abs^2)              (= 기존 hf_pred_abs)
+        f2_p95         = k*q95(theta_abs^2)
+        f3_worst_patch = k*max_patch(mean(theta_abs^2))   (10x10 격자 최악 패치)
+        f4_cvar90      = k*mean(theta_abs^2 | theta_abs^2 >= q90(theta_abs^2))
+    순서 관계(theta^2 >= 0 이라 항상): f1 <= f2 <= f4,  f1 <= f3.
+
 종료코드
     0 정상 / 1 실패(ODB 열기/스텝/프레임/기하/JSON) / 2 사용법
 
@@ -692,6 +704,288 @@ def _json_safe(obj):
     return obj
 
 
+# ------------------------------------------------------------------ 재사용 API + 목적함수 후보 (§19.102)
+def _odb_ident_quiet(odb_path):
+    """ODB 신원 dict (출력 없음). build_json_record 가 ident 를 못 받았을 때 쓴다."""
+    rec = {'path': os.path.abspath(odb_path), 'size_bytes': None, 'size_mb': None,
+           'mtime': None, 'age_s': None, 'age_human': None, 'stale': None}
+    try:
+        st = os.stat(rec['path'])
+        rec['size_bytes'] = int(st.st_size)
+        rec['size_mb'] = st.st_size / 1048576.0
+        rec['mtime'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(st.st_mtime))
+    except Exception:
+        pass
+    return rec
+
+
+def compute_stats(odb_path, step=None, frame=None):
+    """HF ODB -> 면적가중 통계 + 사슬검증 + 목적함수 후보 f1~f4 dict. 실패하면 None (§19.102).
+
+    main() 의 계산부를 그대로 감싼 **재사용** 함수다. run_abaqus.py 가 성공한 HF 런에서
+    **인프로세스로** 호출한다(서브프로세스 금지 - 이미 Abaqus 안이다). [slope] 접두 로그가
+    기하/국소평균/목적함수 후보 몇 줄 나간다.
+
+    반환 dict 의 **스칼라 키**는 run_abaqus.py 가 점별 results txt 에 'slope_' 접두로 아카이빙한다
+    (scalar_items). 배열/중첩(dict/list/tuple) 키(grid_abs_rad, patches, theta_abs, note ...)는 제외.
+    """
+    g = read_slope_geometry(odb_path, step, frame)
+    if g is None:
+        return None
+
+    areas = g['areas']
+    normals = g['normals']
+    centers = g['centers']
+    valid = np.isfinite(areas) & (areas > 0.0)
+    if not np.any(valid):
+        print(_PFX + " !!! 유효 요소(면적>0)가 0개다.")
+        return None
+    if int(np.count_nonzero(valid)) != int(areas.size):
+        print(_PFX + " (주의) 퇴화 요소 %d개 제외(면적<=0)."
+              % (int(areas.size) - int(np.count_nonzero(valid))))
+    v_areas = areas[valid]
+    v_norm = normals[valid]
+
+    # ---- (1) 국소 평균 법선 -> 요동 기울기
+    mn, cnt, h_elem, R_loc = local_mean_normals(centers, normals, areas)
+    print(_PFX + " 국소평균: 요소크기 h=sqrt(mean A)=%.6f m | 반경 R=%.1f*h=%.6f m | "
+          "평균 이웃 %.1f개 (격자 셀 버킷, (요소x요소) 행렬 없음)"
+          % (h_elem, RING_FACTOR, R_loc, float(np.mean(cnt[valid])) if R_loc == R_loc else float('nan')))
+
+    th_abs = tilt_from_z(normals)[valid]
+    th_fluct = angle_between(normals, mn)[valid]
+
+    st_abs = area_stats(th_abs, v_areas)
+    st_fluct = area_stats(th_fluct, v_areas)
+
+    sum_a = float(np.sum(v_areas))
+    cos_w = float(np.sum(v_areas * np.cos(th_abs)) / sum_a)
+
+    # ---- (2) 사슬 검증 수치 (참조구현 정의 재사용)
+    hf_actual = float(g['hf_actual'])
+    m2_abs = float(np.sum(v_areas * th_abs * th_abs) / sum_a)
+    m2_fl = float(np.sum(v_areas * th_fluct * th_fluct) / sum_a)
+    hf_pred_abs = K_SLOPE * m2_abs
+    hf_pred_fluct = K_SLOPE * m2_fl
+
+    c_exact = np.clip(np.dot(v_norm, -np.asarray(U_SUN, dtype=np.float64)), 0.0, 1.0)
+    f_e = A0 * c_exact + 2.0 * R0 * c_exact ** 3
+    area_ratio = sum_a / g['area_ref']
+    num_exact = float(np.sum(v_areas * f_e))
+    hf_pred_exact = 1.0 - num_exact / (g['area_ref'] * IDEAL_THRUST_COEFF)
+    hf_pred_exact_norm = 1.0 - num_exact / (sum_a * IDEAL_THRUST_COEFF)
+
+    def _ratio(num, den):
+        return (num / den) if (den is not None and den > HF_RATIO_FLOOR) else float('nan')
+
+    r_abs = _ratio(hf_pred_abs, hf_actual)
+    r_fl = _ratio(hf_pred_fluct, hf_actual)
+    r_ex = _ratio(hf_pred_exact, hf_actual)
+    r_exn = _ratio(hf_pred_exact_norm, hf_actual)
+
+    # ---- (3) 패치별 rms + 최악 패치
+    vcx = centers[valid, 0]
+    vcy = centers[valid, 1]
+    grid_abs, worst_abs, bounds = patch_grid(vcx, vcy, th_abs, v_areas)
+    grid_fl, worst_fl, _b2 = patch_grid(vcx, vcy, th_fluct, v_areas)
+
+    # ---- (4) 방위각 히스토그램
+    az_frac, orient, dom = azimuth_hist(v_norm, v_areas)
+
+    # ---- (5) 압축장 요약
+    comp = compression_summary(areas, g['labels'], g['stress'])
+
+    # ---- (6) 목적함수 후보 f1~f4 (§19.102). 전부 면적가중, 단위 = hf 와 동일.
+    #   theta_abs^2 의 면적가중 분포에서 (i) 평균 (ii) 95백분위 (iii) 최악 10x10 패치 평균 (iv) CVaR90.
+    #   면적가중 분위수는 _wquantile(정렬 + 누적면적) 로 낸다.
+    th2 = th_abs * th_abs
+    W = sum_a
+    q90 = _wquantile(th2, v_areas, 0.90, W)
+    q95 = _wquantile(th2, v_areas, 0.95, W)
+    f1_hf_pred = K_SLOPE * m2_abs
+    f2_p95 = K_SLOPE * q95
+    worst_rms_rad = float(worst_abs[2]) if worst_abs is not None else float('nan')
+    f3_worst_patch = K_SLOPE * (worst_rms_rad * worst_rms_rad)
+    _sel = th2 >= q90
+    _den = float(np.sum(v_areas[_sel]))
+    cvar90_mean = (float(np.sum(v_areas[_sel] * th2[_sel]) / _den)
+                   if _den > 0.0 else float('nan'))
+    f4_cvar90 = K_SLOPE * cvar90_mean
+
+    print(_PFX + " --- 목적함수 후보 f1~f4 (k=%.6f, 면적가중, hf 와 같은 단위) ---" % K_SLOPE)
+    print(_PFX + " f1_hf_pred     = %.10e  (k*mean(theta^2) = hf_pred_abs)" % f1_hf_pred)
+    print(_PFX + " f2_p95         = %.10e  (k*q95(theta^2), q95=%.6e rad^2)" % (f2_p95, q95))
+    print(_PFX + " f3_worst_patch = %.10e  (k*max_patch mean(theta^2), 최악 rms=%.4f deg)"
+          % (f3_worst_patch, math.degrees(worst_rms_rad)))
+    print(_PFX + " f4_cvar90      = %.10e  (k*mean(theta^2 | theta^2>=q90), q90=%.6e rad^2)"
+          % (f4_cvar90, q90))
+    if f1_hf_pred > 0.0:
+        print(_PFX + " 비 f3/f1 = %.4f   f4/f1 = %.4f   f2/f1 = %.4f   (기대: f1 <= f2 <= f4)"
+              % (f3_worst_patch / f1_hf_pred, f4_cvar90 / f1_hf_pred, f2_p95 / f1_hf_pred))
+
+    return {
+        'step': g['step'], 'step_how': g['step_how'], 'frame': g['frame_index'],
+        'n_frames': g['n_frames'], 'frame_value': g['frame_value'],
+        'n_elem': int(areas.size), 'n_quad': g['n_quad'], 'n_tri': g['n_tri'],
+        'n_valid': int(np.count_nonzero(valid)),
+        'n_degenerate_removed': int(areas.size) - int(np.count_nonzero(valid)),
+        'area_ref': float(g['area_ref']), 'area_sum': float(g['area_sum']),
+        'area_ratio': float(area_ratio), 'backward_area_pct': float(g['backward_area_pct']),
+        'elem_size_m': float(h_elem), 'r_local_m': float(R_loc),
+        'mean_neighbors': (float(np.mean(cnt[valid])) if R_loc == R_loc else float('nan')),
+        'ring_factor': RING_FACTOR,
+        'k_slope': K_SLOPE, 'k_slope_theory': K_SLOPE_THEORY,
+        'theta_abs_mean_deg': st_abs['mean_deg'], 'theta_abs_rms_deg': st_abs['rms_deg'],
+        'theta_abs_rms_rad': st_abs['rms_rad'],
+        'theta_abs_p50_deg': st_abs['p50_deg'], 'theta_abs_p95_deg': st_abs['p95_deg'],
+        'theta_abs_p99_deg': st_abs['p99_deg'], 'theta_abs_max_deg': st_abs['max_deg'],
+        'theta_abs_mean_rad': st_abs['mean_rad'], 'theta_abs_p95_rad': st_abs['p95_rad'],
+        'theta_fluct_rms_deg': st_fluct['rms_deg'], 'theta_fluct_p95_deg': st_fluct['p95_deg'],
+        'theta_fluct_p99_deg': st_fluct['p99_deg'], 'theta_fluct_max_deg': st_fluct['max_deg'],
+        'cos_theta_abs_area_mean': cos_w,
+        'hf_actual': hf_actual, 'hf_true_no_flip': float(g['hf_true_no_flip']),
+        'hf_pred_abs': hf_pred_abs, 'hf_pred_fluct': hf_pred_fluct,
+        'hf_pred_exact': hf_pred_exact, 'hf_pred_exact_norm': hf_pred_exact_norm,
+        'm2_abs': m2_abs, 'm2_fluct': m2_fl,
+        'ratio_abs': r_abs, 'ratio_fluct': r_fl,
+        'ratio_exact': r_ex, 'ratio_exact_norm': r_exn,
+        'worst_patch_rms_deg': (float('nan') if worst_abs is None else math.degrees(worst_abs[2])),
+        'worst_patch_xy': ('' if worst_abs is None else '%.6g,%.6g' % (worst_abs[3], worst_abs[4])),
+        'worst_patch_ix': (-1 if worst_abs is None else int(worst_abs[1])),
+        'worst_patch_iy': (-1 if worst_abs is None else int(worst_abs[0])),
+        'worst_patch_fluct_rms_deg': (float('nan') if worst_fl is None else math.degrees(worst_fl[2])),
+        'orient_ratio': orient, 'az_dominant_bin': int(dom),
+        'minp_frac_neg': comp['area_w_minp_neg'],
+        'mean_neg_frac': comp['area_w_mean_neg'],
+        'minp_area_mean_pa': comp['minp_area_mean_pa'], 'compression_n': comp['n'],
+        'theta2_mean': m2_abs, 'theta2_q90': q90, 'theta2_q95': q95,
+        'theta2_cvar90_mean': cvar90_mean, 'theta2_max': float(np.max(th2)),
+        'f1_hf_pred': f1_hf_pred, 'f2_p95': f2_p95,
+        'f3_worst_patch': f3_worst_patch, 'f4_cvar90': f4_cvar90,
+        # ---- 중첩/배열 (출력 + JSON 재사용; scalar_items 는 건너뛴다)
+        'theta_abs': st_abs, 'theta_fluct': st_fluct,
+        'grid_abs_rad': grid_abs, 'grid_fluct_rad': grid_fl,
+        'worst_abs_tuple': worst_abs, 'worst_fluct_tuple': worst_fl,
+        'patch_bounds': bounds, 'az_frac': az_frac,
+        'hf': {'actual': hf_actual, 'actual_no_flip': float(g['hf_true_no_flip']),
+               'pred_abs': hf_pred_abs, 'pred_fluct': hf_pred_fluct,
+               'pred_exact': hf_pred_exact, 'pred_exact_norm': hf_pred_exact_norm,
+               'm2_abs': m2_abs, 'm2_fluct': m2_fl,
+               'area_ratio_deformed_over_ref': area_ratio,
+               'ratio_abs': r_abs, 'ratio_fluct': r_fl, 'ratio_exact': r_ex,
+               'ratio_exact_norm': r_exn},
+        'patches': {'n': N_PATCH,
+                    'rms_deg_abs': [[(float('nan') if v != v else math.degrees(v))
+                                     for v in row] for row in grid_abs],
+                    'rms_deg_fluct': [[(float('nan') if v != v else math.degrees(v))
+                                       for v in row] for row in grid_fl],
+                    'worst_abs': (None if worst_abs is None else
+                                  {'iy': worst_abs[0], 'ix': worst_abs[1],
+                                   'rms_deg': math.degrees(worst_abs[2]),
+                                   'center_x': worst_abs[3], 'center_y': worst_abs[4]}),
+                    'worst_fluct': (None if worst_fl is None else
+                                    {'iy': worst_fl[0], 'ix': worst_fl[1],
+                                     'rms_deg': math.degrees(worst_fl[2]),
+                                     'center_x': worst_fl[3], 'center_y': worst_fl[4]})},
+        'azimuth': {'n_bins': AZ_BINS, 'bin_deg': 360.0 / AZ_BINS,
+                    'area_frac': [float(x) for x in az_frac],
+                    'orient_ratio_double_angle': orient, 'dominant_bin': int(dom)},
+        'compression': comp,
+        'note': ('theta_abs: n_e vs z_hat (macro+wrinkle, links to hf). '
+                 'theta_fluct: n_e vs local area-weighted mean normal within '
+                 'R=%.1f*elem_size (wrinkle only). k=(A0/2+3*R0)/IDEAL from small-angle '
+                 'expansion of 1-(A0*cos+2*R0*cos^3)/(A0+2*R0).' % RING_FACTOR),
+    }
+
+
+def default_json_path(odb_path, step):
+    """slope_stats JSON 기본 경로: results/slope_<odb stem>_<step>.json (기존 관례)."""
+    stem = os.path.splitext(os.path.basename(odb_path))[0]
+    return os.path.join('results', 'slope_%s_%s.json' % (stem, step))
+
+
+def write_json_record(rec, out_path):
+    """JSON 레코드 -> 파일. 디렉터리 자동 생성. 실패면 예외를 올린다(호출자가 처리)."""
+    d = os.path.dirname(os.path.abspath(out_path))
+    if d and not os.path.isdir(d):
+        os.makedirs(d)
+    with io.open(out_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(_json_safe(rec), ensure_ascii=True, indent=2, sort_keys=True))
+    return os.path.abspath(out_path)
+
+
+def build_json_record(S, odb_path, ident=None, t_start=None):
+    """compute_stats 결과(S) -> slope_stats JSON 레코드. 기존 스키마 그대로 + objectives(§19.102)."""
+    if ident is None:
+        ident = _odb_ident_quiet(odb_path)
+    if t_start is None:
+        t_start = time.time()
+    return {
+        'script': 'slope_stats.py', 'section': '19.101',
+        'generated': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'probe_run_epoch': t_start, 'odb': ident,
+        'step': S['step'], 'step_how': S['step_how'], 'frame_index': S['frame'],
+        'n_frames': S['n_frames'], 'frame_value': S['frame_value'],
+        'n_elem': S['n_elem'], 'n_quad': S['n_quad'], 'n_tri': S['n_tri'],
+        'n_degenerate_removed': S['n_degenerate_removed'],
+        'area_ref': S['area_ref'], 'area_deformed_sum': S['area_sum'],
+        'area_ratio_deformed_pristine': ((S['area_sum'] / S['area_ref'])
+                                         if S['area_ref'] else float('nan')),
+        'backward_area_pct': S['backward_area_pct'],
+        'k_slope': S['k_slope'], 'k_slope_theory': S['k_slope_theory'],
+        'ring_factor': S['ring_factor'], 'elem_size_m': S['elem_size_m'],
+        'r_local_m': S['r_local_m'], 'mean_neighbors': S['mean_neighbors'],
+        'theta_abs': S['theta_abs'], 'theta_fluct': S['theta_fluct'],
+        'cos_theta_abs_area_mean': S['cos_theta_abs_area_mean'],
+        'hf': S['hf'], 'patches': S['patches'], 'azimuth': S['azimuth'],
+        'compression': S['compression'],
+        'objectives': {'section': '19.102', 'k_slope': S['k_slope'],
+                       'f1_hf_pred': S['f1_hf_pred'], 'f2_p95': S['f2_p95'],
+                       'f3_worst_patch': S['f3_worst_patch'], 'f4_cvar90': S['f4_cvar90'],
+                       'theta2_mean': S['theta2_mean'], 'theta2_q90': S['theta2_q90'],
+                       'theta2_q95': S['theta2_q95'],
+                       'theta2_cvar90_mean': S['theta2_cvar90_mean'],
+                       'note': 'area-weighted theta_abs^2 statistics: f1=k*mean, '
+                               'f2=k*q95, f3=k*worst-10x10-patch-mean, f4=k*CVaR90. hf units.'},
+        'note': S['note'],
+    }
+
+
+_SCALAR_SKIP = ('note',)
+
+
+def scalar_items(S, prefix='slope_', skip=_SCALAR_SKIP):
+    """dict -> 'prefix+key=value' 줄 목록(키 정렬). **스칼라만**(int/float/str/bool/np 스칼라).
+
+    NaN/Inf -> 'nan'. 배열/중첩(dict/list/tuple) 키와 skip 키는 건너뛴다(§19.102 점별 txt 아카이빙용).
+    """
+    out = []
+    if not S:
+        return out
+    for k in sorted(S):
+        if k in skip:
+            continue
+        v = S[k]
+        if isinstance(v, bool):
+            s = 'True' if v else 'False'
+        elif isinstance(v, np.generic):
+            try:
+                f = float(v)
+            except Exception:
+                continue
+            s = 'nan' if not math.isfinite(f) else ('%.12g' % f)
+        elif isinstance(v, float):
+            s = 'nan' if not math.isfinite(v) else ('%.12g' % v)
+        elif isinstance(v, int):
+            s = '%d' % v
+        elif isinstance(v, str):
+            s = v
+        else:
+            continue
+        out.append('%s%s=%s' % (prefix, k, s))
+    return out
+
+
 # ------------------------------------------------------------------ main
 def main(argv=None):
     t_start = time.time()
@@ -700,6 +994,8 @@ def main(argv=None):
     print(_PFX + " build: slope_stats.py (19.101) | numpy %s | U_SUN=%s | A0=%.6f R0=%.6f IDEAL=%.6f"
           % (np.__version__, np.asarray(U_SUN, dtype=float).tolist(),
              A0, R0, IDEAL_THRUST_COEFF))
+    print(_PFX + " build+: §19.102 목적함수 후보 f1~f4 + compute_stats() 재사용 API + "
+          "run_abaqus.py 자동배선 지원")
     print(_PFX + " k(사용)=%.6f  k_theory=(A0/2+3*R0)/IDEAL=%.6f  차이=%.3e"
           % (K_SLOPE, K_SLOPE_THEORY, abs(K_SLOPE - K_SLOPE_THEORY)))
     args, err = parse_args(argv)
@@ -719,73 +1015,44 @@ def main(argv=None):
         return 1
 
     ident = odb_identity(args['odb'], t_start)
-    g = read_slope_geometry(args['odb'], args['step'], args['frame'])
-    if g is None:
+    S = compute_stats(args['odb'], args['step'], args['frame'])
+    if S is None:
         return 1
 
-    areas = g['areas']
-    normals = g['normals']
-    centers = g['centers']
-    valid = np.isfinite(areas) & (areas > 0.0)
-    if not np.any(valid):
-        print(_PFX + " !!! 유효 요소(면적>0)가 0개다.")
-        return 1
-    if int(np.count_nonzero(valid)) != int(areas.size):
-        print(_PFX + " (주의) 퇴화 요소 %d개 제외(면적<=0)."
-              % (int(areas.size) - int(np.count_nonzero(valid))))
-    v_areas = areas[valid]
-    v_norm = normals[valid]
-
-    # ---- (1) 국소 평균 법선 -> 요동 기울기
-    mn, cnt, h_elem, R_loc = local_mean_normals(centers, normals, areas)
-    print(_PFX + " 국소평균: 요소크기 h=sqrt(mean A)=%.6f m | 반경 R=%.1f*h=%.6f m | "
-          "평균 이웃 %.1f개 (격자 셀 버킷, (요소x요소) 행렬 없음)"
-          % (h_elem, RING_FACTOR, R_loc, float(np.mean(cnt[valid])) if R_loc == R_loc else float('nan')))
-
-    th_abs = tilt_from_z(normals)[valid]
-    th_fluct = angle_between(normals, mn)[valid]
-
-    st_abs = area_stats(th_abs, v_areas)
-    st_fluct = area_stats(th_fluct, v_areas)
+    #   §19.102: 계산부는 compute_stats() 로 옮겼다. 여기서는 출력/JSON/KV 가 쓰는 이름으로 푼다.
+    st_abs = S['theta_abs']
+    st_fluct = S['theta_fluct']
+    hf_actual = S['hf_actual']
+    m2_abs = S['m2_abs']
+    m2_fl = S['m2_fluct']
+    hf_pred_abs = S['hf_pred_abs']
+    hf_pred_fluct = S['hf_pred_fluct']
+    hf_pred_exact = S['hf_pred_exact']
+    hf_pred_exact_norm = S['hf_pred_exact_norm']
+    area_ratio = S['area_ratio']
+    r_abs = S['ratio_abs']
+    r_fl = S['ratio_fluct']
+    r_ex = S['ratio_exact']
+    r_exn = S['ratio_exact_norm']
+    grid_abs = S['grid_abs_rad']
+    grid_fl = S['grid_fluct_rad']
+    worst_abs = S['worst_abs_tuple']
+    worst_fl = S['worst_fluct_tuple']
+    bounds = S['patch_bounds']
+    az_frac = S['az_frac']
+    orient = S['orient_ratio']
+    dom = S['az_dominant_bin']
+    comp = S['compression']
+    cos_w = S['cos_theta_abs_area_mean']
 
     print(_PFX + " --- 절대 기울기 theta_abs = angle(n_e, z_hat) [설계평면 기준, hf 와 직접 연결] ---")
     print_stats('theta_abs', st_abs)
     print(_PFX + " --- 요동 기울기 theta_fluct = angle(n_e, n_local_mean) [거시형상 제거, 순수 주름] ---")
     print_stats('theta_fluct', st_fluct)
 
-    cos_w = float(np.sum(v_areas * np.cos(th_abs)) / np.sum(v_areas))
     print(_PFX + " 면적가중 <cos theta_abs> = %.8f" % cos_w)
 
-    # ---- (2) 사슬 검증 (이 스크립트의 목적)
-    hf_actual = float(g['hf_actual'])
-    m2_abs = float(np.sum(v_areas * th_abs * th_abs) / np.sum(v_areas))
-    m2_fl = float(np.sum(v_areas * th_fluct * th_fluct) / np.sum(v_areas))
-    hf_pred_abs = K_SLOPE * m2_abs
-    hf_pred_fluct = K_SLOPE * m2_fl
-
-    c_exact = np.clip(np.dot(v_norm, -np.asarray(U_SUN, dtype=np.float64)), 0.0, 1.0)
-    f_e = A0 * c_exact + 2.0 * R0 * c_exact ** 3
-    sum_a = float(np.sum(v_areas))
-    area_ratio = sum_a / g['area_ref']
-    num_exact = float(np.sum(v_areas * f_e))
-    #   요구된 식 그대로: hf_pred_exact = 1 - Sum(A_e*f_e)/(area_ref*IDEAL), f_e = A0*c+2R0*c^3.
-    hf_pred_exact = 1.0 - num_exact / (g['area_ref'] * IDEAL_THRUST_COEFF)
-    #   [주의] 위 식은 분모를 **미변형** area_ref 로 고정하는데 분자는 **변형** A_e 를 쓴다.
-    #     참조구현은 loss = Sum(A_e)*IDEAL - Sum(A_e*f_e) 이므로
-    #         hf_actual = (SumA_e/area_ref) * (1 - <f_e>_A)
-    #     이고, 요구식과는 앞의 (SumA_e/area_ref) 항만큼 다르다. 실측 (0.5,0.3) 에서 이 비는
-    #     1.0000247 인데 hf(=3.94e-5)와 같은 자릿수라 비율이 0.374 로 나와 '드리프트'로 오독된다.
-    #     그래서 면적 정규화판(분모를 SumA_e 로)을 함께 낸다 -> 1 - <f_e>_A = 참조구현의 1-<f> 항.
-    hf_pred_exact_norm = 1.0 - num_exact / (sum_a * IDEAL_THRUST_COEFF)
-
-    def _ratio(num, den):
-        #   분모가 HF_RATIO_FLOOR 이하면 nan. 0 으로 나눠 inf 를 만들지 않는다.
-        return (num / den) if (den is not None and den > HF_RATIO_FLOOR) else float('nan')
-
-    r_abs = _ratio(hf_pred_abs, hf_actual)
-    r_fl = _ratio(hf_pred_fluct, hf_actual)
-    r_ex = _ratio(hf_pred_exact, hf_actual)
-    r_exn = _ratio(hf_pred_exact_norm, hf_actual)
+    # ---- (2) 사슬 검증 수치 (hf_actual/m2_*/hf_pred_*/ratio_* 는 compute_stats 가 dict 로 반환)
 
     print(_PFX + " ===== 사슬 검증: hf = k*<theta^2>, k=%.6f =====" % K_SLOPE)
     print(_PFX + " hf_actual      = %.10e   (eval_abaqus.calc_thrust_loss, 참조구현 그대로)"
@@ -813,19 +1080,14 @@ def main(argv=None):
         print(_PFX + " hf_actual=%.3e <= %.0e 이다(평평/미변형 프레임). 비율은 정의되지 않는다"
               " -> nan 로 둔다(0 으로 나누지 않는다)." % (hf_actual, HF_RATIO_FLOOR))
 
-    # ---- (3) 패치별 rms + 최악 패치
-    vcx = centers[valid, 0]
-    vcy = centers[valid, 1]
-    grid_abs, worst_abs, bounds = patch_grid(vcx, vcy, th_abs, v_areas)
-    grid_fl, worst_fl, _b2 = patch_grid(vcx, vcy, th_fluct, v_areas)
+    # ---- (3) 패치별 rms + 최악 패치 (grid/worst/bounds 는 compute_stats 결과)
     print_patch_map('theta_abs', grid_abs, worst_abs, bounds)
     if worst_fl is not None:
         print(_PFX + " 최악 패치(theta_fluct): (ix=%d, iy=%d) 중심=(%.3f, %.3f) m  rms=%.4f deg"
               % (worst_fl[1], worst_fl[0], worst_fl[3], worst_fl[4],
                  math.degrees(worst_fl[2])))
 
-    # ---- (4) 방위각 히스토그램
-    az_frac, orient, dom = azimuth_hist(v_norm, v_areas)
+    # ---- (4) 방위각 히스토그램 (az_frac/orient/dom 는 compute_stats 결과)
     print(_PFX + " 방위각 히스토그램(법선 수평성분, %d빈=%.0f도, 면적가중): 배향성비(2배각)=%.4f "
           "(0=등방, 1=정렬)  최대빈=%d..%d도 (면적비 %.4f)"
           % (AZ_BINS, 360.0 / AZ_BINS, orient, dom * int(360.0 / AZ_BINS),
@@ -836,8 +1098,7 @@ def main(argv=None):
     print(_PFX + "   (수평성분 (n_x,n_y) 는 높이장 z=u3 의 -grad(u3) 방향이다. 2배각 비는 "
           "선(line) 배향성 -> 축 방향 정렬만 본다.)")
 
-    # ---- (5) 압축장 요약 (R-13 정의 재사용)
-    comp = compression_summary(areas, g['labels'], g['stress'])
+    # ---- (5) 압축장 요약 (R-13 정의 재사용; comp 는 compute_stats 결과)
     if comp['n'] > 0:
         print(_PFX + " 압축장 요약(R-13 정의): 면적가중 minP<0 비율=%.4f | 면내평균<0 비율=%.4f | "
               "minP 면적가중 평균=%+.4g Pa (n=%d)"
@@ -848,61 +1109,13 @@ def main(argv=None):
     else:
         print(_PFX + " 압축장 요약: S 값이 없어 nan (정의: minP<0 면적비 / 면내평균<0 면적비 / minP 평균)")
 
-    # ---- (6) JSON
+    # ---- (6) JSON (기존 스키마 그대로 + objectives 블록 추가, §19.102)
     out_path = args['json']
     if out_path is None:
-        stem = os.path.splitext(os.path.basename(args['odb']))[0]
-        out_path = os.path.join('results', 'slope_%s_%s.json' % (stem, g['step']))
-    rec = {'script': 'slope_stats.py', 'section': '19.101',
-           'generated': time.strftime('%Y-%m-%d %H:%M:%S'),
-           'probe_run_epoch': t_start, 'odb': ident,
-           'step': g['step'], 'step_how': g['step_how'], 'frame_index': g['frame_index'],
-           'n_frames': g['n_frames'], 'frame_value': g['frame_value'],
-           'n_elem': int(areas.size), 'n_quad': g['n_quad'], 'n_tri': g['n_tri'],
-           'n_degenerate_removed': int(areas.size) - int(np.count_nonzero(valid)),
-           'area_ref': g['area_ref'], 'area_deformed_sum': g['area_sum'],
-           'area_ratio_deformed_pristine': g['area_sum'] / g['area_ref'],
-           'backward_area_pct': g['backward_area_pct'],
-           'k_slope': K_SLOPE, 'k_slope_theory': K_SLOPE_THEORY,
-           'ring_factor': RING_FACTOR, 'elem_size_m': h_elem, 'r_local_m': R_loc,
-           'mean_neighbors': (float(np.mean(cnt[valid])) if R_loc == R_loc else float('nan')),
-           'theta_abs': st_abs, 'theta_fluct': st_fluct,
-           'cos_theta_abs_area_mean': cos_w,
-           'hf': {'actual': hf_actual, 'actual_no_flip': g['hf_true_no_flip'],
-                  'pred_abs': hf_pred_abs, 'pred_fluct': hf_pred_fluct,
-                  'pred_exact': hf_pred_exact, 'pred_exact_norm': hf_pred_exact_norm,
-                  'm2_abs': m2_abs, 'm2_fluct': m2_fl,
-                  'area_ratio_deformed_over_ref': area_ratio,
-                  'ratio_abs': r_abs, 'ratio_fluct': r_fl, 'ratio_exact': r_ex,
-                  'ratio_exact_norm': r_exn},
-           'patches': {'n': N_PATCH,
-                       'rms_deg_abs': [[(float('nan') if v != v else math.degrees(v))
-                                        for v in row] for row in grid_abs],
-                       'rms_deg_fluct': [[(float('nan') if v != v else math.degrees(v))
-                                          for v in row] for row in grid_fl],
-                       'worst_abs': (None if worst_abs is None else
-                                     {'iy': worst_abs[0], 'ix': worst_abs[1],
-                                      'rms_deg': math.degrees(worst_abs[2]),
-                                      'center_x': worst_abs[3], 'center_y': worst_abs[4]}),
-                       'worst_fluct': (None if worst_fl is None else
-                                       {'iy': worst_fl[0], 'ix': worst_fl[1],
-                                        'rms_deg': math.degrees(worst_fl[2]),
-                                        'center_x': worst_fl[3], 'center_y': worst_fl[4]})},
-           'azimuth': {'n_bins': AZ_BINS, 'bin_deg': 360.0 / AZ_BINS,
-                       'area_frac': [float(x) for x in az_frac],
-                       'orient_ratio_double_angle': orient, 'dominant_bin': dom},
-           'compression': comp,
-           'note': 'theta_abs: n_e vs z_hat (macro+wrinkle, links to hf). '
-                   'theta_fluct: n_e vs local area-weighted mean normal within '
-                   'R=%.1f*elem_size (wrinkle only). k=(A0/2+3*R0)/IDEAL from small-angle '
-                   'expansion of 1-(A0*cos+2*R0*cos^3)/(A0+2*R0).' % RING_FACTOR}
+        out_path = default_json_path(args['odb'], S['step'])
+    rec = build_json_record(S, args['odb'], ident=ident, t_start=t_start)
     try:
-        d = os.path.dirname(os.path.abspath(out_path))
-        if d and not os.path.isdir(d):
-            os.makedirs(d)
-        with io.open(out_path, 'w', encoding='utf-8') as f:
-            f.write(json.dumps(_json_safe(rec), ensure_ascii=True, indent=2, sort_keys=True))
-        print(_PFX + " JSON 저장: %s" % os.path.abspath(out_path))
+        print(_PFX + " JSON 저장: %s" % write_json_record(rec, out_path))
     except Exception as e:
         print(_PFX + " !!! JSON 저장 실패: %s" % e)
         return 1
@@ -914,12 +1127,15 @@ def main(argv=None):
           'ratio_abs': r_abs, 'ratio_fluct': r_fl, 'ratio_exact': r_ex,
           'ratio_exact_norm': r_exn, 'area_ratio': area_ratio,
           'theta_abs_rms_deg': st_abs['rms_deg'], 'theta_fluct_rms_deg': st_fluct['rms_deg'],
+          'theta_abs_p95_deg': st_abs['p95_deg'],
           'theta_abs_p99_deg': st_abs['p99_deg'], 'theta_abs_max_deg': st_abs['max_deg'],
-          'worst_patch_rms_deg': (float('nan') if worst_abs is None
-                                  else math.degrees(worst_abs[2])),
+          'worst_patch_rms_deg': S['worst_patch_rms_deg'],
           'orient_ratio': orient, 'minp_frac_neg': comp['area_w_minp_neg'],
-          'area_ref': g['area_ref'], 'n_elem': int(areas.size),
-          'step': g['step'], 'frame': g['frame_index']}
+          'area_ref': S['area_ref'], 'n_elem': S['n_elem'],
+          'f1_hf_pred': S['f1_hf_pred'], 'f2_p95': S['f2_p95'],
+          'f3_worst_patch': S['f3_worst_patch'], 'f4_cvar90': S['f4_cvar90'],
+          'theta2_q90': S['theta2_q90'], 'theta2_q95': S['theta2_q95'],
+          'step': S['step'], 'frame': S['frame']}
     print('[slope:KV] ' + ' '.join('%s=%s' % (k, kv[k]) for k in sorted(kv)))
     print(_PFX + " 완료 (rc=0)")
     return 0

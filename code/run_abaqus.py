@@ -298,6 +298,79 @@ def _archive_result(x_c, d_c, fidelity, results_csv, extra=None):
         emit("[ARCHIVE] 실패(무시): %s" % _e)
 
 
+def _archive_slope(x_c, d_c):
+    """[§19.102] **성공한 HF 런에서만** 호출: (1) HF ODB 설계점 태깅 복사,
+    (2) slope_stats.compute_stats 를 인프로세스로 돌려 점별 results txt 에 slope_ 접두로 아카이빙.
+
+    모두 예외 안전 - 실패해도 런을 죽이지 않고 경고 1줄만 남긴다. RESULTS 4필드 계약과
+    all_results.csv 열 스키마는 건드리지 않는다(점별 txt append + 별도 JSON 만).
+    스위치: SOLARSAIL_NO_SLOPE=1 -> 전체 생략, SOLARSAIL_NO_ODB_COPY=1 -> ODB 복사만 생략.
+    로그 접두 [SLOPE]/[ODBCOPY] 는 기존 stdout 필터가 버리지 않는 형식이다.
+    """
+    _tag = 'xc%s_dc%s' % (value_tag(x_c), value_tag(d_c))
+    _src = os.path.join(_RUN, HF_ODB)
+    _src = _src if os.path.exists(_src) else (HF_ODB if os.path.exists(HF_ODB) else None)
+
+    if str(os.environ.get('SOLARSAIL_NO_SLOPE', '')).strip() == '1':
+        emit("[SLOPE] SKIP (SOLARSAIL_NO_SLOPE=1): 설계점 %s slope_stats 아카이빙 생략" % _tag)
+        return
+
+    # ---- (1) ODB 설계점 태깅 복사: results/odb/HF_<tag>.odb (태그 규칙 = value_tag, 기존 관례)
+    _odb_used = _src
+    if str(os.environ.get('SOLARSAIL_NO_ODB_COPY', '')).strip() == '1':
+        emit("[ODBCOPY] SKIP (SOLARSAIL_NO_ODB_COPY=1): 설계점 %s ODB 복사 생략" % _tag)
+    else:
+        try:
+            if _src is None:
+                emit("[ODBCOPY] !!! HF ODB 를 찾지 못했다(%s) - 복사 생략" % HF_ODB)
+            else:
+                _odir = os.path.join(_HERE, 'results', 'odb')
+                if not os.path.isdir(_odir):
+                    os.makedirs(_odir)
+                _dst = os.path.join(_odir, 'HF_%s.odb' % _tag)
+                shutil.copy2(_src, _dst)
+                _odb_used = _dst
+                _sz = os.path.getsize(_dst)
+                emit("[ODBCOPY] %s -> %s (%.2f MB, %d B)"
+                     % (os.path.abspath(_src), os.path.abspath(_dst), _sz / 1048576.0, _sz))
+        except Exception as _e:
+            emit("[ODBCOPY] 실패(무시): %s" % _e)
+
+    # ---- (2) slope_stats 인프로세스 실행 (Abaqus 안이므로 서브프로세스 금지)
+    try:
+        if _odb_used is None:
+            emit("[SLOPE] !!! 읽을 ODB 가 없다(%s) - 통계 생략" % HF_ODB)
+            return
+        if _HERE not in sys.path:
+            sys.path.insert(0, _HERE)
+        import slope_stats
+        _S = slope_stats.compute_stats(_odb_used)
+        if _S is None:
+            emit("[SLOPE] !!! compute_stats 실패(None) - 아카이빙 생략")
+            return
+        # 점별 results txt 에 slope_ 접두 key=value append (RESULTS 4필드 계약은 그대로)
+        _lines = slope_stats.scalar_items(_S, prefix='slope_')
+        _ptxt = os.path.join(_HERE, 'results',
+                             'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c)))
+        with io.open(_ptxt, 'a', encoding='utf-8') as _f:
+            for _l in _lines:
+                _f.write(_l + '\n')
+        emit("[SLOPE] %d개 key(slope_ 접두)를 %s 에 append | f1=%.10e f2=%.10e f3=%.10e f4=%.10e"
+             % (len(_lines), os.path.basename(_ptxt), _S.get('f1_hf_pred'),
+                _S.get('f2_p95'), _S.get('f3_worst_patch'), _S.get('f4_cvar90')))
+        # JSON 은 slope_stats 기존 관례: results/slope_<stem>_<step>.json
+        try:
+            _stem = os.path.splitext(os.path.basename(_odb_used))[0]
+            _jpath = os.path.join(_HERE, 'results', 'slope_%s_%s.json' % (_stem, _S['step']))
+            _rec = slope_stats.build_json_record(_S, _odb_used)
+            slope_stats.write_json_record(_rec, _jpath)
+            emit("[SLOPE] JSON 저장: %s" % os.path.abspath(_jpath))
+        except Exception as _e:
+            emit("[SLOPE] !!! JSON 저장 실패(무시): %s" % _e)
+    except Exception as _e:
+        emit("[SLOPE] 실패(무시, 런은 계속): %s" % _e)
+
+
 def _r13_ct_keys():
     """[§19.97] 점별 results_*.txt 에 넣을 R-13 Step-ClampTension 판독 키.
 
@@ -1952,6 +2025,9 @@ try:
         #   [§19.97] R-13 Step-ClampTension 판독값을 점별 txt 에 함께 남긴다(CSV 열은 불변).
         _extra.update(_r13_ct_keys())
         _archive_result(x_c, d_c, 'HF', _rc, _extra)
+        #   [§19.102] 성공한 HF 런에서만: HF ODB 설계점 태깅 + slope_stats 아카이빙(예외 안전).
+        #     _archive_result 가 점별 txt 를 'w' 로 다시 쓰므로 **그 뒤에** append 해야 한다.
+        _archive_slope(x_c, d_c)
     else:
         emit("!!! ERROR: Extraction failed. 'extraction.txt' not found.") 
         emit("RESULTS:FAIL")   # 상위(mfbo)가 원인을 식별하도록 명시적 실패 신호

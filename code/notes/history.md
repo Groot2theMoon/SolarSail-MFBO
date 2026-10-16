@@ -3950,3 +3950,50 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
   - 실제 ODB 로는 아직 돌려보지 않았다(로컬에 ODB 가 없다). 스텁은 배선/로직/해석앵커만 검증한다.
   - 결과 해석(절대 기울기 중 거시 형상 몫과 주름 몫의 실제 배분)은 실측 ODB 로만 판정된다.
 [검증] py_compile + test_seed_path 49/49 + check_model_consistency PASS + static_leak_check 이상 없음.
+
+#### §19.102 HF 런 자동 slope_stats + ODB 설계점 태깅, 목적함수 후보 f1~f4 아카이빙
+
+[문제] §19.101 의 slope_stats.py 는 **별도 스크립트**라 HF 런이 끝나도 자동으로 돌지 않았고,
+  HF 잡 이름이 `HF_Postbuckle` 고정이라 다음 설계점 런이 직전 ODB 를 지운다(§19.88 과 같은 사고) -
+  실측 ODB 를 나중에 다시 볼 수 없었다.
+
+[A] slope_stats.py 에 **재사용 함수** `compute_stats(odb_path, step=None, frame=None) -> dict | None`
+  추가. main() 의 계산부(기하 -> 국소평균 -> 통계 -> 사슬검증 -> 패치/방위/압축장)를 그대로 감싼
+  것이다. main() 은 이제 그걸 호출해 **지금과 같은 출력**을 낸다(CLI 동작/형식 불변, 추가만).
+  - 목적함수 후보 f1~f4 (전부 면적가중 theta_abs^2 기반, 단위 = hf 와 동일):
+      f1_hf_pred     = k*mean(theta^2)              (== 기존 hf_pred_abs)
+      f2_p95         = k*q95(theta^2)
+      f3_worst_patch = k*max_patch(mean(theta^2))   (기존 10x10 격자 최악 패치)
+      f4_cvar90      = k*mean(theta^2 | theta^2 >= q90(theta^2))
+  - 면적가중 분위수는 기존 `_wquantile`(정렬 + 누적면적) 재사용.
+  - 순서 관계(theta^2 >= 0 이라 항상): f1 <= f2 <= f4, f1 <= f3.
+  - 부속 API: `scalar_items(S)`(점별 txt 아카이빙용 slope_ 접두 줄), `build_json_record(S, odb)`
+    (기존 JSON 스키마 + objectives 블록), `write_json_record`, `default_json_path`, `_odb_ident_quiet`.
+  - JSON `section` 은 19.101 그대로 두고 objectives 블록만 추가(기존 파서 불변).
+
+[B] run_abaqus.py 에 자동 배선 `_archive_slope(x_c, d_c)` - **성공한 HF 런에서만** 호출
+  (`_archive_result(... 'HF' ...)` **직후**. 그 함수가 점별 txt 를 'w' 로 다시 쓰므로 순서가 중요).
+  실패/사다리 소진 경로(`HF_FAIL`/`RESULTS:FAIL`)는 건드리지 않는다.
+  1. ODB 설계점 태깅 복사: `aba/HF_Postbuckle.odb` -> `results/odb/HF_xc<..>_dc<..>.odb`.
+     태그는 aba_imperfection.value_tag 그대로(0.5 -> 0p5). 디렉터리 자동 생성, 있으면 덮어쓰기.
+     크기/경로를 `[ODBCOPY]` 로그로 남긴다.
+  2. 같은 ODB 에 대해 `slope_stats.compute_stats` 를 **인프로세스로** 호출(서브프로세스 금지 -
+     이미 Abaqus 안이다). dict 를 점별 `results/results_xc*_dc*.txt` 에 `slope_` 접두 key=value 로
+     **append**. JSON 은 `results/slope_<stem>_<step>.json`.
+  3. 스위치: `SOLARSAIL_NO_SLOPE=1` 이면 B 전체 SKIP, `SOLARSAIL_NO_ODB_COPY=1` 이면 복사만 SKIP.
+  4. 전부 예외 안전 - 실패해도 런을 죽이지 않고 `[SLOPE]`/`[ODBCOPY]` 경고 1줄만.
+  - RESULTS 4필드 계약과 all_results.csv 열 스키마는 **불변**(점별 txt append + 별도 JSON 만).
+
+[검증 - Abaqus 없이] slope_stats_stub.py 확장, **실제 실행** 111/111 OK:
+  - (i) compute_stats 가 dict 반환, f1~f4 키 존재, f1 == hf_pred_abs(항등), f2>=f1, f4>=f2, f3>=f1,
+        평평 프레임에서 f1=f2=f3=f4=0. sine fixture 실측 f1=4.271888e-03 f2=7.284311e-03
+        f3=7.284311e-03 f4=7.284311e-03.
+  - (ii) run_abaqus.py 에서 `_archive_slope` **소스만 떼어** 가짜 ODB + 가짜 odbAccess 로 실행:
+         정상 경로에서 results/odb/HF_xc0p5_dc0p3.odb 복사 + 점별 txt slope_ append + JSON 저장 +
+         [ODBCOPY]/[SLOPE] 로그 확인. `SOLARSAIL_NO_SLOPE=1` 이면 복사/슬로프 둘 다 없음(SKIP 로그),
+         `SOLARSAIL_NO_ODB_COPY=1` 이면 복사만 생략되고 slope_ 는 남음(경로 분기).
+  - (iii) txt 파서로 slope_ 키 20개 이상이 key=value 로 파싱(f1~f4/통계 수치), 기존 RESULTS 필드 유지.
+  - (iv) 새로 쓴 문자열 ASCII 전용(금지문자 0, 기존 줄은 불변), 점별 txt cp949 인코딩 가능,
+         all_results.csv `_cols` 블록에 slope 미포함(스키마 불변).
+  - CLI 회귀: 기존 80건 포함 111/111 (출력 형식 불변).
+[검증] py_compile + test_seed_path 49/49 + check_model_consistency PASS + static_leak_check 이상 없음.
