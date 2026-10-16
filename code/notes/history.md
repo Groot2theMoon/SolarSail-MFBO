@@ -4089,3 +4089,83 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
     확인 가능). 0 으로 나눠 inf 를 만들지 않고 nan + 개수를 찍는다.
 [검증] py_compile + torque_stats_stub 98/98 + test_seed_path 49/49 + check_model_consistency PASS +
        static_leak_check 이상 없음.
+
+
+#### §19.104 NO_CLAMP baseline 은 순수 seed 가족 모드만 쓴다 - 클램프 모드 오염 제거 (2026-10-16)
+
+[증상 - 발견된 오염] 클램프 없는 baseline 실런(`NO_CLAMP=True`, 2026-10-16) 로그:
+```
+[IMPERFECTION] source=combined: modes_seed.txt[1,2] + modes_clamp_xc0p5_dc0.txt[1,2]
+[SEED] x_c=0.5 d_c=0.0001 table=...\seeds\modes_xc0p5.txt
+```
+즉 **클램프가 없는 모델인데 임퍼펙션으로 '클램프 케이스의 좌굴모드'를 주입**하고 있었다.
+그 모드들은 그 모델(클램프 없음)의 모드가 아니므로 오염이다. 과거 로그가 기록한
+"성공한 모드가 클램프 근처에만 몰린다"도 같은 원인으로 읽힌다(합성표가 클램프 모드 2개를 절반
+섞는다).
+
+[원인] 표 선택이 **모델(클램프 유무)과 무관**했다. `IMPERFECTION_MODE='odb_table'` 경로는 늘
+설계점 합성표 `seeds/modes_xc<NNN>.txt`(= `modes_seed[1,2] + modes_clamp[1,2]`, make_seed ③단계)를
+읽는다. `NO_CLAMP` 상수는 클램프 RP 조립부(모드표 결정보다 **뒤**)에 있어 표 선택 시점에 볼 수
+없었고, 그래서 '클램프 없는 모델 + 클램프 모드' 조합이 아무 게이트에도 걸리지 않았다.
+
+[근거 - 왜 seed 가족이 맞는가]
+  - 2026-10-01 문헌(Galhofo) 재현 성공값 `u_z,ave 97.7 t vs 논문 91.1 t = 1.072배` 는 **합성표(2+2)
+    도입 전**의 값이다 -> 그 성공은 seed 가족만으로 얻어졌다(합성표는 오히려 그 뒤에 들어왔다).
+  - Galhofo 도 "케이블 없는 only membrane 으로 모드를 추출해 실제 모델에 주입"했다 -> seed 가족
+    (clamp-free) 사용이 문헌 방식과 일치한다.
+
+[수정 - `code/run_abaqus.py` 만]
+  1. `NO_CLAMP = False` 를 클램프 RP 조립부에서 `_available_mode_numbers` def 뒤
+     "[§19.104] 임퍼펙션 표 선택" 블록으로 **올렸다**(값/의미 불변, 위치만 이동 - 중복 정의는 만들지
+     않았다. 파일 전체에서 `^NO_CLAMP = ` 는 1회).
+  2. 표 선택을 클램프 유무로 분기: `NO_CLAMP=True -> MODE_TABLE = SEED_FAMILY_TABLE`
+     (`seeds/modes_seed.txt`). 합성표도 env `SOLARSAIL_MODE_TABLE` 오버라이드도 **무시**한다
+     (합성표를 가리키는 오버라이드가 오염의 통로였다). `NO_CLAMP=False` 는 종전과 **동일**:
+     `seed_table_path(SEEDS_DIR, x_c, d_c, env=...)` + 합성 지문 게이트.
+  3. 새 게이트 `seed_family_gate(table_path, max_modes)` (stdlib): ① 파일 존재 ② 파일명이 seed
+     가족 표인가(합성표/클램프표 차단) ③ 헤더에 `modes_clamp`/`combined`/`clamp_sha` 흔적이 없는가
+     ④ 모드가 `IMPERFECTION_MAX_MODES`(=4) 개 이상인가. 하나라도 어긋나면 **제출 전 중단**(sys.exit 1)
+     + 재생성 명령(`python3 make_seed.py --x_c .. --d_c ..`) 안내. 조용히 합성표로 되돌아가지 않는다.
+  4. 모드 목록은 seed 표가 가진 모드의 **상위 4개**(= `[1,2,3,4]`)로 명시 설정한다. 클램프 모드는
+     seed 표에 없으므로 구조적으로 섞일 수 없다.
+  5. 합성표 전용 지문 게이트(`seed_gate`)는 `NO_CLAMP=True` 에서 **건너뛴다**: 순수 seed 가족 표에는
+     `x_c`/`fingerprint` 헤더가 없다(합성표 헤더는 make_seed 가 붙인다). 대신 3의 게이트가 검증한다 -
+     '검증 없는 통과'가 아니라 대상이 다르다.
+  6. 로그: `[SEED] NO_CLAMP=True -> 순수 seed 가족 사용(clamp 모드 제외) / table=<절대경로> /
+     modes=[1, 2, 3, 4] / source=<source ODB> / x_c=.. d_c=..` (해결된 표·모드·출처를 항상 남긴다).
+     다음 실런 로그가 곧 증거다.
+  - `code/seeds/` 안의 표 파일은 **건드리지 않았다**(선택 로직만 변경). seeds/ 는 이 워크트리에서
+    README.md 만 추적된다 - 표는 실런 머신에 있고 여기엔 없다(그래서 부재 경로가 실측으로 검증됐다).
+
+[seed 가족 표 실측 정보] 파일명 `code/seeds/modes_seed.txt` (make_seed ①단계, x_c 무관, 1회 생성).
+모드 **4개**(`make_seed.BUCKLE_MODES = 4`), 모드당 노드 10,201개 - README `code/seeds/README.md` 와
+§19.55 기록(`modes_seed.txt: 4모드 / 10201 노드 / λ = 2.328470e-04, 2.647060e-04, 4.341920e-04,
+4.494520e-04`). 합성표에는 이 중 [1,2]만 들어간다(그래서 상위 4개를 쓰면 정보량이 늘고 클램프 모드는 0).
+
+[검증 - Abaqus 없이] `code/seed_family_stub.py` (신규 하네스, **실제 실행**) **61/61 OK**:
+  - (i) 회귀: `NO_CLAMP=False` 에서 합성표 이름(`seeds/modes_xc0p5.txt`)·주입 모드(`[1,2,3,4]`)·로드된
+        모드 키·**로그 줄 내용**이 §19.104 도입 전 소스(HEAD 배선 블록을 같은 하네스로 실행)와
+        바이트 동일(임시경로만 정규화).
+  - (ii) `NO_CLAMP=True`: 표 = `seeds/modes_seed.txt`, 모드 = `[1, 2, 3, 4]`, 로그/경로 어디에도
+        `modes_clamp` 없음(문자열 검사), seed dir 에 합성표가 함께 있어도 집지 않는다.
+  - (iii) seed 표 없음 / 모드 2개(부족) / 헤더에 `modes_clamp`+`combined` 흔적 -> 셋 다 명확한
+        `!!! ERROR` + `[ERROR-EN]` + 종료코드 1, 합성표로 되돌아가지 않고 모드 로드에도 도달하지 않는다.
+  - (iv) 로그 줄에 해결된 표·모드·출처(source ODB) 포함.
+  - (v) `seed_family_gate` 단위: 정상 통과 / 합성표 이름 거부 / 파일 없음 거부 / 모드 부족 거부.
+  - (vi) 이번에 추가된 줄에 금지문자(em-dash 등) 0, 로그 cp949 인코딩 가능(§19.95), RESULTS 4필드
+        계약·`all_results.csv` 열 스키마 불변, 변경 파일은 `run_abaqus.py`(+하네스)뿐.
+  - `python3 -m py_compile run_abaqus.py` OK · `test_seed_path` **49/49** · `check_model_consistency`
+    **PASS**(HF<->buckle 30 / HF<->모드소스 27) · `static_leak_check` 이상 없음(4 파일).
+  - 미실행: `torque_stats_stub`/`slope_stats_stub` 는 numpy 부재로 여기서 돌릴 수 없다(스텁이 명시
+    종료 2). 이번 변경은 그 배선(`_archive_slope`/`_archive_torque`)을 건드리지 않았다 -
+    두 스텁이 검사하는 소스 인덱스(`_archive_slope(x_c, d_c)` 등)는 HEAD 와 값이 같음을 확인했다.
+
+[기대효과] 클램프 없는 baseline 은 **자기 모델(clamp-free)의 모드**만 주입하게 된다:
+  1. 2026-10-01 성공 조건(97.7 t, 합성표 도입 전 = seed 가족)이 그대로 복원된다 - 합성표가 끌어온
+     클램프 모드 절반이 사라지므로 '모드가 클램프 근처에 몰리는' 왜곡이 제거된다.
+  2. 표/모드/출처가 로그에 남아 다음 실런에서 오염 여부를 로그만으로 판정할 수 있다.
+  3. 표가 없거나 부족하면 **제출 전에** 멈추므로 조용한 오염이 다시는 불가능하다.
+  4. `NO_CLAMP=False`(기본) 경로는 종전과 바이트 동일 - 기존 런 재현성이 보존된다.
+[한계] 실제 Abaqus 실런은 이 환경(Linux 워크트리, seeds/ 비어 있음)에서 돌리지 않았다. 실런 시
+  `seeds/modes_seed.txt` 가 없으면 §19.104 가 의도대로 **중단**하므로, 그때
+  `python3 make_seed.py --x_c <x_c> --d_c <d_c>` 로 ①단계(seed 가족)를 만들면 된다.

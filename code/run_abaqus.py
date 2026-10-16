@@ -834,11 +834,10 @@ if MODE_SOURCE not in ('external', 'self'):
 #   *BUCKLE   -> 'odb_direct'(기본). *BUCKLE 은 .fil 출력이 금지되므로 모드 프레임은 ODB 에만 있다.
 #   *FREQUENCY -> 'file' (.fil + *IMPERFECTION, FILE=).
 IMPERFECTION_MODE = 'odb_table'   # 'odb_direct'(기본) | 'odb_table' | 'file'
-#   [2026-10-12] 설계점별 시드표 — 기본은 결정적 경로(seeds/modes_xc<NNN>_dc<NNN>.txt),
-#     실험은 env SOLARSAIL_MODE_TABLE 로 덮는다. 종전 상수 '..\modes_2p2.txt' 는 x_c=0.5 산출물
-#     하나만 가리켜, MFBO(x_c 스윕)에서 조용히 같은 시드를 재사용했다(계획 Q1=a / Q2=a).
-SEEDS_DIR = os.path.join(_HERE, SEED_DIR_NAME)   # [§19.73] cae noGUI 는 execfile 이라 __file__ 이 없다
-MODE_TABLE = seed_table_path(SEEDS_DIR, x_c, d_c, env=os.environ.get('SOLARSAIL_MODE_TABLE'))
+#   [2026-10-12] 설계점별 시드표 - 경로 결정과 시드 게이트는 아래 `_available_mode_numbers` def
+#     뒤 "[§19.104] 임퍼펙션 표 선택" 블록으로 **옮겼다**. 이유: 클램프 없는 baseline(NO_CLAMP=True)
+#     은 순수 seed 가족 표를 써야 하는데 표 선택 시점에 NO_CLAMP 상수가 필요하고, 그 상수는 종전
+#     모델 조립부(클램프 RP 직전)에 있어 여기서 볼 수 없었다(값/의미 불변, 위치만 이동).
 MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
 MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
 MODE_INSTANCE = 'MEMBRANE-1'                                    # 막 인스턴스 이름
@@ -909,7 +908,96 @@ def _available_mode_numbers(path):
     return sorted(nums)
 
 
+# =====================================================================
+# [§19.104] 임퍼펙션 표 선택 - 클램프 없는 baseline 은 **순수 seed 가족**만 쓴다
+#   발견된 오염(2026-10-16 실런): `NO_CLAMP=True`(클램프 없는 모델)인데 임퍼펙션은 합성표
+#   `modes_xc<x>.txt` 였고 그 내용이 `modes_seed.txt[1,2] + modes_clamp_xc0p5_dc0.txt[1,2]` 였다.
+#   클램프 케이스의 좌굴모드는 클램프 없는 모델의 모드가 아니므로 **오염**이다(과거 로그의
+#   "성공한 모드가 클램프 근처에만 몰린다"도 같은 원인으로 읽힌다).
+#   근거: 2026-10-01 문헌(Galhofo) 재현 성공값(u_z,ave 97.7 t vs 논문 91.1 t = 1.072배)은
+#   **합성표(2+2) 도입 전**의 값이다 -> 그 성공은 seed 가족만으로 얻어졌다. Galhofo 도 "케이블
+#   없는 only membrane 으로 모드를 뽑아 실제 모델에 주입"했다 -> seed 가족 사용이 문헌 방식과 일치.
+#   그래서 NO_CLAMP=True 는 (a) 합성표 대신 seed 가족 표를 쓰고 (b) 그 표의 상위 4모드를 쓴다.
+#   NO_CLAMP=False 경로(합성표 + 설계점 지문 게이트)는 종전과 **동일**하다.
+# =====================================================================
+SEED_FAMILY_NAME = 'modes_seed.txt'   # seed 가족 표(꼭짓점 케이블만, x_c 무관, 모드 4개)
+
+
+def seed_family_gate(table_path, max_modes):
+    """[§19.104] 클램프 없는 baseline 이 쓸 **순수 seed 가족 표**인지 검증한다.
+
+    반환 (ok, 사유, 요약dict). 요약은 실패해도 채워서 '무엇을 쓰려 했는지'를 로그에 남긴다.
+      ① 파일이 있는가  ② 파일명이 seed 가족 표인가(합성표/클램프표 차단)
+      ③ 헤더에 합성/클램프 흔적이 없는가  ④ 모드가 max_modes 개 이상인가
+    stdlib 전용이라 Abaqus 없이 단위시험할 수 있다(code/seed_family_stub.py).
+    """
+    summary = {'table': table_path, 'modes': [], 'source': '?', 'header': ''}
+    if not table_path or not os.path.exists(table_path):
+        return False, 'seed 가족 표 파일이 없음: %s' % table_path, summary
+    if os.path.basename(table_path) != SEED_FAMILY_NAME:
+        return False, ('seed 가족 표가 아니다(합성표/클램프표): %s (기대 %s)'
+                       % (os.path.basename(table_path), SEED_FAMILY_NAME)), summary
+    nums = _available_mode_numbers(table_path)
+    summary['modes'] = nums[:max_modes]
+    summary['source'] = mode_table_info(table_path).get('source', '?')
+    try:
+        hdr = []
+        with open(table_path, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                if not line.startswith('#'):
+                    break
+                hdr.append(line)
+        summary['header'] = ''.join(hdr).strip()
+    except Exception as e:
+        return False, '표 헤더를 읽지 못함(%s: %s)' % (type(e).__name__, e), summary
+    bad = [t for t in ('modes_clamp', 'combined', 'clamp_sha') if t in summary['header'].lower()]
+    if bad:
+        return False, ('표 헤더에 클램프/합성 흔적 %s -> 오염(seed 가족이 아니다)' % bad), summary
+    if len(nums) < max_modes:
+        return False, ('모드 부족: %d개(모드 %s) < %d개 필요(상위 %d개를 주입한다)'
+                       % (len(nums), nums, max_modes, max_modes)), summary
+    return True, 'OK', summary
+
+
+#   [2026-10-12] 설계점별 시드표 - 기본은 결정적 경로(seeds/modes_xc<NNN>.txt),
+#     실험은 env SOLARSAIL_MODE_TABLE 로 덮는다. 종전 상수 '..\modes_2p2.txt' 는 x_c=0.5 산출물
+#     하나만 가리켜, MFBO(x_c 스윕)에서 조용히 같은 시드를 재사용했다(계획 Q1=a / Q2=a).
+SEEDS_DIR = os.path.join(_HERE, SEED_DIR_NAME)   # [§19.73] cae noGUI 는 execfile 이라 __file__ 이 없다
+SEED_FAMILY_TABLE = os.path.join(SEEDS_DIR, SEED_FAMILY_NAME)   # [§19.104] 순수 seed 가족 표
+_MODE_TABLE_ENV = os.environ.get('SOLARSAIL_MODE_TABLE')
+#   [§19.104] NO_CLAMP 상수를 이 블록으로 올렸다(값/의미 불변 - 종전에는 클램프 RP 조립부에 있었고,
+#     모드표 결정보다 **뒤**라 여기서 볼 수 없었다). True = 클램프 생략 baseline(run_abaqus_cable 대조).
+NO_CLAMP = False
+if NO_CLAMP:
+    # 합성표(2+2)도 env 오버라이드도 쓰지 않는다 - 클램프 모드가 섞이면 그대로 오염이다(§19.104).
+    MODE_TABLE = SEED_FAMILY_TABLE
+else:
+    MODE_TABLE = seed_table_path(SEEDS_DIR, x_c, d_c, env=_MODE_TABLE_ENV)
+
+
 if IMPERFECTION_MODE == 'odb_table':
+    #   [§19.104] 클램프 없는 baseline -> 순수 seed 가족 표. 여기서 검증/로그를 끝낸다:
+    #     표가 없거나 모드가 부족하면 **크게 찍고 중단**한다(조용히 합성표로 되돌아가면 오염이 재발).
+    if NO_CLAMP:
+        _sf_ok, _sf_why, _sf = seed_family_gate(MODE_TABLE, IMPERFECTION_MAX_MODES)
+        emit("[SEED] NO_CLAMP=True -> 순수 seed 가족 사용(clamp 모드 제외) / "
+             "table=%s / modes=%s / source=%s / x_c=%g d_c=%g"
+             % (_sf.get('table', MODE_TABLE), _sf.get('modes', []), _sf.get('source', '?'),
+                x_c, d_c))
+        emit("[SEED] seed 가족 판정: %s (%s)" % ('OK' if _sf_ok else '거부', _sf_why))
+        if not _sf_ok:
+            emit("!!! ERROR: NO_CLAMP=True baseline 은 순수 seed 가족 표가 필요합니다 -> 중단: %s"
+                 % _sf_why)
+            emit("[ERROR-EN] NO_CLAMP baseline requires the pure seed-family mode table"
+                 " -> aborting BEFORE HF job submit.")
+            emit("    기대 파일: %s" % SEED_FAMILY_TABLE)
+            emit("    재생성: python3 make_seed.py --x_c %g --d_c %g   ([1/3] 단계가 seed 가족 표를 만든다)"
+                 % (x_c, d_c))
+            sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
+            sys.exit(1)
+        # 표가 가진 모드 중 상위 IMPERFECTION_MAX_MODES 개([1,2,3,4] 규약). 클램프 모드는
+        #   seed 가족 표에 없으므로 구조적으로 섞일 수 없다.
+        IMPERFECTION_MODES = tuple(_sf['modes'])
     # 모드표가 정본이다: 표에 있는 모드만 주입할 수 있으므로 상수를 표에 맞춰 조정한다.
     _avail = _available_mode_numbers(MODE_TABLE)
     if _avail:
@@ -935,26 +1023,32 @@ if IMPERFECTION_MODE == 'odb_table':
     #     판정: ① 표가 이 x_c/d_c 에서 나왔는가 ② 만든 뒤 buckle 소스가 바뀌지 않았는가
     #           ③ 소스 모드표가 그 뒤 바뀌지 않았는가.
     #     로직은 aba_imperfection.seed_gate(stdlib) — 단위시험 code/test_seed_path.py.
-    _buckle_script = os.path.join(_HERE, BUCKLE_SCRIPT_NAME)
-    _gate_ok, _gate_why, _sinfo = seed_gate(x_c, d_c, MODE_TABLE, _buckle_script)
-    emit("[SEED] x_c=%.4g d_c=%.4g table=%s" % (x_c, d_c, MODE_TABLE))
-    emit("[SEED] 모드 %s / source_seed=%s / source_clamp=%s / 지문=%s"
-         % (sorted(_mode_table.keys()), _sinfo.get('seed', '?'), _sinfo.get('clamp', '?'),
-            _sinfo.get('fingerprint', '?')))
-    if not _gate_ok:
-        emit("!!! ERROR: 시드표 게이트 실패 - %s" % _gate_why)
-        emit("[ERROR-EN] seed table gate failed -> aborting BEFORE HF job submit.")
-        emit("    재생성: python3 make_seed.py --x_c %g --d_c %g --force" % (x_c, d_c))
-        try:
-            with open('mode_table_check.txt', 'w') as _fpc:
-                _fpc.write('GATE FAIL\n%s\ntable=%s\ntime=%s\n'
-                           % (_gate_why, os.path.abspath(MODE_TABLE),
-                              time.strftime('%Y-%m-%d %H:%M:%S')))
-        except Exception:
-            pass
-        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
-        sys.exit(1)
-    emit("[SEED] 게이트 OK - 이 표는 이 설계점·이 buckle 소스와 일치한다")
+    #   [§19.104] 이 게이트는 **합성표 전용**이다(합성표 헤더의 x_c/fingerprint 를 본다). 클램프
+    #     없는 baseline 의 순수 seed 가족 표에는 그 헤더가 없으므로 여기서는 검증하지 않고,
+    #     위 seed_family_gate 가 대신한다(검증 없는 통과가 아니라 대상이 다르다).
+    if NO_CLAMP:
+        emit("[SEED] 합성 지문 게이트 생략 (NO_CLAMP=True 순수 seed 가족 표, §19.104)")
+    else:
+        _buckle_script = os.path.join(_HERE, BUCKLE_SCRIPT_NAME)
+        _gate_ok, _gate_why, _sinfo = seed_gate(x_c, d_c, MODE_TABLE, _buckle_script)
+        emit("[SEED] x_c=%.4g d_c=%.4g table=%s" % (x_c, d_c, MODE_TABLE))
+        emit("[SEED] 모드 %s / source_seed=%s / source_clamp=%s / 지문=%s"
+             % (sorted(_mode_table.keys()), _sinfo.get('seed', '?'), _sinfo.get('clamp', '?'),
+                _sinfo.get('fingerprint', '?')))
+        if not _gate_ok:
+            emit("!!! ERROR: 시드표 게이트 실패 - %s" % _gate_why)
+            emit("[ERROR-EN] seed table gate failed -> aborting BEFORE HF job submit.")
+            emit("    재생성: python3 make_seed.py --x_c %g --d_c %g --force" % (x_c, d_c))
+            try:
+                with open('mode_table_check.txt', 'w') as _fpc:
+                    _fpc.write('GATE FAIL\n%s\ntable=%s\ntime=%s\n'
+                               % (_gate_why, os.path.abspath(MODE_TABLE),
+                                  time.strftime('%Y-%m-%d %H:%M:%S')))
+            except Exception:
+                pass
+            sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
+            sys.exit(1)
+        emit("[SEED] 게이트 OK - 이 표는 이 설계점·이 buckle 소스와 일치한다")
 elif IMPERFECTION_MODE == 'odb_direct':
     # (2026-09-28, 사용자 제안) 모드표 txt 를 거치지 않고 ODB 에서 직접 모드를 읽는다.
     #   물리는 odb_table 과 완전히 같다(노드 좌표 섭동). 파일이 하나 줄 뿐이다.
@@ -1250,7 +1344,12 @@ rp2_obj, rp2_reg = create_rigid_patch('Right', V2, radius=0.2)
 rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 
 # 클램프 RP: 우측 빗변 중점 (15,5), 좌측 빗변 중점 (5,5). NO_CLAMP=True 면 클램프를 아예 만들지 않는다.
+<<<<<<< HEAD
 NO_CLAMP = True          # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
+=======
+#   [§19.104] NO_CLAMP 상수는 위 "[§19.104] 임퍼펙션 표 선택" 블록으로 **올렸다**(값/의미 불변):
+#     클램프 없는 baseline 은 순수 seed 가족 표를 써야 하는데, 그 결정이 모델 조립보다 앞서기 때문이다.
+>>>>>>> 57b5fdb50aef3b0f28fd9fa79fe3f9637a079317
 # 실행 모드.
 #   'auto'  : 덱 생성 -> riks_patch_input.py 로 *Controls 주입 -> 제출 -> 결과 추출까지 한 번에.
 #             mfbo.py 가 이 경로로 HF 를 부른다(덱 생성만 하면 RESULTS: 가 없어 실패로 읽힌다).
