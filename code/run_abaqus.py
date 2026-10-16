@@ -967,7 +967,7 @@ SEED_FAMILY_TABLE = os.path.join(SEEDS_DIR, SEED_FAMILY_NAME)   # [§19.104] 순
 _MODE_TABLE_ENV = os.environ.get('SOLARSAIL_MODE_TABLE')
 #   [§19.104] NO_CLAMP 상수를 이 블록으로 올렸다(값/의미 불변 - 종전에는 클램프 RP 조립부에 있었고,
 #     모드표 결정보다 **뒤**라 여기서 볼 수 없었다). True = 클램프 생략 baseline(run_abaqus_cable 대조).
-NO_CLAMP = False
+NO_CLAMP = True
 if NO_CLAMP:
     # 합성표(2+2)도 env 오버라이드도 쓰지 않는다 - 클램프 모드가 섞이면 그대로 오염이다(§19.104).
     MODE_TABLE = SEED_FAMILY_TABLE
@@ -1344,12 +1344,7 @@ rp2_obj, rp2_reg = create_rigid_patch('Right', V2, radius=0.2)
 rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 
 # 클램프 RP: 우측 빗변 중점 (15,5), 좌측 빗변 중점 (5,5). NO_CLAMP=True 면 클램프를 아예 만들지 않는다.
-<<<<<<< HEAD
 NO_CLAMP = True          # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
-=======
-#   [§19.104] NO_CLAMP 상수는 위 "[§19.104] 임퍼펙션 표 선택" 블록으로 **올렸다**(값/의미 불변):
-#     클램프 없는 baseline 은 순수 seed 가족 표를 써야 하는데, 그 결정이 모델 조립보다 앞서기 때문이다.
->>>>>>> 57b5fdb50aef3b0f28fd9fa79fe3f9637a079317
 # 실행 모드.
 #   'auto'  : 덱 생성 -> riks_patch_input.py 로 *Controls 주입 -> 제출 -> 결과 추출까지 한 번에.
 #             mfbo.py 가 이 경로로 HF 를 부른다(덱 생성만 하면 RESULTS: 가 없어 실패로 읽힌다).
