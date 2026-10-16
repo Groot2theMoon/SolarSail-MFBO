@@ -3997,3 +3997,95 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
          all_results.csv `_cols` 블록에 slope 미포함(스키마 불변).
   - CLI 회귀: 기존 80건 포함 111/111 (출력 형식 불변).
 [검증] py_compile + test_seed_path 49/49 + check_model_consistency PASS + static_leak_check 이상 없음.
+
+
+#### §19.103 토크 지표 tau_rel (`torque_stats.py`) + HF 런 자동 아카이빙
+
+[문제] §19.101/§19.102 의 `hf` 는 요소별 SRP 힘벡터를 **합해서 스칼라만** 남긴다 - 위치(지렛대)가
+  버려진다. 그런데 문헌은 형상이 때리는 축이 토크라고 말한다:
+  - Zeiders 2005 (NTRS 20050209955): 평균제곱 기울기는 추력 크기의 지표이고
+    "...it might not guarantee flat sail performance for **the moments** when there are
+    large-scale disturbances..." - RMS slope 하나로 **모멘트**는 환원되지 않는다.
+  - Heaton, Miller, Ahmad 2017 (NTRS 20170001488, NEA Scout Thrust and Torque Model):
+    0도에서 설계형상과 평탄형상의 **추력이 722 uN 으로 동일**한데 **60도에서 토크는 2.07배**.
+    "sail thrust magnitude is not affected much by shape; sail torque is strongly affected by
+    shape."
+  그래서 hf(크기 축)와 별개로 tau_rel(회전 축)을 계산해 아카이빙한다.
+
+[A] 새 독립 스크립트 `code/torque_stats.py` (§19.103):
+    f_e = A_e*(A0*c_e*s_hat + 2*R0*c_e^2*(-n_e)),  c_e = clip(n_e . (-s_hat), 0, 1)
+    M   = sum_e (x_e - x_ref) x f_e,   x_e = 요소 중심(변형 좌표)
+  - 참조구현 `eval_abaqus.calc_thrust_loss` 와 **문자 그대로 같은 힘 식**(상수 A0/R0/IDEAL/U_SUN
+    는 import, 스크립트는 수정하지 않는다). 기하 판독은 `slope_stats.py` 를 복제했다(그 스크립트가
+    수정 금지 대상이라 import 대신 복제 - 한쪽을 고치면 다른 쪽도 봐야 한다).
+  - 기준점 x_ref **두 개를 모두** 낸다:
+    (a) 면적가중 도심(변형 좌표): 돛이 자기 무게중심 주위로 도는 성분. **균일 법선이면 M = 0
+        항등식**이라 '형상 대비'를 본다.
+    (b) 원점(0,0,0): 실제 돛은 삼각형(V3=(0,0,0), V2=(20,0,0), V1=(10,10,0))이라 원점이 도심이
+        아니다 -> 평판에서도 |M_origin| = |x_c x F| != 0 (순수 지렛대 항). 두 값을 같이 봐야
+        '형상이 만든 것'과 '기준점이 만든 것'이 갈린다.
+  - 지표: tau_abs = |M| [N m] / **tau_rel = |M| / (sum_e |f_e| * L_ref)**, L_ref = sqrt(area_ref)
+    (무차원) / 성분 M_x,M_y(면외) vs M_z(면내) + 면외/면내 비 / tau_flat(미변형 frame 0 = sanity
+    앵커, 평판 + 대칭 메쉬면 ~0) / 방향 의존.
+  - 방향 샘플러 두 방식: (i) 격자 phi(0,2,5,10,15,20,30,45,60도) x psi(0..330도 30도 간격) =
+    108방향(phi 상한 60도 = Heaton 이 토크 비를 보고한 각도) (ii) 단위 디스크 MC(전력가중,
+    `eval_abaqus_avg.sample_dirs('disk')` 와 같은 식, 기본 n=4000, seed=12345 고정 -> 재현 가능).
+    분포(min/p50/p95/max/평균/SE/표준편차) + **최악 방향의 (phi, psi)**.
+  - 메모리: (요소 x 요소) 행렬 없음. 방향도 블록(블록당 요소수 x 방향수 <= 2e6)으로 나눈다 -
+    10100 요소 x 4000 방향 x 3성분 = 970 MB 를 한 번에 만들지 않는다.
+  - 재사용 API: `compute_stats(odb_path, step=None, frame=None, n_mc=4000) -> dict | None`,
+    `scalar_items(S)`(점별 txt 용 tau_ 접두 줄), `build_json_record/write_json_record/
+    default_json_path`. CLI(`abaqus python torque_stats.py <odb> [--step][--frame][--n-mc][--json]`),
+    rc 0/1/2.
+
+[B] `run_abaqus.py` 자동 배선 `_archive_torque(x_c, d_c)` - **성공한 HF 런에서만** 호출.
+    위치는 `_archive_result(... 'HF' ...)` -> `_archive_slope(...)` **뒤**. `_archive_result` 가 점별
+    txt 를 'w' 로 다시 쓰므로 그보다 뒤여야 하고, `_archive_slope` 와는 **둘 다 append** 라서 순서만
+    지키면 된다(호출 순서를 스텁이 소스 인덱스로 검증한다).
+    1. ODB 는 `_archive_slope` 와 **같은 소스**(`aba/HF_Postbuckle.odb`)를 쓴다. 설계점 태깅본
+       (`results/odb/HF_<tag>.odb`)을 먼저 집지 않는다 - `SOLARSAIL_NO_ODB_COPY=1` 이면 그 파일이
+       **직전 런의 옛 것**일 수 있어 stale 값을 이 설계점 값으로 읽게 된다.
+    2. `torque_stats.compute_stats` 를 **인프로세스로** 호출(서브프로세스 금지 - 이미 Abaqus 안이다).
+       dict 를 점별 `results/results_xc*_dc*.txt` 에 `tau_` 접두 key=value 로 append,
+       JSON 은 `results/torque_<stem>_<step>.json`.
+    3. 스위치 `SOLARSAIL_NO_TORQUE=1` -> 전체 SKIP(로그 1줄).
+    4. 전부 예외 안전 - 실패해도 런을 죽이지 않고 `[TORQUE]` 경고 1줄. **모듈 import 만은
+       `except BaseException`** 으로 잡는다(모듈 최상단에 `sys.exit(2)` 가드가 있어 import 실패가
+       SystemExit 이 되고, `except Exception` 은 그걸 못 잡아 런을 끝낸다).
+  - RESULTS 4필드 계약과 `all_results.csv` 열 스키마는 **불변**(점별 txt append + 별도 JSON 만).
+
+[실측 - 스텁 픽스처, 아직 실 ODB 아님] hf(같은 ODB, 참조구현)와 나란히:
+  - 5도 **균일 기울기**(중심 배치): hf = 1.1125e-02 (Murphey 5도 1.108% 와 일치) 인데 tau_rel = 0.
+  - **대칭** 사인파 주름(theta_abs rms 3.175도): hf = 4.48e-03 인데 tau_rel ~ 1.8e-17 (대칭이면 토크 0).
+  - **비대칭** 가우스 bump(theta_abs rms 2.457도): hf = 2.67e-03 (가장 작다) 인데 tau_rel_plane = 6.7e-04,
+    면외 비중 0.9999. 즉 **hf 와 tau 가 순위까지 갈린다** - 두 축이 실제로 다른 정보를 담는다.
+  - 평행이동 픽스처(원점이 도심이 아닌 실제 돛 배치 재현): tau_rel(도심) = 0 인데 tau_rel(원점) =
+    2.62 (순수 지렛대 항). 기준점을 도심으로 잡아야 형상 몫만 남는다.
+
+[검증 - Abaqus 없이] `code/torque_stats_stub.py` 실제 실행 **98/98 OK**:
+  - (i) 평평 + 대칭 돛(혼합 quad/tri + 뒤집힌 요소 포함): |M| ~ 2.8e-15 N m, tau_rel ~ 2.3e-17,
+        **모든 방향**에서 tau_rel_max < 1e-12 (가장 강한 sanity).
+  - (ii) 균일 기울기: 원점 기준 |M| 이 **독립 손계산 루프**(요소별 지렛대 x 힘 총합)와 1e-13 상대
+         일치(3.2167e+02 N m). 도심 기준 M = 0 항등식(평행이동 무관). 전정밀 대조는
+         compute_stats 반환값으로(점별 txt/KV 는 %.12g 인쇄라 1e-11/1e-9 허용).
+  - (iii) 비대칭 bump: tau_rel > 0(6.7e-04), 면외 비중 0.9999, 면내 비중 0.011.
+  - (iv) 대칭 사인파: tau_rel ~ 0 (모든 방향) while hf_actual = 4.48e-03 - 두 축 분리 실증.
+  - (v) 배선을 소스에서 떼어 실제 실행: 정상 경로 tau_ 키 append + JSON 저장, tau_ 줄이 slope_ 줄
+        뒤에 붙음, `SOLARSAIL_NO_TORQUE=1` 이면 둘 다 없음 + SKIP 1줄, ODB 없으면 경고 1줄에 그침.
+        호출 순서를 소스 인덱스로 검증(_archive_result < _archive_slope < _archive_torque).
+  - (vi) 금지문자 0 / 출력 cp949 / all_results.csv 열 스키마 불변 / 기존 5개 스크립트
+        (eval_abaqus, eval_abaqus_avg, base_state_probe, aba_imperfection, slope_stats) git diff 무수정.
+  - CLI 회귀: --step/--frame/--n-mc/--json, 없는 ODB/스텝/범위 밖 프레임 rc=1, 사용법 오류 rc=2,
+    재현성(같은 시드 -> 같은 tau_rel_cosw), frameValue=0 프레임이 없으면 tau_flat = nan(0 으로 채우지 않음).
+
+[한계]
+  - 기하만 읽는다(하중/재료/경계조건 재실행 없음). 실 ODB 로는 아직 돌려보지 않았다(로컬에 ODB 없음).
+  - 힘에 **변형 면적** A_e 를 쓰므로 면적이 1% 늘면 tau_rel 은 그 반대만큼 움직인다(면적비를 함께 찍는다).
+  - tau_rel 에 **문헌 허용치는 없다**. 우리가 정의한 무차원 지표이고 절대값이 아니라 설계점 간 비교
+    (x_c 스캔)로 읽어야 한다. 사전 판정 기준: 대칭 x_c 에서 작고 x_c 가 비대칭으로 갈수록 크게 자라면
+    토크가 hf 보다 목적함수 후보다(반대 결과도 그대로 기록한다).
+  - phi 격자는 0~60도다. 스칠 때(phi -> 90도) sum|f_e| -> 0 이라 tau_rel 의 분모가 죽는데, 디스크 MC 는
+    전방향을 샘플하므로 tau_rel_max 가 그 꼬리(phi ~ 85-89도)에서 나올 수 있다(tau_worst_phi_deg 로
+    확인 가능). 0 으로 나눠 inf 를 만들지 않고 nan + 개수를 찍는다.
+[검증] py_compile + torque_stats_stub 98/98 + test_seed_path 49/49 + check_model_consistency PASS +
+       static_leak_check 이상 없음.
