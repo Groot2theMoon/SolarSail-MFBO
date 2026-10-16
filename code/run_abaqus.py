@@ -595,7 +595,7 @@ def run_job_with_ladder(job_name, model_name=None):
     return False
 
 
-def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=5e-3,
+def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=5e-3',
                                                      '--can=1e-2', '--i0=8', '--ir=10'),
                 stabilize=None):
     """패치 전 덱에 *Controls 를 주입해 같은 파일명으로 덮어쓴다.
