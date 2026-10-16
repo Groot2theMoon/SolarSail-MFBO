@@ -371,68 +371,6 @@ def _archive_slope(x_c, d_c):
         emit("[SLOPE] 실패(무시, 런은 계속): %s" % _e)
 
 
-def _archive_torque(x_c, d_c):
-    """[§19.103] **성공한 HF 런에서만** 호출: HF ODB 의 요소별 SRP 힘벡터 **모멘트(토크)** 를
-    점별 results txt 에 'tau_' 접두로 아카이빙한다(JSON 은 results/torque_<stem>_<step>.json).
-
-    왜 별도 지표인가(문헌): Zeiders 2005(NTRS 20050209955) 는 평균제곱 기울기 하나로
-    **모멘트**를 보장하지 못한다고 적었고, Heaton 2017(NTRS 20170001488, NEA Scout)은 0도에서
-    설계/평탄 형상의 **추력이 722 uN 으로 같지만** 60도에서 **토크가 2.07배**라 말한다 -
-    형상이 실제로 때리는 축은 토크다. 그래서 hf(크기) 와 별개로 tau_rel(회전) 을 남긴다.
-
-    모두 예외 안전 - 실패해도 런을 죽이지 않고 경고 1줄만 남긴다. RESULTS 4필드 계약과
-    all_results.csv 열 스키마는 건드리지 않는다(점별 txt append + 별도 JSON 만).
-    스위치: SOLARSAIL_NO_TORQUE=1 -> 전체 생략. ODB 는 _archive_slope 와 **같은 소스**를 쓴다
-    (설계점 태깅본을 먼저 집으면 SOLARSAIL_NO_ODB_COPY=1 일 때 옛 파일을 읽을 수 있다).
-    순서: **_archive_result 뒤(점별 txt 'w' 재작성) + _archive_slope 뒤**(둘은 append).
-    """
-    _tag = 'xc%s_dc%s' % (value_tag(x_c), value_tag(d_c))
-
-    if str(os.environ.get('SOLARSAIL_NO_TORQUE', '')).strip() == '1':
-        emit("[TORQUE] SKIP (SOLARSAIL_NO_TORQUE=1): 설계점 %s 토크 지표 아카이빙 생략" % _tag)
-        return
-
-    try:
-        _src = os.path.join(_RUN, HF_ODB)
-        _src = _src if os.path.exists(_src) else (HF_ODB if os.path.exists(HF_ODB) else None)
-        if _src is None:
-            emit("[TORQUE] !!! 읽을 ODB 가 없다(%s) - 통계 생략" % HF_ODB)
-            return
-        if _HERE not in sys.path:
-            sys.path.insert(0, _HERE)
-        try:
-            import torque_stats
-        except BaseException as _e:
-            #   BaseException: 모듈 import 가 sys.exit(2) 로 죽는 가드가 있다 - 그 죽음이
-            #     런 전체를 끝내면 안 된다(여기서 유일하게 BaseException 을 잡는 이유).
-            emit("[TORQUE] !!! torque_stats import 실패(런은 계속): %s" % _e)
-            return
-        _T = torque_stats.compute_stats(_src)
-        if _T is None:
-            emit("[TORQUE] !!! compute_stats 실패(None) - 아카이빙 생략")
-            return
-        _lines = torque_stats.scalar_items(_T, prefix='tau_')
-        _ptxt = os.path.join(_HERE, 'results',
-                             'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c)))
-        with io.open(_ptxt, 'a', encoding='utf-8') as _f:
-            for _l in _lines:
-                _f.write(_l + '\n')
-        emit("[TORQUE] %d개 key(tau_ 접두)를 %s 에 append | tau_rel_plane=%.6e "
-             "tau_rel_cosw=%.6e tau_rel_max=%.6e"
-             % (len(_lines), os.path.basename(_ptxt), _T.get('tau_rel_plane'),
-                _T.get('tau_rel_cosw'), _T.get('tau_rel_max')))
-        try:
-            _stem = os.path.splitext(os.path.basename(_src))[0]
-            _jpath = os.path.join(_HERE, 'results', 'torque_%s_%s.json' % (_stem, _T['step']))
-            _rec = torque_stats.build_json_record(_T, _src)
-            torque_stats.write_json_record(_rec, _jpath)
-            emit("[TORQUE] JSON 저장: %s" % os.path.abspath(_jpath))
-        except Exception as _e:
-            emit("[TORQUE] !!! JSON 저장 실패(무시): %s" % _e)
-    except Exception as _e:
-        emit("[TORQUE] 실패(무시, 런은 계속): %s" % _e)
-
-
 def _r13_ct_keys():
     """[§19.97] 점별 results_*.txt 에 넣을 R-13 Step-ClampTension 판독 키.
 
@@ -1312,7 +1250,7 @@ rp2_obj, rp2_reg = create_rigid_patch('Right', V2, radius=0.2)
 rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 
 # 클램프 RP: 우측 빗변 중점 (15,5), 좌측 빗변 중점 (5,5). NO_CLAMP=True 면 클램프를 아예 만들지 않는다.
-NO_CLAMP = False          # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
+NO_CLAMP = True          # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
 # 실행 모드.
 #   'auto'  : 덱 생성 -> riks_patch_input.py 로 *Controls 주입 -> 제출 -> 결과 추출까지 한 번에.
 #             mfbo.py 가 이 경로로 HF 를 부른다(덱 생성만 하면 RESULTS: 가 없어 실패로 읽힌다).
@@ -2016,9 +1954,6 @@ elif fidelity == 'HF':
 
     if not run_job_with_ladder('HF_Postbuckle'):
         emit("!!! ERROR: HF 완주 실패(안정화 사다리 소진) -> RESULTS:FAIL")
-        #   [§19.93] **실패도 아카이빙**한다. 완주 실패가 조용히 사라지면 스윕 데이터의 절반
-        #     (설계 불가능 영역)을 잃는다 — MFBO 에서 실패는 제약 위반이므로 그 자체가 데이터다.
-        #     fidelity 열에 HF_FAIL 을 넣어 스키마 변경 없이 구분한다(헤더는 1회만 쓰이므로 열 추가 불가).
         _archive_result(x_c, d_c, 'HF_FAIL', 'nan,nan,nan,nan',
                         dict({'status': 'LADDER_EXHAUSTED',
                               'stabilize_ladder': str(STABILIZE_LADDER)},
@@ -2028,8 +1963,6 @@ elif fidelity == 'HF':
         sys.exit(1)
 
 
-    #   [§19.79] LF 인자는 **LF ODB** 다 — get_lf 는 LF 전용 `Step-HighTension` 을 읽으므로
-    #     HF ODB 로는 대체할 수 없다(§19.74 철회).
     if _have_lf:
         cmd = 'abaqus python "%s" %s %s HF' % (os.path.join(_HERE, "eval_abaqus.py"),
                                                LF_ODB, HF_ODB)
@@ -2038,9 +1971,6 @@ elif fidelity == 'HF':
                                                 HF_ODB)
 
 try:
-    #   [§19.79] stale 산출물 차단: eval 이 쓰지 않았다면 옛 extraction.txt 를 읽어
-    #     '이번 런의 결과'처럼 보고하는 사고가 있었다(실측: 0.02/0.005 런이 소수점 17자리까지
-    #     동일 — 같은 파일을 두 번 읽은 것). 그래서 **먼저 지운다**.
     try:
         if os.path.exists('extraction.txt'):
             os.remove('extraction.txt')
@@ -2055,7 +1985,7 @@ try:
             continue
         if _ls.startswith("RESULTS:FAIL") or "Target step not found" in _ls or "FAIL" in _ls:
             _eval_bad = True
-            emit("   [eval] %s" % _ls)      # [§19.79] FAIL 신호를 삼키지 않는다
+            emit("   [eval] %s" % _ls)
             continue
         if _ls.startswith("RESULTS:"):
             continue
@@ -2072,7 +2002,6 @@ try:
         with open('extraction.txt', 'r', encoding='utf-8', errors='replace') as f:
             _rc = f.read().strip()
         emit("RESULTS:" + _rc)
-        #   [§19.88] 점별 아카이빙(+사다리가 남긴 stabilize/에너지 비 동봉)
         _extra = {}
         try:
             for _fn in ('stabilize_used.txt', 'flip_bias.txt'):
@@ -2084,15 +2013,11 @@ try:
                                 _extra[_k2] = _v2
         except Exception:
             pass
-        #   [§19.97] R-13 Step-ClampTension 판독값을 점별 txt 에 함께 남긴다(CSV 열은 불변).
         _extra.update(_r13_ct_keys())
         _archive_result(x_c, d_c, 'HF', _rc, _extra)
-        #   [§19.102] 성공한 HF 런에서만: HF ODB 설계점 태깅 + slope_stats 아카이빙(예외 안전).
+        # 성공한 HF 런에서만: HF ODB 설계점 태깅 + slope_stats 아카이빙(예외 안전).
         #     _archive_result 가 점별 txt 를 'w' 로 다시 쓰므로 **그 뒤에** append 해야 한다.
         _archive_slope(x_c, d_c)
-        #   [§19.103] 같은 이유로 **그 뒤에**: 요소별 SRP 힘 모멘트(토크) 지표 tau_ 접두 아카이빙.
-        #     (성공 HF 런 전용. 실패/사다리 소진 경로는 건드리지 않는다.)
-        _archive_torque(x_c, d_c)
     else:
         emit("!!! ERROR: Extraction failed. 'extraction.txt' not found.") 
         emit("RESULTS:FAIL")   # 상위(mfbo)가 원인을 식별하도록 명시적 실패 신호
