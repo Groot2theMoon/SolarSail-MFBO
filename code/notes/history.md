@@ -4169,3 +4169,56 @@ Step-GlobalTension 코너 (±1.5804e-5, −8.6165e-6) = DISP 전량, Step-Buckle
 [한계] 실제 Abaqus 실런은 이 환경(Linux 워크트리, seeds/ 비어 있음)에서 돌리지 않았다. 실런 시
   `seeds/modes_seed.txt` 가 없으면 §19.104 가 의도대로 **중단**하므로, 그때
   `python3 make_seed.py --x_c <x_c> --d_c <d_c>` 로 ①단계(seed 가족)를 만들면 된다.
+
+#### §19.105 PULL_TOP 스위치 - 윗 꼭짓점도 케이블 방향 변위 (Galhofo 3-tendon 정합, 2026-10-17)
+
+[왜] 지금까지 모델은 꼭짓점 3개 중 **Top 을 완전 고정**(`BC_Anchor`: u1,u2,u3,ur1,ur2,ur3 = 0)하고
+Right/Left 두 개만 각자 케이블 방향으로 지정변위를 주었다. 그런데 참조 문헌 Galhofo 2022 는 **세 꼭짓점을
+모두 케이블(텐던)로 당기는** 구성이다. 즉 Top 완전 고정은 **문헌에 없는 우리 인위적 구속**이고, 그 탓에
+baseline 을 문헌과 직접 비교할 때마다 "경계조건이 다르다"는 캐비앳이 붙었다. 3-텐던과 2-텐던+1-앵커는
+프리텐션 분배(각 케이블이 받는 면내력)가 다르므로, 이 차이는 수치 오차가 아니라 **모델 정의 차이**다.
+
+[무엇] `run_abaqus.py` 에 상수 `PULL_TOP = False` 를 추가했다(`NO_CLAMP` 정의 바로 아래).
+기본값 False 는 **현행 비트 동일**(기존 런 재현성 최우선). True 일 때만:
+
+  1. **BC_Anchor 강등**: `end_c1`(Top 케이블 바깥 끝)에서 u1/u2 를 **떼고** u3 + ur1~ur3 만 남긴다.
+     근거: u3/회전은 평면성과 강체 면외·회전을 막고, 면내 강체운동은 Top/Right/Left 세 점이 비공선이라
+     `Disp_Control_*` 의 초기 u1=u2=0 이 이미 막는다(특이행렬 아님). 즉 "면외 고정"으로 강등.
+  2. **`Disp_Control_Top` 신설**: Right/Left 와 **완전히 같은 패턴**. Initial 에서 u1=u2=0,
+     `Step-GlobalTension` 에서 `DISP_GLOBAL`(165 um), `Step-Buckle` 에서 `PERTURBATION`(0.01 m),
+     `Step-HighTension`/`Step-Postbuckle` 에서 `GLOBAL_FINAL`(1e-3 m). 하중은 **지정 변위만**(CLOAD 없음).
+  3. **방향 코사인**: Top 케이블은 `connect_cable('Cable_Top', ..., V1, (0.0, 1.0, 0.0))` 로 +y 축이다.
+     Right/Left 와 **같은 대입식** `u1 = v*cos, u2 = -v*sin` 을 쓰도록 `top_cos = 0.0`, `top_sin = -1.0`
+     (= u2 = +v)을 두고 세 스텝 모두 그 식으로 구동한다.
+  4. **로그**: `[BC] PULL_TOP=True -> Top 꼭짓점도 케이블 방향 변위(프리텐션 .. / 최종 ..), BC_Anchor 는 u3 만`
+     1줄 + `[BC] 케이블 방향 (u1=v*cos, u2=-v*sin): Top/Right/Left` 형식 1줄. 둘 다 `if PULL_TOP:` 안에만
+     있으므로 False 경로 로그는 종전과 동일하다.
+  5. **NO_CLAMP 와 독립**: `PULL_TOP` 은 클램프 생성/구동 블록을 건드리지 않는다 -> 네 조합 모두 유효.
+     `Disp_Control_Top` 은 Right/Left 처럼 NO_CLAMP 와 무관하게 항상(PULL_TOP=True 일 때) 만든다.
+
+[검증 - Abaqus 없이, 실제 실행] 신규 하네스 `code/pull_top_stub.py` **38/38 OK** (Abaqus/라이선스 불필요):
+  - 구역(BC 구역 / HighTension 구역 / Postbuckle 구역)을 소스에서 떼어 가짜 `my_model` 로 **실행**하고
+    BoundaryCondition 생성·`setValuesInStep` 호출을 기록해 판정한다.
+  - (i) 회귀: `PULL_TOP=False` 의 BC 호출 추적이 **PULL_TOP 도입 이전 소스(git HEAD)** 와 문자열 동일,
+        `Disp_Control_Top` 없음, 새 로그 0줄. HighTension/Postbuckle 구역도 각각 False 추적 동일.
+  - (ii) `PULL_TOP=True`: BC_Anchor 에 u1/u2 **없고** u3+회전 3개 유지(region 은 end_c1 그대로),
+        Disp_Control_Top 이 Initial(0,0) -> GlobalTension(0, +165 um) -> Buckle(0, +0.01) ->
+        HighTension(0, +1e-3) / Postbuckle(0, +1e-3) 로 구동. 세 꼭짓점 변위 크기 |u| 가 모두 GLOBAL_FINAL.
+        Top 이 Right 와 **같은 스텝 집합**을 받는다. 로그 1줄 + 방향 1줄 존재, cp949 인코딩 가능.
+  - (iii) 네 조합(PULL_TOP x NO_CLAMP) 모두 예외 없음(BC 개수 9/5/10/6).
+  - (iv) top 방향이 소스의 `Cable_Top` 방향 (0,1) 과 일치, 새 줄 29개 금지문자 0.
+  - 기존 검사: `py_compile` OK · `test_seed_path` **49/49** · `check_model_consistency` **PASS**
+    (HF<->buckle 30 / HF<->모드소스 27, 역할 위반 0) · `static_leak_check` 이상 없음(4 파일).
+  - 변경 파일은 `run_abaqus.py` + 신규 하네스뿐. RESULTS 4필드 계약 / `all_results.csv` 스키마 /
+    slope·tau 아카이빙 배선은 손대지 않았다.
+
+[기대효과]
+  1. 세 꼭짓점 **대칭 인장**이 되므로 baseline 을 Galhofo 3-텐던과 같은 정의로 비교할 수 있다. 대신
+     프리텐션 분배가 달라지므로 **baseline 재측정이 필요**하다(기존 Top-고정 수치와 직접 비교 금지).
+  2. 앵커 반력(RF at BC_Anchor)은 **하중 지표로서 의미를 잃는다**(이제 앵커가 아니라 케이블 끝이다).
+     대체 지표: 케이블 3개의 RF **균등성**(세 값의 상대편차) - 대칭이면 0 에 가깝고, 비대칭 좌굴/스냅이면
+     커진다. `torque_stats`/slope 아카이빙은 그대로 쓰고, 이 지표는 별도 단계에서 붙일 것.
+  3. 좌굴 base state 가 대칭이 되므로 좌굴모드에서 '앵커 쪽 인위적 비대칭'이 사라진다(모드 선택 해석이 단순해짐).
+[한계] 실제 Abaqus 실런은 이 환경에서 돌리지 않았다(하네스는 배선 검증). 실런 시 확인할 것:
+  (a) 수렴(앵커 면내 구속을 뗀 뒤 강체 면내운동이 실제로 잡히는지 - Initial 에서 세 점 u1=u2=0 이 근거),
+  (b) 케이블 3개 RF 균등성, (c) 좌굴모드가 세 꼭짓점 대칭을 유지하는지.

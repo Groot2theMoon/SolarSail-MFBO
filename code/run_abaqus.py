@@ -968,6 +968,10 @@ _MODE_TABLE_ENV = os.environ.get('SOLARSAIL_MODE_TABLE')
 #   [§19.104] NO_CLAMP 상수를 이 블록으로 올렸다(값/의미 불변 - 종전에는 클램프 RP 조립부에 있었고,
 #     모드표 결정보다 **뒤**라 여기서 볼 수 없었다). True = 클램프 생략 baseline(run_abaqus_cable 대조).
 NO_CLAMP = True
+#   [§19.105] PULL_TOP: True = 윗 꼭짓점(Top)도 케이블 방향 지정변위로 당긴다(Galhofo 2022 3-tendon 정합).
+#     False(기본) = 종전 그대로 Top 완전 고정 - 기존 런 재현성이 우선이다(BC/스텝 호출 바이트 동일).
+#     NO_CLAMP 와 **독립**이다: 네 조합(PULL_TOP x NO_CLAMP) 모두 유효하고, 클램프 유무와 서로 간섭하지 않는다.
+PULL_TOP = False
 if NO_CLAMP:
     # 합성표(2+2)도 env 오버라이드도 쓰지 않는다 - 클램프 모드가 섞이면 그대로 오염이다(§19.104).
     MODE_TABLE = SEED_FAMILY_TABLE
@@ -1147,6 +1151,11 @@ angle_deg = 28.6
 angle_rad = np.deg2rad(angle_deg)
 cos_val = float(np.cos(angle_rad))
 sin_val = float(np.sin(angle_rad))
+#   [§19.105] Top 케이블 방향 코사인. 케이블은 connect_cable('Cable_Top', ..., V1, (0.0, 1.0, 0.0)) 로
+#     +y 축에 놓인다 -> 방향 (u1, u2) = (0, +1). Right/Left 와 **같은 대입식**을 쓰기 위해
+#     (u1 = v*cos, u2 = -v*sin) 규약에 맞춘 값이 top_cos=0.0, top_sin=-1.0 이다(즉 u2 = +v).
+top_cos = 0.0
+top_sin = -1.0
 
 # 모델 초기화 및 재질
 def _apply_imperfection_to_part(part):
@@ -1500,9 +1509,18 @@ my_model.DisplacementBC(
 )
 
 # 구속조건 생성
-my_model.DisplacementBC(name='BC_Anchor', createStepName='Initial', region=end_c1, 
-                        u1=0, u2=0, u3=0, ur1=0, ur2=0, ur3=0
-                        )
+#   [§19.105] BC_Anchor 는 케이블 '바깥 끝'(end_c1)의 구속이다. 종전에는 u1~ur3 완전 고정이었다.
+#     PULL_TOP=True 면 이 점도 케이블 방향 지정변위(Disp_Control_Top)를 받아야 하므로 면내 u1/u2 를 푼다.
+#     남기는 것은 u3(면외) + ur1~ur3(회전): 평면성과 강체 면외/회전을 막고, 면내 강체운동은
+#     Top/Right/Left 세 점(비공선)의 u1=u2=0(Initial, Disp_Control_*)이 이미 막는다 -> 특이행렬 아님.
+if PULL_TOP:
+    my_model.DisplacementBC(name='BC_Anchor', createStepName='Initial', region=end_c1,
+                            u3=0, ur1=0, ur2=0, ur3=0
+                            )
+else:
+    my_model.DisplacementBC(name='BC_Anchor', createStepName='Initial', region=end_c1, 
+                            u1=0, u2=0, u3=0, ur1=0, ur2=0, ur3=0
+                            )
 my_model.DisplacementBC(name='BC_Right', createStepName='Initial', region=end_c2, u3=0, ur1=0, ur2=0, ur3=0)
 my_model.DisplacementBC(name='BC_Left', createStepName='Initial', region=end_c3, u3=0, ur1=0, ur2=0, ur3=0)
 if not NO_CLAMP:
@@ -1515,6 +1533,12 @@ my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial', reg
 my_model.DisplacementBC(name='Disp_Control_Left',createStepName='Initial', region=end_c3, 
     u1=0, u2=0
 )
+if PULL_TOP:
+    #   [§19.105] Right/Left 와 완전히 같은 패턴: Initial 에서 u1=u2=0, 스텝에서 케이블 방향 지정변위.
+    #     하중은 지정 변위만 쓴다(CLOAD 없음). 방향은 위 top_cos/top_sin (+y 축).
+    my_model.DisplacementBC(name='Disp_Control_Top', createStepName='Initial', region=end_c1, 
+        u1=0, u2=0
+    )
 if not NO_CLAMP:
     my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial', region=end_cl, 
         u1=0, u2=0
@@ -1533,6 +1557,16 @@ my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(stepName='Step-
     u1=-DISP_GLOBAL * cos_val,
     u2=-DISP_GLOBAL * sin_val
 )
+if PULL_TOP:
+    #   [§19.105] Top Cable: 상향(+y) 당기기 - Right/Left 와 같은 대입식.
+    my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(stepName='Step-GlobalTension', 
+        u1=DISP_GLOBAL * top_cos,
+        u2=-DISP_GLOBAL * top_sin
+    )
+    emit("[BC] PULL_TOP=True -> Top 꼭짓점도 케이블 방향 변위(프리텐션 %.6g m / 최종 %.6g m), BC_Anchor 는 u3 만"
+         % (DISP_GLOBAL, GLOBAL_FINAL))
+    emit("   [BC] 케이블 방향 (u1=v*cos, u2=-v*sin): Top cos=%.6f sin=%.6f / Right cos=%.6f sin=%.6f / Left cos=%.6f sin=%.6f"
+         % (top_cos, top_sin, cos_val, sin_val, -cos_val, sin_val))
 
 if not NO_CLAMP:
     # 좌측 클램프: (-1, +1) 방향
@@ -1555,6 +1589,13 @@ my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(stepName='Step-
     u1=-PERTURBATION * cos_val,
     u2=-PERTURBATION * sin_val
 )
+if PULL_TOP:
+    #   [§19.105] 좌굴 perturbation 도 세 꼭짓점에 같은 크기로 준다(한 점만 다른 크기면
+    #     좌굴 base state 가 비대칭이 되어 모드가 인위적 비대칭을 담는다).
+    my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(stepName='Step-Buckle', 
+        u1=PERTURBATION * top_cos,
+        u2=-PERTURBATION * top_sin
+    )
 if not NO_CLAMP:
     my_model.boundaryConditions['Disp_Control_CL'].setValuesInStep(stepName='Step-Buckle', 
         u1=-(CLAMP_PERT / sqrt2),
@@ -1667,6 +1708,13 @@ if fidelity == 'LF':
             stepName='Step-HighTension',
             u1=sign * GLOBAL_FINAL * cos_val,
             u2=-GLOBAL_FINAL * sin_val
+        )
+    if PULL_TOP:
+        #   [§19.105] 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 GLOBAL_FINAL.
+        my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
+            stepName='Step-HighTension',
+            u1=GLOBAL_FINAL * top_cos,
+            u2=-GLOBAL_FINAL * top_sin
         )
     for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
         my_model.boundaryConditions[name].setValuesInStep(
@@ -1978,6 +2026,14 @@ elif fidelity == 'HF':
             stepName='Step-Postbuckle',
             u1=sign * GLOBAL_FINAL * cos_val,
             u2=-GLOBAL_FINAL * sin_val
+        )
+
+    if PULL_TOP:
+        #   [§19.105] 포스트버클 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 GLOBAL_FINAL.
+        my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
+            stepName='Step-Postbuckle',
+            u1=GLOBAL_FINAL * top_cos,
+            u2=-GLOBAL_FINAL * top_sin
         )
 
     for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
