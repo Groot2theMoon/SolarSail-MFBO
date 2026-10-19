@@ -130,6 +130,14 @@ CLAMP_EXCL_R = 0.0   # m — 0.0 이면 제외 노드가 없어 All_Edges_NoClam
                      #     이 반경 내 경계 노드는 면외 z 구속에서 제외한다(§9).
                      #     근거: 논문 (c) 는 클램프 없는 모델의 조건이고, 클램프가 붙은 선을 면외 고정하면 클램프의 물리가 왜곡된다.
 
+#   [§19.111] RELEASE_EDGE_U3: 자유변의 면외 구속을 '하드 u3=0' 에서 '무른 to-ground 스프링' 으로 바꾼다.
+#   True = 자유변 BC_Edges_Only_Z 를 제거하고 '무른 면외 스프링'으로 대체 (경계 아티팩트 검증용).
+#   False = 종전 그대로(u3=0). 덱/로그 바이트 동일 유지.
+RELEASE_EDGE_U3 = False
+#   스프링 강성 = ALPHA * (σt)_ref,  σt = 7 kPa * 5 µm = 0.035 N/m (막 장력/단위폭 = 스프링 [N/m])
+EDGE_SPRING_ALPHA = 1.0e-3     # 1e-3(거의 자유) ~ 1(자연 강성) 스윕용
+EDGE_SPRING_K = EDGE_SPRING_ALPHA * 0.035
+
 # 케이블 파라미터 (Galhofo reference)
 CABLE_RADIUS = 5.0e-4 # m
 CABLE_AREA = np.pi * (CABLE_RADIUS**2)
@@ -1742,12 +1750,51 @@ emit("[BC] All_Edges_NoClamp 후보: 경계 노드 %d개 (클램프 반경 %.3g 
 aba_grid_mesh.make_set(a, 'All_Edges_NoClamp', inst_memb, _keep_labels)
 emit("[BC] All_Edges_NoClamp 셋 생성 완료 (노드 %d개)" % len(_keep_labels))
 
-my_model.DisplacementBC(
-    name='BC_Edges_Only_Z',
-    createStepName='Step-Buckle',
-    region=a.sets['All_Edges_NoClamp'],
-    u3=0
-)
+#   [§19.111] 자유변 면외 구속: 기본은 하드 u3=0(BC_Edges_Only_Z). RELEASE_EDGE_U3=True 면 이 BC 를
+#     만들지 않고 **노드별 to-ground 스프링(dof=3)** 으로 대체한다.
+#     왜: 가장 긴 변을 면외 고정하면 국부 압축이 주름으로 이완되지 못해 압축 무게중심이 바닥변
+#       중앙(10.03, 0.24)에 몰리는 경계 아티팩트가 생긴다(§19.111).
+#     스프링은 model-level engineeringFeature 다 -> 스텝 삭제(Step-Buckle -> Step-Postbuckle)
+#       와 무관하게 모델에 남는다(BC_Edges_Only_Z 만 스텝과 함께 사라진다).
+#     Abaqus 덱: *ELEMENT, TYPE=SPRINGA (노드-지면 1개씩) + *SPRING, DOF=3, ELSET=<셋>
+if RELEASE_EDGE_U3:
+    my_model.rootAssembly.engineeringFeatures.SpringDashpotToGround(
+        name='EdgeZ_Spring',
+        region=a.sets['All_Edges_NoClamp'],
+        orientation=None,
+        dof=3,
+        springBehavior=ON,
+        springStiffness=EDGE_SPRING_K,
+        dashpotBehavior=OFF,
+    )
+    #   면외 강체모드 방지(3점 u3): u3 하드 구속이 사라지면 z 강체병진이 특이모드가 된다.
+    #     꼭짓점 강체패치 **제어점(RP)** 에 u3=0 을 건다 - 좌굴 스크립트의 BC_Right_Z/BC_Left_Z 와
+    #     같은 역할/같은 대상(RP)이다. HF 의 BC_Right/BC_Left 는 케이블 **바깥 끝**(end_c2/end_c3)
+    #     이라 코너 RP 의 u3 를 잡지 못한다(트러스 T3D2 는 횡강성이 0).
+    #     Top 도 포함한다: BC_Anchor 는 end_c1(케이블 바깥 끝)이라 같은 이유로 RP_Top_Set 의
+    #     u3 를 잡지 못한다 -> 세 꼭짓점 모두 RP u3=0 이어야 3점 지지가 성립한다.
+    #     앵커/클램프 자체의 u3(BC_Anchor/BC_CL/BC_CR)는 건드리지 않는다.
+    _edge_u3_rps = ['RP_Top_Set', 'RP_Right_Set', 'RP_Left_Set']
+    if not NO_CLAMP:
+        #   클램프 패치도 경계 u3 구속에서 빠지므로(CLAMP_EXCL_R=0 이면 원래 겹쳤다) 같은 이유로
+        #   제어점 u3 를 잡는다. 클램프는 물리적으로 면외 고정 부품이다.
+        _edge_u3_rps += ['RP_CL_Set', 'RP_CR_Set']
+    for _rp_name in _edge_u3_rps:
+        my_model.DisplacementBC(
+            name='BC_%s_Corner_Z' % _rp_name.replace('RP_', '').replace('_Set', ''),
+            createStepName='Initial',
+            region=a.sets[_rp_name],
+            u3=0
+        )
+    emit("[BC] RELEASE_EDGE_U3=True -> BC_Edges_Only_Z 제거, EdgeZ_Spring k=%.3e N/m (alpha=%.1e, n=%d), Right/Left u3 지지 확인"
+         % (EDGE_SPRING_K, EDGE_SPRING_ALPHA, len(_keep_labels)))
+else:
+    my_model.DisplacementBC(
+        name='BC_Edges_Only_Z',
+        createStepName='Step-Buckle',
+        region=a.sets['All_Edges_NoClamp'],
+        u3=0
+    )
 
 #   [2026-10-12 §19.66] LF ODB 는 **설계점별 이름**이다(LF_Analysis_xc<NNN>_dc<NNN>.odb).
 #     고정 이름은 이전 설계점의 LF 가 이번 점의 지표로 둔갑할 수 있었다(짝 오염).
@@ -2131,12 +2178,16 @@ elif fidelity == 'HF':
     # Step-Buckle 삭제 시 BC_Edges_Only_Z(prescribed condition)가 함께 삭제되므로
     # Postbuckle 스텝에 모서리 z 구속을 재생성한다 (Galhofo 참조: 3개 모서리 u3=0).
     # 셋은 위에서 만든 All_Edges_NoClamp(클램프 구간 제외)를 그대로 쓴다.
-    my_model.DisplacementBC(
-        name='BC_Edges_Only_Z',
-        createStepName='Step-Postbuckle',
-        region=a.sets['All_Edges_NoClamp'],
-        u3=0
-    )
+    #   [§19.111] RELEASE_EDGE_U3=True 면 재생성하지 않는다: EdgeZ_Spring 은 model-level
+    #     engineeringFeature 라 스텝 삭제와 무관하게 모델에 남아 있고, 같은 이름으로 다시 만들면
+    #     중복 이름 오류다. 3점 RP u3(BC_*_Corner_Z, Initial)도 그대로 살아 있다.
+    if not RELEASE_EDGE_U3:
+        my_model.DisplacementBC(
+            name='BC_Edges_Only_Z',
+            createStepName='Step-Postbuckle',
+            region=a.sets['All_Edges_NoClamp'],
+            u3=0
+        )
 
     # 초기 상태에서 최종 장력(목표 7000 Pa, 미검증)까지 증가
     for name, sign in [('Disp_Control_Right', 1), ('Disp_Control_Left', -1)]:

@@ -183,6 +183,21 @@ NS_BASE = {
     'PATTERN_SIGN': 1.0,
 }
 
+#   [§19.111] 자유변 면외 구속 스위치 3줄 - **소스에서 실행해** 얻는다(하네스가 값을 만들지 않는다).
+#     False 경로는 RELEASE_EDGE_U3 만 보지만, 스프링 상수도 주입해 두어야 소스가 True 로 남은 채
+#     실행해도 NameError 대신 'trace 불일치'로 정직하게 실패한다.
+EDGE_LINE = re.compile(r'(?m)^(RELEASE_EDGE_U3|EDGE_SPRING_ALPHA|EDGE_SPRING_K) = ([^#\n]+)')
+
+
+def edge_consts(src):
+    pairs = [(m.group(1), m.group(2).strip()) for m in EDGE_LINE.finditer(src)]
+    if not pairs:
+        return {}
+    ns = {}
+    exec(compile('\n'.join('%s = %s' % (k, v) for k, v in pairs), '<edge_consts>', 'exec'), ns)
+    return dict((k, ns[k]) for k, _ in pairs)
+
+
 
 def make_ns(src, pt, case, logs, grid=None, scale=None):
     ang = math.radians(28.6)
@@ -216,6 +231,10 @@ def make_ns(src, pt, case, logs, grid=None, scale=None):
     ns['DISP'] = field(src, 'DISP_GLOBAL')
     ns['disp'] = ns['DISP']          # build_model(disp) 의 인자
     ns['PERTURBATION'] = field(src, 'PERTURBATION')
+    #   [§19.111] 자유변 면외 구속 스위치(소스 값 그대로) + Abaqus 심볼.
+    ns.update(edge_consts(src))
+    ns.setdefault('ON', 'ON')
+    ns.setdefault('OFF', 'OFF')
 
     def _print(*args):
         logs.append(' '.join(str(x) for x in args))

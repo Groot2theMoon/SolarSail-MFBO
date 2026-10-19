@@ -4633,3 +4633,108 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   `python3 check_model_consistency.py`   # PASS
   `python3 static_leak_check.py`
   값 바꾸기: `run_abaqus.py` 의 `# ===== SETTINGS =====` 블록만 본다(그룹 ①~⑦).
+
+#### §19.111 자유변 면외 구속 스위치 `RELEASE_EDGE_U3` - u3=0 을 to-ground 스프링으로 대체 (경계 아티팩트 검증, 2026-10-19)
+
+[발견된 아티팩트 — 고치기 전에 원인을 특정한다]
+  - HF/좌굴 모델에서 **압축 응력의 면적가중 무게중심**이 `(10.03, 0.24)` m 로 **바닥변(y=0) 중앙**에
+    몰린다(상위 세션 실측 보고 — 이 환경에는 라이선스가 없어 재측정하지 않았다).
+  - 압축이 `y < 1 m` 띠에 집중되고, 꼭짓점 근처는 인장 지배다(이쪽은 정상).
+  - 즉 "가장 긴 변에서 압축이 시작된다" 는 물리라기보다 **경계 조건의 흔적**으로 보인다.
+
+[왜 그렇게 되는가]
+  - 현재 모델은 자유변 3변에 `BC_Edges_Only_Z`(u3=0, 노드셋 `All_Edges_NoClamp`)를 건다. 이건
+    **면외 변위를 0 으로 고정**하는 하드 구속이다.
+  - 막의 국부 압축은 주름(면외 좌굴)으로 이완되는데, 긴 변이 면외 고정이면 그 변 근처에서
+    이완 경로가 막힌다 -> 압축이 변을 따라 쌓이고 무게중심이 변 중앙으로 끌린다.
+  - 검증 방법은 하나뿐이다: **자유변의 면외 구속을 풀고** 같은 측정을 다시 하는 것. 다만 완전
+    자유로 두면 z 강체병진이 특이모드가 되므로, "아주 무른 스프링 + 3점 u3" 로 바꾼다.
+
+[무엇을 넣었나 — 두 스크립트 공통]
+  - SETTINGS 에 스위치 3개(양쪽 동일 값/주석):
+    `RELEASE_EDGE_U3 = False` (기본), `EDGE_SPRING_ALPHA = 1.0e-3`, `EDGE_SPRING_K = EDGE_SPRING_ALPHA * 0.035`.
+    `0.035 N/m = σt = 7 kPa x 5 µm` 는 막 장력/단위폭 = 스프링 강성의 자연 단위다.
+    배치: `run_abaqus.py` 그룹 ② 형상/격자(경계 셋 정의 옆), `run_abaqus_buckle.py` 그룹 ⑦ 스위치/진단
+    (`CLEAN_PERTURBATION` 바로 아래 — 같은 BC 를 제어하는 스위치다). 중복 정의 없음.
+  - `True` 일 때 `BC_Edges_Only_Z` 를 **만들지 않고**, 노드셋 `All_Edges_NoClamp` 에
+    `rootAssembly.engineeringFeatures.SpringDashpotToGround(name='EdgeZ_Spring', region=..., orientation=None,
+    dof=3, springBehavior=ON, springStiffness=EDGE_SPRING_K, dashpotBehavior=OFF)` 를 건다.
+    덱에서는 `*ELEMENT, TYPE=SPRINGA`(노드-지면 1개씩) + `*SPRING, DOF=3` 으로 나간다.
+  - 생성 지점은 **양쪽 분기 모두** 처리했다:
+    - `run_abaqus.py`: Step-Buckle 생성부 + Step-Postbuckle 재생성부(둘 다 `if not RELEASE_EDGE_U3`).
+      스프링은 model-level engineeringFeature 라 스텝 삭제와 무관하게 남으므로 Postbuckle 에서
+      **다시 만들지 않는다**(같은 이름 재생성 = 중복 이름 오류).
+    - `run_abaqus_buckle.py`: `CLEAN_PERTURBATION` True(Initial)/False(Step-Buckle) 두 분기 모두
+      지역 헬퍼 `_edge_u3(step_name)` 하나로 통일 — 분기마다 코드를 복사하지 않는다.
+  - 로그 1줄(True 일 때만, 두 스크립트 동일 문구):
+    `[BC] RELEASE_EDGE_U3=True -> BC_Edges_Only_Z 제거, EdgeZ_Spring k=%.3e N/m (alpha=%.1e, n=%d), Right/Left u3 지지 확인`
+
+[면외 강체모드 — Right/Left u3 는 이미 있었나? (코드로 확인한 결과)]
+  - **좌굴 스크립트: 이미 있다. 추가하지 않았다.** `BC_Right_Z`/`BC_Left_Z` 가 `A2`/`A3`
+    (꼭짓점 강체패치 **제어점**)에 `u3=SET, ur1=ur2=ur3=SET` 를 Initial 에서 건다. `BC_Anchor_Top` 도
+    `A1` 에 `u3=SET`. 3점이 이미 u3 를 잡으므로 같은 노드에 또 걸면 이중 구속이다.
+  - **HF: 없었다. 그래서 넣었다.** HF 의 `BC_Right`/`BC_Left` 는 `end_c2`/`end_c3` — 즉 **케이블 바깥
+    끝**이고 코너가 아니다. 코너(막 패치)의 u3 는 지금까지 `BC_Edges_Only_Z` 가 잡고 있었다.
+    경로를 보면 `end_c2 -> Cable_Right(T3D2) -> start_c2 -> Tie -> RP_Right -> Coupling -> 패치` 인데,
+    **트러스는 횡강성이 0** 이라 케이블을 통해서는 코너 u3 가 지지되지 않는다. 따라서 자유변 u3 를 풀면
+    코너 RP 의 u3 가 비고 z 강체병진이 특이모드가 된다.
+    -> `True` 일 때 `RP_Top_Set`/`RP_Right_Set`/`RP_Left_Set` 에 `BC_*_Corner_Z`(u3=0, Initial)를 건다.
+    Top 도 포함한 이유는 같다(`BC_Anchor` 는 `end_c1`, 역시 트러스 끝단). 앵커/클램프 자체의 u3
+    (`BC_Anchor`/`BC_CL`/`BC_CR`)는 **건드리지 않았다**. `NO_CLAMP=False` 면 클램프 패치도 경계 셋에서
+    빠지므로 같은 이유로 `RP_CL_Set`/`RP_CR_Set` 도 u3=0 (클램프는 물리적으로 면외 고정 부품이다).
+    결과적으로 지지점은 Top/Right/Left(+클램프) = 노트에 적은 "3점 u3" 이다.
+
+[검증 — 실제 실행(Abaqus 불필요), 새 하네스 `code/release_edge_u3_stub.py`]
+  - 하네스가 하는 일: 두 스크립트에서 구역 3개(HF 노드셋/BC, HF Postbuckle 재생성, buckle BC)를
+    **소스에서 떼어** 가짜 `my_model`/어셈블리로 실행하고 `DisplacementBC`/`SpringDashpotToGround`
+    호출을 기록한다(텍스트 grep 아님 — "분기 안에 넣었는데 안 걸린다" 류를 잡는다).
+  - `python3 release_edge_u3_stub.py` -> **PASS (59 checks, 0 fail)**.
+    - 기본값: 두 스크립트 `False`/`1e-3`/`K == ALPHA*0.035`(상수 블록을 exec 해서 확인).
+    - False 회귀: 두 스크립트의 BC trace + 로그가 **도입 이전 소스(git HEAD)와 문자열 동일**
+      (HF `sha256 d95c3e53…` 동일, buckle `sha256 b4537d78…` 동일), 스프링 0회, RELEASE 로그 0줄.
+    - True: `BC_Edges_Only_Z` **0회**, `SpringDashpotToGround` **1회**, `dof=3`,
+      `springStiffness == EDGE_SPRING_K`, `region == All_Edges_NoClamp`, 로그 정확히 1줄 + `n` == 스프링
+      대상 노드수, HF Postbuckle 재생성 0회.
+    - alpha 스윕 `1e-3 / 1e-1 / 1.0`: `springStiffness` 가 `alpha x 0.035` 와 **절대오차 0**,
+      `k(1e-1) == 100 x k(1e-3)`, `k(1.0) == 1000 x k(1e-3)` (절대오차 1e-15), 단조 증가.
+  - 기존 하네스/검사기: `pull_top_stub.py` **68/68** · `buckle_pull_top_stub.py` **84/84** ·
+    `hf_settings_stub.py` **20/20**(12조합 trace 해시 `bbec7630…` **변경 전과 동일**) ·
+    `buckle_compare.py selftest` **9/9** · `test_seed_path.py` **49/49** ·
+    `check_model_consistency.py` **PASS**(HF↔buckle 30 / HF↔모드소스 27) · `static_leak_check.py` 이상 없음.
+  - **`check_model_consistency.py` 를 True 로 바꿔 실행해 봤다: 여전히 PASS.** SHARED 게이트는
+    `u3=SET`/`radius=0.2` 같은 **문자열 목록**을 보는데, True 는 그 문자열을 지우지 않고 분기만
+    추가한다(좌굴의 `BC_Right_Z/BC_Left_Z` 는 그대로, HF 의 `BC_Edges_Only_Z` 는 else 분기에 남는다).
+    이중구속 검사(`check_clamp_edge_overlap`)는 수치 계산이라 TRUE/FALSE 와 무관하다.
+  - `hf_settings_stub.py` 를 고친 이유(하네스 자체 수정, 2곳):
+    (a) 기본 기저를 `§19.110 도입 커밋의 부모` -> **직전 커밋(HEAD)** 으로 옮겼다. 상수 재배치 감사에는
+        예전 기저가 맞지만, 그 뒤에 기능 커밋이 쌓이면 "실행문 154개 전부 동일" 이 **구조적으로** 깨진다
+        (기능 추가는 실행문을 바꾸는 게 정상이다). 예전 감사는 `--pre <§19.110 부모>` 로 그대로 재현된다.
+    (b) B(실행문 AST) 판정에서 **`RELEASE_EDGE_U3` 를 포함한 문**만 차이를 허용한다(2문). 상수 인라인
+        때문에 `if not RELEASE_EDGE_U3:` 가 `if not False:` 로 접히므로, 표지 판정은 **비인라인 문장**으로 한다.
+
+[True 는 새 모델 변형이다 — 기존 아카이브와 비교 금지]
+  - True 런은 **다른 경계조건의 다른 모델**이다. 같은 잡 이름/같은 아카이브 디렉터리에 있는 기존 결과와
+    점별 수치를 나란히 놓으면 "모델이 바뀐 것" 과 "물리가 바뀐 것" 이 섞인다.
+  - 비교는 (i) 같은 설정의 False 재실행, (ii) alpha 스윕 3점, 이 둘 안에서만 한다.
+  - 잡 이름에 변형 태그를 넣지 않았다(요청 범위 밖) — 그러므로 **산출물을 옮겨 두거나 디렉터리를
+    분리하지 않으면 이전 .odb 를 덮어쓴다**. 스윕할 때는 런마다 `code/buckle/` 산출물을 백업할 것.
+
+[alpha 스윕으로 'k 무관성' 을 판정한다]
+  - 질문: 압축 무게중심 이동이 **스프링 강성에 무관**한가? 무관하면 그 이동은 BC 를 푼 효과(주름 이완)이고,
+    강성에 비례하면 스프링이 만든 인공 구속이 원인이다.
+  - 절차(3회): `EDGE_SPRING_ALPHA` 를 `1e-3 -> 1e-1 -> 1.0` 으로 바꿔 HF 를 돌리고, 각 런에서
+    ⓐ 압축 무게중심 `(x_c_bar, y_c_bar)`, ⓑ `area_frac_neg`(압축 면적비), ⓒ `y<1 m` 띠의 압축 분율을 읽는다.
+  - 판정: 세 런의 무게중심이 `(10.03, 0.24)` 에서 **같은 방향으로 충분히 벗어나고 서로 0.2 m 이내**면
+    k 무관(아티팩트 가설 지지). alpha 에 따라 단조로 되돌아가면 스프링 인공물 -> `alpha=1e-3` 고정 후
+    "면외 고정을 완전히 푼 것은 아니다" 로 한계를 명시한다. `alpha=1.0`(k=0.035 N/m)은 사실상 자연 강성이라
+    False 와 가까워지는 것이 정상이다(대조군).
+
+[실행]
+  `cd code`
+  `python3 release_edge_u3_stub.py`       # 59 checks (True/False/alpha 스윕 배선 검증)
+  `python3 pull_top_stub.py`              # 68/68
+  `python3 buckle_pull_top_stub.py`       # 84/84
+  `python3 hf_settings_stub.py`           # 20/20 (기본 기저 = 직전 커밋: 깨끗한 트리면 HEAD~1, 편집 중이면 HEAD)
+  `python3 check_model_consistency.py`    # PASS
+  스윕: `run_abaqus.py` / `run_abaqus_buckle.py` 의 `EDGE_SPRING_ALPHA` **한 줄만** 편집(1e-3 -> 1e-1 -> 1.0),
+        `RELEASE_EDGE_U3 = True` 로 두고 실행. 끝나면 둘 다 기본값(False / 1e-3)으로 복원.

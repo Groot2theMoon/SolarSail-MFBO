@@ -46,8 +46,14 @@ INSTANCE_NAME BASE HEIGHT ELEM_CODE_QUAD ELEM_CODE_TRI SEED_DIV THICKNESS TARGET
 CLAMP_EXCL_R CABLE_RADIUS CABLE_AREA LEN_TOP LEN_BOT CLAMP_CABLE_LEN V1 V2 V3
 PRETENSION_SCALE DISP_GLOBAL PERTURBATION GLOBAL_FINAL angle_deg angle_rad cos_val sin_val
 top_cos top_sin USE_GRID_MESH RUN_MODE SIGMA0 _EIGENSOLVER BUCKLE_ODB HF_ODB
-CABLE_RHO CABLE_E CABLE_NU PATCH_R_CLAMP'''.split())
-NEW_NAMES = set(['CABLE_RHO', 'CABLE_E', 'CABLE_NU', 'PATCH_R_CLAMP'])
+CABLE_RHO CABLE_E CABLE_NU PATCH_R_CLAMP
+RELEASE_EDGE_U3 EDGE_SPRING_ALPHA EDGE_SPRING_K'''.split())
+NEW_NAMES = set(['CABLE_RHO', 'CABLE_E', 'CABLE_NU', 'PATCH_R_CLAMP',
+                 #   [§19.111] 자유변 면외 구속 스위치 3개
+                 'RELEASE_EDGE_U3', 'EDGE_SPRING_ALPHA', 'EDGE_SPRING_K'])
+#   [§19.111] 새 기능이 만든 실행문을 식별하는 표지. 상수 재배치(§19.110) 감사와 기능 추가를
+#     구분하기 위해, B 의 '전부 동일' 판정에서 **이 이름을 포함한 문**만 차이를 허용한다.
+NEW_FEATURE = 'RELEASE_EDGE_U3'
 D_C = 0.3    # 12조합 회귀에서 CLAMP_* 파생값 계산용(임의 고정값)
 
 FAIL = []
@@ -204,20 +210,23 @@ def git(args):
 
 
 def baseline(pre_ref):
-    """기저 소스 (text, label). 기본: SETTINGS 도입 커밋의 **부모**(= 리팩터 전)."""
+    """기저 소스 (text, label). 기본: **직전 커밋** = '이번 변경이 방금 무엇을 바꿨나'.
+
+    [§19.111] 종전 기본값은 §19.110 도입 커밋의 부모(리팩터 전 소스)였다. 그 비교는 상수 재배치
+      감사에는 맞지만, 그 뒤에 기능 커밋이 쌓이면 '실행문 전부 동일' 이 **구조적으로** 깨진다
+      (기능 추가는 실행문을 바꾸는 것이 정상이다 — 그걸 실패로 세면 하네스가 기능 개발을 막는다).
+      상수 재배치 감사는 예전과 똑같이 `--pre <§19.110 부모>` 로 재현된다.
+    작업트리가 깨끗하면 HEAD 는 내 소스와 같으므로 한 칸 더 내려가 `HEAD~1` 과 비교한다
+      (커밋 전/후 모두 '실제로 달라진 것' 을 비교하게 만드는 규칙).
+    """
     if pre_ref is not None:
         if os.path.exists(pre_ref):
             return read(pre_ref), pre_ref
         return git(['show', '%s:%s' % (pre_ref, REL)]), '%s:%s' % (pre_ref, REL)
-    try:
-        hs = git(['log', '--reverse', '--format=%H', '-S', '# ===== SETTINGS =====',
-                  '--', REL]).split()
-        if hs:
-            return (git(['show', '%s^:%s' % (hs[0], REL)]),
-                    '%s^ (§19.110 도입 커밋의 부모)' % hs[0][:8])
-    except Exception:
-        pass
-    return git(['show', 'HEAD:%s' % REL]), 'HEAD (도입 전)'
+    dirty = git(['status', '--porcelain', '--', REL]).strip() != ''
+    ref = 'HEAD' if dirty else 'HEAD~1'
+    return git(['show', '%s:%s' % (ref, REL)]), '%s (%s)' % (
+        ref, '작업트리 변경 대비' if dirty else '깨끗한 트리 -> 직전 커밋 대비')
 
 
 def main(argv):
@@ -260,7 +269,7 @@ def main(argv):
         only_post = sorted(set(b) - set(a))
         diffs = [(k, a[k], b[k]) for k in sorted(set(a) & set(b)) if a[k] != b[k]]
         check('기존 상수 키 전부 존재 (only-pre 없음)', not only_pre, only_pre)
-        check('신규 키 = 승격분 4개 뿐', set(only_post) == NEW_NAMES, only_post)
+        check('신규 키는 선언된 목록 안 (%d개)' % len(only_post), set(only_post) <= NEW_NAMES, only_post)
         check('공통 키 값 diff 0', not diffs, diffs)
         check('모듈 수준 콘솔 로그 동일 (%d줄)' % len(la), la == lb,
               [(x, y) for x, y in zip(la + [''] * len(lb), lb + [''] * len(la)) if x != y][:1])
@@ -271,11 +280,18 @@ def main(argv):
         print('\n[B] 실행문(AST) 대조 — 상수 인라인 후')
         sa, da, ia = statements(pre_text, '<pre>', b)
         sb, db, ib = statements(new_text, '<new>', b)
+        #   [§19.111] 상수 인라인을 **하지 않은** 문장도 뽑는다: 스위치 상수는 bool 이라
+        #     인라인되면 `if not RELEASE_EDGE_U3:` 가 `if not False:` 로 접혀 표지가 사라진다.
+        sa_raw, _, _ = statements(pre_text, '<pre>', {})
+        sb_raw, _, _ = statements(new_text, '<new>', {})
         print('    pre %d문 / post %d문 (상수 정의 제외 %d/%d, 인라인 %d/%d회)'
               % (len(sa), len(sb), len(da), len(db), ia, ib))
-        bad = [(i, x, y) for i, (x, y) in enumerate(zip(sa, sb)) if x != y]
+        bad = [(i, x, y) for i, (x, y) in enumerate(zip(sa, sb))
+               if x != y and NEW_FEATURE not in sa_raw[i] and NEW_FEATURE not in sb_raw[i]]
+        n_new = sum(1 for x, y in zip(sa, sb) if x != y) - len(bad)
+        print('    차이 %d문 (그중 신규 스위치 블록 %d문 -> 허용)' % (len(bad) + n_new, n_new))
         check('실행문 개수 동일', len(sa) == len(sb), '%d vs %d' % (len(sa), len(sb)))
-        check('실행문 %d개 전부 동일' % len(sa), not bad,
+        check('신규 스위치 블록 외 실행문 전부 동일 (%d문)' % (len(sa) - n_new), not bad,
               ('\n--- pre ---\n' + bad[0][1] + '\n--- post ---\n' + bad[0][2]) if bad else None)
         check('제외한 상수 정의 이름: pre-only 없음 / post 추가는 승격분만',
               not (set(da) - set(db)) and (set(db) - set(da)) <= NEW_NAMES,

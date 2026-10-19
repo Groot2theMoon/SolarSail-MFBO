@@ -168,6 +168,14 @@ CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거�
 # ---- ⑦ 스위치/진단 ----
 CLEAN_PERTURBATION = True
 
+#   [§19.111] RELEASE_EDGE_U3: 자유변의 면외 구속을 '하드 u3=0' 에서 '무른 to-ground 스프링' 으로 바꾼다.
+#   True = 자유변 BC_Edges_Only_Z 를 제거하고 '무른 면외 스프링'으로 대체 (경계 아티팩트 검증용).
+#   False = 종전 그대로(u3=0). 덱/로그 바이트 동일 유지.
+RELEASE_EDGE_U3 = False
+#   스프링 강성 = ALPHA * (σt)_ref,  σt = 7 kPa * 5 µm = 0.035 N/m (막 장력/단위폭 = 스프링 [N/m])
+EDGE_SPRING_ALPHA = 1.0e-3     # 1e-3(거의 자유) ~ 1(자연 강성) 스윕용
+EDGE_SPRING_K = EDGE_SPRING_ALPHA * 0.035
+
 # ---- [§19.107] PULL_TOP: Top 꼭짓점도 케이블 방향 지정변위를 받는다 (HF §19.105 와 같은 의미) ----
 #   False(기본) = 종전 그대로 Top 완전 고정. BC/스텝 호출이 종전과 **바이트 동일**해야 한다
 #     (.inp 재현성 최우선 - 기존 좌굴 런을 다시 돌려도 같은 덱이 나와야 한다).
@@ -984,23 +992,45 @@ def build_model(disp):
     aba_grid_mesh.make_set(a, 'All_Edges_NoClamp', inst_memb, _keep_labels)
     print("%s All_Edges_NoClamp 셋 생성 완료 (노드 %d개)" % (TAG, len(_keep_labels)))
 
+    # ---- [§19.111] 자유변 면외 구속: 하드 u3=0 또는 to-ground 스프링 ----
+    def _edge_u3(step_name):
+        """BC_Edges_Only_Z 를 step_name 에 만들거나, RELEASE_EDGE_U3 면 스프링으로 대체한다.
+
+        왜(§19.111): 가장 긴 변(y=0)을 면외 고정하면 국부 압축이 주름으로 이완되지 못해
+          압축 무게중심이 바닥변 중앙(10.03, 0.24)에 몰린다 -> 경계 아티팩트.
+        스프링은 model-level engineeringFeature 다: 덱에 *ELEMENT, TYPE=SPRINGA +
+          *SPRING, DOF=3 으로 나가고, 스텝 삭제와 무관하게 모델에 남는다.
+        면외 강체모드는 아래 BC_Right_Z/BC_Left_Z(u3=SET, A2/A3)와 BC_Anchor_Top(u3=SET, A1)이
+          이미 막는다 — 실제로 소스에서 확인했고 추가 구속은 걸지 않는다(이중 구속 방지).
+        """
+        if RELEASE_EDGE_U3:
+            my_model.rootAssembly.engineeringFeatures.SpringDashpotToGround(
+                name='EdgeZ_Spring',
+                region=a.sets['All_Edges_NoClamp'],
+                orientation=None,
+                dof=3,
+                springBehavior=ON,
+                springStiffness=EDGE_SPRING_K,
+                dashpotBehavior=OFF,
+            )
+            print("%s [BC] RELEASE_EDGE_U3=True -> BC_Edges_Only_Z 제거, EdgeZ_Spring "
+                  "k=%.3e N/m (alpha=%.1e, n=%d), Right/Left u3 지지 확인"
+                  % (TAG, EDGE_SPRING_K, EDGE_SPRING_ALPHA, len(_keep_labels)))
+        else:
+            my_model.DisplacementBC(
+                name='BC_Edges_Only_Z',
+                createStepName=step_name,
+                region=a.sets['All_Edges_NoClamp'],
+                u3=0
+            )
+
     if CLEAN_PERTURBATION:
         #   자유경계 u3=0 을 Initial에서 건다(패치 반경 내 노드는 이미 제외 — 이중구속 방지).
         #   => 스텝 간 구속집합이 동일해지고, LIVE 는 prescribed 변위 패턴 하나만 남는다.
-        my_model.DisplacementBC(
-            name='BC_Edges_Only_Z',
-            createStepName='Initial',
-            region=a.sets['All_Edges_NoClamp'],
-            u3=0
-        )
+        _edge_u3('Initial')
     else:
         my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
-        my_model.DisplacementBC(
-            name='BC_Edges_Only_Z',
-            createStepName='Step-Buckle',
-            region=a.sets['All_Edges_NoClamp'],
-            u3=0
-        )
+        _edge_u3('Step-Buckle')
     if HAS_CABLES and LIVE_DRIVER != 'clamp':
         #   corner_lf: 좌굴 스텝 값 = 프로브(PERTURBATION). 모드 형상은 크기에 불변, lambda 만 스케일.
         _ns = PATTERN_SIGN * PERTURBATION
