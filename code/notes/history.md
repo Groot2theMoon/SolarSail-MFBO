@@ -4300,3 +4300,94 @@ n_z<0 은 뒤집어 +z 면을 봄). 뒤집기는 필수다: connectivity 가 역
   (b) delta_n 이 문헌 범위(6~8 deg)에 들어오는지, (c) delta_psi 가 좌굴/스냅 방향과 맞는지.
   또한 delta_n 은 면적가중 평균이라 **국소 주름을 보지 않는다**(설계 의도). 주름 강도는 hf 와
   slope_stats 가 담당하고, delta_n 으로 주름을 판정하면 안 된다.
+
+#### §19.107 좌굴 모드 소스에 PULL_TOP 스위치 + MAC 비교 도구 (3-tendon 모드 정합, 2026-10-19)
+
+[왜] §19.105 에서 HF(`run_abaqus.py`)에 `PULL_TOP` 을 넣어 Top 꼭짓점까지 케이블 방향으로 당기는
+3-tendon 런이 가능해졌는데, **모드 소스(`run_abaqus_buckle.py`)에는 그 스위치가 없었다**. 그래서
+HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) base state 에서 뽑힌 것이 된다.
+프리텐션 분배가 다른 상태의 모드형상을 `*IMPERFECTION` 으로 이식하면 **틀린 초기결함**이 조용히
+들어간다 — §19.104 에서 클램프 가족 혼입을 걷어낸 것과 같은 종류의 오염이고, 이번엔 λ 가 정상으로
+보이기 때문에 더 조용하다(λ 는 스케일만 변하고 형상은 그대로일 수 있다). 그래서 (a) 스위치를
+같은 의미·같은 규약으로 이식하고 (b) "모드를 다시 뽑아야 하는가" 를 **형상 상관(MAC)** 으로
+판정하는 도구를 함께 넣는다.
+
+[무엇 1] `run_abaqus_buckle.py` 에 `PULL_TOP = False` + env 오버라이드
+  1. **상수 + env**: `PULL_TOP = False`(기본). `SOLARSAIL_PULL_TOP` 이 설정되면 그 값이 이긴다
+     (1/true/yes/on/y -> True, 0/false/no/off/n -> False, 그 외는 **경고 1줄 + 상수값**).
+     소스를 편집하지 않고 두 변형을 같은 파일로 돌리기 위한 것이다. 실제 적용값과 그 출처
+     (`constant` 또는 `env SOLARSAIL_PULL_TOP=1`)를 로그 1줄로 남긴다.
+  2. **BC_Anchor_Top 강등**: True 면 `region=A1` 은 그대로 두고 `u1/u2` 를 떼어 `u3+ur1~ur3` 만 남긴다
+     (HF §19.105 의 `BC_Anchor` 와 같은 근거: 면외/회전은 막고, 면내 강체운동은 Top/Right/Left 세 점이
+     비공선이라 Initial `u1=u2=0` 이 이미 막는다 -> 특이행렬 아님).
+  3. **`Disp_Control_Top` 3단 배선** (Right/Left 와 **같은 패턴**, region 은 A1):
+     Initial `u1=u2=0` -> `Step-GlobalTension` `(0, +DISP)` -> `Step-Buckle` 케이스별:
+       - `CASE='seed'`(꼭짓점 케이블 라우트): 코너와 **같은 크기** `(0, +PERTURBATION)`.
+         한 점만 다른 크기면 base state 가 인위적으로 비대칭이 되어 모드가 그 비대칭을 담는다.
+       - `CASE='clamp_only'`(LIVE=클램프): 코너와 **같은 0 명시**. 여기서 0 을 빼면 Top 만 DEAD 로
+         남아 base state 가 비대칭이 된다(Right/Left 와 다른 처리 = 조용한 오염).
+  4. **방향 코사인**: 소스의 `connect_cable(a,'Cable_Top',p_cable_top,V1,(0.0,1.0,0.0))` -> 케이블 축이
+     +y. Right/Left 와 같은 대입식(`u1=v*cos, u2=-v*sin`)을 쓰도록 `TOP_PULL_COS=0.0`,
+     `TOP_PULL_SIN=-1.0`(= u2=+v). HF 의 `top_cos/top_sin` 과 같은 값/같은 규약이다.
+  5. **크기 근거(코드 확인)**: 이 스크립트의 프리텐션 스케일은 `DISP`(= `DISP_GLOBAL` 1.8e-5 m,
+     CLI 두 번째 인자로 덮인다)다. `LEN_TOP=0.280/LEN_BOT=0.689` 는 케이블 **길이**이고 구동량이
+     아니다. HF 의 `DISP_GLOBAL`(1.65e-4 m)을 쓰면 안 된다 — 두 운용점은
+     `check_model_consistency.check_operating_point` 가 기록하는 **의도적 분기**다.
+  6. **로그**: `PULL_TOP=True` 일 때만 1줄(프리텐션 값 + u1/u2 + 어느 경로가 이겼는지).
+     False 경로는 **로그 0줄** — 종전 콘솔/덱과 동일하게 유지한다.
+  7. **잡이름**: True 면 `_3t` 접미사(clamp_only 최장 77자 < 80자 한계). False 는 빈 태그라
+     종전 잡이름과 **바이트 동일** — 두 런이 같은 디렉터리에 공존해야 비교가 된다.
+  8. **ledger**: `buckle_ledger.jsonl` 한 행에 `PULL_TOP` / `pull_top_src` 를 추가했다(어느 행이
+     3-tendon 인지 파일만 보고 알 수 있게). 기존 키는 그대로다.
+
+[무엇 2] 신규 `buckle_compare.py` — λ + MAC 비교로 T1 판정
+  - 입력 자동 판별: `*.txt` 모드표(`aba_mode_from_odb.py` 형식: u3 단일성분 또는 3성분),
+    `*.dat`(고유값 표. **BUCKLING FACTOR / EIGENVALUE 두 헤더 모두** 인식 — `parse_buckle_log.dat_lambdas`
+    는 EIGEN 헤더만 봐서 좌굴 .dat 에서 0개가 나오므로 쓰지 않았다), `*.odb`(`abaqus python` 전용,
+    `Step-Buckle` 프레임의 `U` = u1,u2,u3. frame 1 이 기저(frameValue 0)면 건너뛴다).
+  - 성분 선택은 **데이터로** 한다: 양쪽에 u1/u2 가 실제로 있으면 3성분 MAC, 아니면 u3 MAC
+    (모드표는 u3 만 담으므로 그 표에 3성분 MAC 을 걸면 0/0 이 된다).
+  - 출력: (a) 모드별 λ 나란히 + 비율 B/A, (b) MAC 행렬(행=A, 열=B), (c) 최대 MAC 과 그 쌍,
+    (d) `MAC>=tol -> 모드 소스 교체 불필요` / `<tol -> 재생성 필요`. JSON 선택 저장.
+  - 종료코드: 0(불필요) / 10(재생성) / 2(사용법·파일) / 3(odbAccess 없음) / 4(벡터 없음) / 5(노드 교집합 부족).
+  - 노드 라벨 교집합이 10 미만이면 "같은 메쉬가 아니다" 로 판정 불가 처리한다(조용한 0 금지).
+
+[검증 - Abaqus 없이, 실제 실행]
+  - `buckle_pull_top_stub.py` **59/59 OK**: 구속조건 구역(`# ---- 구속조건 ----` ~ `return model_name`)을
+    소스에서 떼어 가짜 my_model/어셈블리로 **실행**하고 BC 호출을 기록한다.
+      (i) `PULL_TOP=False` 의 BC 추적 + 콘솔 로그가 **도입 이전 소스(git HEAD)** 와 문자열 동일
+          (seed 10호출 / clamp_only 20호출). `Disp_Control_Top` 없음, PULL_TOP 로그 0줄.
+      (ii) True: BC_Anchor_Top 에 u1/u2 없고 u3+회전 유지 / Disp_Control_Top GlobalTension (0,+1.8e-5) /
+          seed Buckle (0,+0.01), clamp_only Buckle (0,0)(코너와 동일) / 로그 1줄 + cp949 가능.
+      (iii) env: 1/true/TRUE/yes/on -> True, 0/false/no/off -> False, 미설정 -> False, 'maybe' -> False+경고 1줄.
+      (iv) 잡이름: False 는 종전과 동일, True 는 `_3t`(71자/77자).
+      (v) 방향 (0,-TOP_PULL_SIN) == 소스의 Cable_Top 방향 (0,1). (vi) 새 줄 37개 금지문자 0.
+  - `buckle_compare.py selftest` **9/9**: 같은 벡터 MAC=1.0 / 직교 0.0 / 부호반전 1.0 / 스케일 2.5배 1.0 /
+    순서 뒤바뀐 두 런의 최대 MAC 이 비대각(1,2) / u3-only 표의 성분 자동선택 / 공통라벨 없음 -> None.
+  - `buckle_compare_stub.py` **24/24**: 가짜 .dat/.txt 로 CLI 를 실제 실행. 같은 런 exit 0 + MAC 1.0000 +
+    '교체 불필요', 직교 exit 10 + MAC 0.0000 + '재생성 필요', 부호반전 exit 0, λ 비율 1.0053 일치,
+    순서 뒤바뀜 비대각, .dat 단독 exit 4(+λ 표는 그대로 출력), n_modes 제한, JSON 키/값,
+    비대칭 행렬 모양, .odb without odbAccess exit 3.
+  - 기존 게이트: `py_compile` OK · `test_seed_path` **49/49** · `check_model_consistency` **PASS**
+    (기본 False) · `static_leak_check` 이상 없음(4 파일). 수정 파일은 `run_abaqus_buckle.py` +
+    신규 3개(`buckle_compare.py`, `buckle_pull_top_stub.py`, `buckle_compare_stub.py`) + 이 절뿐이다.
+    `run_abaqus.py` / `eval_abaqus.py` / `torque_stats.py` / `slope_stats.py` / `aba_imperfection.py` /
+    `base_state_probe.py` / `seeds/` 는 무수정.
+
+[주의 - 체커의 사각지대] `check_model_consistency.py` 는 **PULL_TOP 상수를 True 로 바꿔도 PASS** 다.
+  SHARED 항목이 `u3=SET` 같은 문자열 포함검사라 두 분기 모두 만족하기 때문이다. 즉 이 게이트는
+  "HF 와 모드 소스의 텐던 수가 같은가" 를 판정하지 못한다 — 그 판정은 위 MAC 도구가 담당한다
+  (λ 만 보고 넘기면 안 되는 이유이기도 하다).
+
+[실행]
+  2-tendon(기본):  `abaqus cae noGUI=run_abaqus_buckle.py -- 0.5`
+  3-tendon:        PowerShell `$env:SOLARSAIL_PULL_TOP=1; abaqus cae noGUI=run_abaqus_buckle.py -- 0.5`
+                   bash       `SOLARSAIL_PULL_TOP=1 abaqus cae noGUI=run_abaqus_buckle.py -- 0.5`
+  비교:            `abaqus python buckle_compare.py buckle\<2t>.odb buckle\<3t>.odb 4`
+                   (또는 `abaqus python aba_mode_from_odb.py <odb> Step-Buckle <out.txt> 4` 후 `python3 buckle_compare.py A.txt B.txt 4`)
+
+[한계] 실제 Abaqus 런은 이 환경에서 돌리지 않았다(하네스는 배선/해석앵커 검증).
+  실런 시 확인할 것: (a) 3-tendon 런이 수렴하는지(Top 면내 구속을 뗀 뒤 강체 면내운동이 잡히는지),
+  (b) 세 케이블 RF 균등성, (c) MAC 이 0.9 근처로 애매하게 나오는 모드가 있는지(그때는 λ 스프레드와
+  모드 형상(`buckle_mode_report.py`)을 함께 본다). ODB 입력 경로는 odbAccess 가 없어 미검증이고,
+  `.dat` 에는 보통 고유벡터가 없으므로 MAC 은 ODB 또는 모드표 경로로만 얻어진다.
