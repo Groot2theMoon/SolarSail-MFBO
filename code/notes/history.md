@@ -4222,3 +4222,81 @@ baseline 을 문헌과 직접 비교할 때마다 "경계조건이 다르다"는
 [한계] 실제 Abaqus 실런은 이 환경에서 돌리지 않았다(하네스는 배선 검증). 실런 시 확인할 것:
   (a) 수렴(앵커 면내 구속을 뗀 뒤 강체 면내운동이 실제로 잡히는지 - Initial 에서 세 점 u1=u2=0 이 근거),
   (b) 케이블 3개 RF 균등성, (c) 좌굴모드가 세 꼭짓점 대칭을 유지하는지.
+
+#### §19.106 등가법선 편차 delta_n 계산 (DN: 줄) + 점별 txt 아카이빙, RESULTS 계약 불변 (2026-10-19)
+
+[왜] 참조 문헌(Pino 2019 ASR 63(11):3675, Vulpetti 2021 ASR 67(9):2669)은 형상 영향을 **등가법선 편차
+delta_n** 하나로 정량화한다(원문: Pino `delta_n ~ 6 deg`, Vulpetti `theta ~ 7.774 deg +- 0.003`,
+`phi ~ 65.81 deg +- 0.06`). 두 저자 모두 이를 "sail attitude bias" / "guidance system 이 보상 가능"으로
+기술한다. 우리 지표(lf1, lf2, lf3, hf)는 형상 지표를 4개나 내지만 **이 값만 없었다** - 즉 문헌과
+직접 비교할 수 있는 유일한 축이 비어 있었다.
+
+[정의] 이상 법선 = (0,0,1) (U_SUN=(0,0,-1) 기준 면). 요소별 변형 형상의 단위법선 n_e, 면적 A_e 로
+  1. n_eq = normalize( sum_e A_e * n_e )                  (면적가중 등가법선)
+  2. delta_n   [deg] = acos( clip(n_eq . (0,0,1), -1, 1) )
+  3. delta_psi [deg] = atan2(n_eq_y, n_eq_x)             (방위각)
+요소 면적/법선 규약은 `calc_thrust_loss` 와 **동일**하다(사각형 = 대각선 외적, 삼각형 = 두 변 외적,
+n_z<0 은 뒤집어 +z 면을 봄). 뒤집기는 필수다: connectivity 가 역순인 요소 하나가 면적가중 합에
+반대 방향으로 들어가면 delta_n 이 통째로 오염된다(앵커 (b**) 가 이를 고정한다).
+
+성질(설계 의도): **일관 기울기(whole-surface attitude bias)만** 잡고 국소 주름은 면적가중에서 상쇄된다.
+따라서 delta_n 은 hf 의 재표현이 아니라 **독립 정보(지향 오차)** 다 - 앵커 (c) 참조.
+
+[무엇] `eval_abaqus.py` 에 **추가만** 했다(기존 함수 수정 0):
+  - `_dn_node_coords(frame, instance, max_node_label)` : COORD 전개(calc_thrust_loss 와 같은 방식)
+  - `calc_normal_deviation(frame, instance, connectivity, max_node_label)` : n_eq / delta_n / delta_psi
+  - `get_dn(odb_path)` : HF ODB 의 **최종 Postbuckle 프레임**(get_hf 와 같은 프레임)에서 계산.
+    예외를 던지지 않고 `{'ok': False, 'reason': ...}` 를 돌려준다.
+  - `format_dn_line(dn)` : `DN:` 한 줄 포맷. 실패면 `DN:FAIL reason=<ASCII 토큰>`.
+  - `main()` 의 HF / HFONLY 성공 경로에 `print(format_dn_line(get_dn(args[-2])))` 1줄씩.
+
+[RESULTS 계약 보존 방식] 이것이 이 절의 핵심 제약이다. `RESULTS:lf1,lf2,lf3,hf` 는 아카이빙/CSV/MFBO
+파싱의 기준선이므로 **바이트 동일**해야 한다. 그래서
+  1. delta_n 은 RESULTS 줄에 **절대 넣지 않고** 별도 줄로만 낸다:
+     `DN:dn_deg=<v> dn_psi_deg=<v> n_eq_x=<v> n_eq_y=<v> n_eq_z=<v> n_elem=<n> area_ref=<v>`
+     (값은 `%.10e`, n_elem 은 `%d`, area_ref 는 요소면적 합 = 변형 후 총면적)
+  2. DN 계산이 실패해도(ODB/프레임 없음, 면적 0, 요소 없음) `DN:FAIL reason=..` 한 줄만 내고
+     `extraction.txt` 기록과 `RESULTS:` 출력은 **평소 경로 그대로** 진행한다(eval 을 죽이지 않는다).
+  3. `run_abaqus.py` 의 eval 출력 필터에 **함정**이 있었다: 기존 루프는 `"FAIL" in line` 이면 런 전체를
+     실패로 뒤집는다. `DN:FAIL reason=..` 는 그 부분문자열을 포함하므로 그대로 두면 **성공한 HF 런이
+     DN 실패 때문에 RESULTS:FAIL 로 뒤집힌다**. 그래서 DN 줄 수집을 FAIL 검사 **앞**에 두고 `continue` 한다.
+  4. `_archive_dn(x_c, d_c, dn_lines)` : `_archive_result`('w') **뒤**에 점별 txt 에만 append.
+     `all_results.csv` 는 이 함수에서 **열지 않는다**(헤더 1회 규칙 - 열 추가는 기존 행을 어긋나게 한다).
+     DN 줄이 없으면 조용히 넘기지 않고 `[DN] !!! 줄 없음` 경고 1줄, DN:FAIL 이면 `dn_deg=nan` + `dn_note`.
+
+[검증 - Abaqus 없이, 실제 실행] 신규 하네스 `code/dn_stats_stub.py` **46/46 OK**. 가짜 odbAccess +
+가짜 ODB 로 `eval_abaqus.main()` 을 HFONLY 모드로 **실제로 돌려**(get_hf 포함 전 경로) DN 줄을 파싱한다.
+  - (a) 완전 평판: `dn_deg=0.0000000000e+00`, n_eq=(0,0,1), n_elem=64 -> rel < 1e-9 OK
+  - (b) 균일 기울기 alpha=5deg (z = x tan a): `dn_deg=5.0000000000e+00` (rel < 1e-9),
+        `dn_psi_deg=1.8000000000e+02`(= 기울기 방위), n_eq=(-sin5, 0, cos5) 전 성분 일치.
+        (b*) 45deg 방위 기울기 -> dn_psi = -135deg. (b**) 뒤집힌 요소 2개 -> dn 여전히 5.0.
+  - (c) 대칭 사인파 주름(평균경사 0, 한 주기): `dn_deg=0` (rel < 1e-9) **이지만 같은 형상에서
+        `hf=6.846e-04`**, area_ref 16.0037 > 평면 16.0. -> delta_n 은 일관 기울기만 잡고 국소 주름은
+        상쇄한다는 직접 증거. hf 와 delta_n 은 서로 다른 것을 본다.
+  - (d) 비대칭 원뿔형 처짐(h=0.02, R=2.0, 정점 +x 0.3): `dn_deg=1.4528e-02` 로 0 < dn < alpha_max
+        (= atan(0.02/2) = 0.5729 deg) 안에 들어온다(국소 경사는 크지만 일관 기울기는 작다).
+  - (e) DN:FAIL 격리: hf 는 성공하고 DN 만 실패하는 ODB(5절점 connectivity)에서 `DN:FAIL
+        reason=no_supported_element` 한 줄 + `RESULTS:nan,nan,nan,1e-12` + extraction.txt 4필드 정상.
+        즉 DN 실패가 RESULTS 경로를 죽이지 않는다.
+  - (f) **RESULTS 회귀**: `git show HEAD:code/eval_abaqus.py` 판과 새 판의 `RESULTS:` 줄과
+        `extraction.txt` 바이트를 평판/기울기/사인/원뿔 4형상에서 대조 -> **전부 바이트 동일**.
+  - (g) `run_abaqus.py` 배선: `_archive_dn` 소스를 떼어 실제 실행. dn_deg/dn_psi_deg/dn_n_eq_x/y/z/
+        dn_n_elem/dn_area_ref append, 기존 key(x_c/d_c/fidelity/hf/slope_*) 보존, `all_results.csv`
+        **바이트 불변**, `_cols` 18열 블록 불변, DN 수집이 FAIL 검사보다 앞, 호출이 _archive_result 뒤.
+        DN 줄 없음 -> `[DN] !!!` 경고 1줄(txt 불변), DN:FAIL -> `dn_deg=nan` + `dn_note=...`.
+  - 기존 검사: `py_compile` OK · `test_seed_path` **49/49** · `check_model_consistency` **PASS** ·
+    `static_leak_check` 이상 없음. `torque_stats.py` / `slope_stats.py` / `aba_imperfection.py` /
+    `base_state_probe.py` / `seeds/` / `eval_abaqus_avg.py` 는 무수정.
+
+[기대효과]
+  1. 문헌과 **같은 정의의 숫자**를 우리 ODB 에서 낼 수 있다. 기준선: delta_n ~ 6~8 deg 면 문헌 수준의
+     지향 오차이고, 그 크기면 "guidance 보상 가능" 범주다. 1 deg 미만이면 우리 형상은 문헌보다
+     지향 안정적이라고 말할 수 있다(단, 경계조건 차이는 캐비앳).
+  2. delta_n 과 hf 의 **분리**가 목적함수 설계에 쓸모 있다: hf 는 국소 주름(면적 손실)을, delta_n 은
+     전체 지향 바이어스를 본다. 둘이 같이 크면 형상이 기울었고, hf 만 크면 주름만 많다.
+  3. delta_psi 는 기울기 **방향**을 주므로 어느 쪽 케이블/앵커가 비대칭인지 진단할 수 있다.
+[한계] 실제 Abaqus 실런은 이 환경에서 돌리지 않았다(하네스는 배선/해석앵커 검증). 실런 시 확인할 것:
+  (a) DN 줄이 HF 성공 런마다 정확히 1줄 나오는지(run_abaqus 로그에 `[DN] ... append` 1줄),
+  (b) delta_n 이 문헌 범위(6~8 deg)에 들어오는지, (c) delta_psi 가 좌굴/스냅 방향과 맞는지.
+  또한 delta_n 은 면적가중 평균이라 **국소 주름을 보지 않는다**(설계 의도). 주름 강도는 hf 와
+  slope_stats 가 담당하고, delta_n 으로 주름을 판정하면 안 된다.

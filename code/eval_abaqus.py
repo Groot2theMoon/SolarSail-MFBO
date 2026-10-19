@@ -358,6 +358,166 @@ def get_hf(odb_path):
         try: odb.close()      # P1-1
         except Exception: pass
         return None
+
+# ---------------------------------------------------------------------------
+#   [19.106] 형상 지표: 면적가중 등가법선 편차 delta_n (및 방위 delta_psi)
+#
+#   왜: 참조 문헌(Pino 2019 ASR 63(11):3675, Vulpetti 2021 ASR 67(9):2669)은 형상 영향을
+#       '등가법선 편차 delta_n' 하나로 정량화한다(6 deg / 7.774 deg). 우리 지표(lf1..lf3, hf)
+#       중 이 값만 없었다.
+#
+#   정의(이상 법선 = (0,0,1), U_SUN=(0,0,-1) 기준 면):
+#       n_eq   = normalize( sum_e A_e * n_e )      (A_e 요소 면적, n_e 요소 단위법선)
+#       delta_n   [deg] = acos( clip(n_eq . (0,0,1), -1, 1) )
+#       delta_psi [deg] = atan2(n_eq_y, n_eq_x)
+#
+#   성질: **일관 기울기(whole-surface bias)만** 잡고 국소 주름은 면적가중에서 상쇄된다.
+#         (앵커 (c): 평균경사 0 인 대칭 사인파 -> delta_n = 0. hf 는 0 이 아니다.)
+#         즉 delta_n 은 hf 와 **독립**인 정보(지향 오차)를 준다.
+#
+#   출력 계약: RESULTS:lf1,lf2,lf3,hf 4필드는 **절대 건드리지 않는다**(아카이빙/MFBO 무효화 방지).
+#             별도 한 줄  "DN:dn_deg=.. dn_psi_deg=.. n_eq_x=.. n_eq_y=.. n_eq_z=.. n_elem=.. area_ref=.."
+#             계산 불가면 "DN:FAIL reason=.." 한 줄만 내고 나머지 경로는 평소대로 진행한다.
+# ---------------------------------------------------------------------------
+DN_IDEAL_NORMAL = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+
+def _dn_fail(reason):
+    """DN 실패 사유를 ASCII 토큰 하나로 정규화(공백 금지 -> key=value 파싱 보존)."""
+    try:
+        _s = str(reason)
+    except Exception:
+        _s = 'unknown'
+    _s = ''.join(ch if (33 <= ord(ch) < 127) else '_' for ch in _s)
+    return {'ok': False, 'reason': (_s or 'unknown')}
+
+
+def _dn_node_coords(frame, instance, max_node_label):
+    """프레임의 COORD 를 (label, 3) 배열로 전개한다(calc_thrust_loss 와 같은 방식)."""
+    coord_field = frame.fieldOutputs['COORD']
+    try:
+        coord_field = coord_field.getSubset(region=instance)
+    except Exception:
+        pass
+    node_coords = np.zeros((max_node_label + 1, 3), dtype=np.float64)
+    for block in coord_field.bulkDataBlocks:
+        if block.nodeLabels is not None:
+            node_coords[block.nodeLabels] = block.data
+    return node_coords
+
+
+def calc_normal_deviation(frame, instance, connectivity, max_node_label):
+    """[19.106] 면적가중 등가법선 n_eq 와 편차 delta_n / 방위 delta_psi 를 계산한다.
+
+    기존 calc_thrust_loss 와 **같은** 요소 면적/법선 규약을 쓴다(사각형은 대각선 외적,
+    삼각형은 두 변 외적, n_z<0 은 뒤집어 +z 면을 본다). 새 함수이므로 기존 계산은 불변.
+
+    Returns dict:
+        ok=True  -> dn_deg, dn_psi_deg, n_eq_x/y/z, n_elem, area_ref
+        ok=False -> reason
+    """
+    try:
+        nc = _dn_node_coords(frame, instance, max_node_label)
+
+        areas_l = []
+        normals_l = []
+
+        quad_conns = [c for c in connectivity if len(c) == 4]
+        if quad_conns:
+            q = np.array(quad_conns, dtype=np.int32)
+            cp = np.cross(nc[q[:, 2]] - nc[q[:, 0]], nc[q[:, 3]] - nc[q[:, 1]])
+            nrm = np.linalg.norm(cp, axis=1)
+            ok = nrm > 1e-12
+            areas_l.append(0.5 * nrm[ok])
+            normals_l.append(cp[ok] / nrm[ok, np.newaxis])
+
+        tri_conns = [c for c in connectivity if len(c) == 3]
+        if tri_conns:
+            t = np.array(tri_conns, dtype=np.int32)
+            cp = np.cross(nc[t[:, 1]] - nc[t[:, 0]], nc[t[:, 2]] - nc[t[:, 0]])
+            nrm = np.linalg.norm(cp, axis=1)
+            ok = nrm > 1e-12
+            areas_l.append(0.5 * nrm[ok])
+            normals_l.append(cp[ok] / nrm[ok, np.newaxis])
+
+        if not areas_l:
+            return _dn_fail('no_supported_element')
+        areas = np.concatenate(areas_l)
+        normals = np.concatenate(normals_l)
+        if areas.size == 0:
+            return _dn_fail('zero_area_all_elements')
+
+        area_total = float(np.sum(areas))
+        if not (area_total > 0.0):
+            return _dn_fail('zero_area_total')
+
+        #   +z 면을 보도록 정렬(hf 계산의 flip_normals=True 와 동일 규약).
+        flip = normals[:, 2] < 0.0
+        if np.any(flip):
+            normals[flip] = -normals[flip]
+
+        acc = np.sum(areas[:, np.newaxis] * normals, axis=0)
+        acc_norm = float(np.linalg.norm(acc))
+        if not (acc_norm > 0.0):
+            return _dn_fail('degenerate_normal_sum')
+        n_eq = acc / acc_norm
+
+        cos_dn = float(np.clip(float(np.dot(n_eq, DN_IDEAL_NORMAL)), -1.0, 1.0))
+        dn_deg = float(np.degrees(np.arccos(cos_dn)))
+        dn_psi_deg = float(np.degrees(np.arctan2(float(n_eq[1]), float(n_eq[0]))))
+
+        return {'ok': True,
+                'dn_deg': dn_deg,
+                'dn_psi_deg': dn_psi_deg,
+                'n_eq_x': float(n_eq[0]),
+                'n_eq_y': float(n_eq[1]),
+                'n_eq_z': float(n_eq[2]),
+                'n_elem': int(areas.size),
+                'area_ref': area_total}
+    except Exception as e:
+        return _dn_fail('exception_' + type(e).__name__)
+
+
+def get_dn(odb_path):
+    """[19.106] HF ODB 의 최종 Postbuckle 프레임에서 delta_n 을 계산한다(get_hf 와 같은 프레임).
+
+    실패해도 예외를 던지지 않는다(dict(ok=False, reason=..) 반환) - 호출부가 DN:FAIL 한 줄만 낸다.
+    """
+    odb = None
+    try:
+        if not odb_path or not os.path.exists(odb_path):
+            return _dn_fail('file_not_found')
+        odb = openOdb(path=odb_path, readOnly=True)
+        if 'Step-Postbuckle' not in odb.steps:
+            return _dn_fail('step_postbuckle_missing')
+        step = odb.steps['Step-Postbuckle']
+        if not step.frames:
+            return _dn_fail('no_frame')
+        instance = odb.rootAssembly.instances['MEMBRANE-1']
+        connectivity = [e.connectivity for e in instance.elements]
+        if not connectivity:
+            return _dn_fail('no_element')
+        max_label = (instance.nodes[-1].label + 100) if instance.nodes else 100000
+        return calc_normal_deviation(step.frames[-1], instance, connectivity, max_label)
+    except Exception as e:
+        return _dn_fail('exception_' + type(e).__name__)
+    finally:
+        if odb is not None:
+            try: odb.close()
+            except Exception: pass
+
+
+def format_dn_line(dn):
+    """[19.106] DN: 한 줄 포맷. RESULTS: 4필드 줄과 **완전히 분리**된 별도 줄이다."""
+    if not dn or not dn.get('ok'):
+        _r = (dn or {}).get('reason', 'unknown')
+        return 'DN:FAIL reason=%s' % _r
+    return ('DN:dn_deg=%.10e dn_psi_deg=%.10e n_eq_x=%.10e n_eq_y=%.10e '
+            'n_eq_z=%.10e n_elem=%d area_ref=%.10e'
+            % (dn['dn_deg'], dn['dn_psi_deg'], dn['n_eq_x'], dn['n_eq_y'],
+               dn['n_eq_z'], dn['n_elem'], dn['area_ref']))
+
+
 def main():
     # 인자 파싱 루틴
     args = sys.argv
@@ -378,6 +538,8 @@ def main():
             if hf_metric is None:
                 print("HF Error: hf metric extraction failed")
                 return 1
+            #   [19.106] delta_n 은 별도 줄로만 낸다(RESULTS 4필드 계약 불변).
+            print(format_dn_line(get_dn(args[-2])))
             with open('extraction.txt', 'w') as _f:
                 _f.write("nan,nan,nan,%s" % hf_metric)
             print("RESULTS:nan,nan,nan,%s" % hf_metric)
@@ -387,6 +549,8 @@ def main():
             lf_metrics = get_lf(args[-3])
             if hf_metric is None or any(v is None for v in lf_metrics):
                 print("RESULTS:FAIL"); sys.exit(1)   # E-7: 0 은 실패를 숨긴다
+            #   [19.106] delta_n 은 별도 줄로만 낸다(RESULTS 4필드 계약 불변).
+            print(format_dn_line(get_dn(args[-2])))
             results = list(lf_metrics[:3]) + [hf_metric]
         else:
             # [2026-10-05] 인자 형식 오류를 **조용히 FAIL 로 뭉개지 않는다.**

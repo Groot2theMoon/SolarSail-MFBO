@@ -371,6 +371,64 @@ def _archive_slope(x_c, d_c):
         emit("[SLOPE] 실패(무시, 런은 계속): %s" % _e)
 
 
+def _archive_dn(x_c, d_c, dn_lines):
+    """[19.106] eval_abaqus.py 가 낸 `DN:` 줄을 점별 results txt 에 `dn_` 접두로 append.
+
+    계약 보존:
+      - `RESULTS:` 4필드(lf1,lf2,lf3,hf)는 **읽지도 쓰지도 않는다**.
+      - `all_results.csv` 는 이 함수에서 **열지 않는다**(헤더 1회 규칙 - 열 추가 금지).
+      - 실패해도 런을 죽이지 않는다(경고 1줄). DN 줄이 아예 없으면 조용히 넘기지 않고 경고한다.
+    호출 위치: _archive_result('w') **뒤** (그 함수가 txt 를 다시 쓰므로).
+    """
+    try:
+        _ptxt = os.path.join(_HERE, 'results',
+                             'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c)))
+        if not os.path.exists(_ptxt):
+            emit('[DN] !!! 점별 txt 없음(%s) - dn_ 아카이빙 생략' % os.path.basename(_ptxt))
+            return
+        _kv = {}
+        _fail = None
+        for _ln in (dn_lines or []):
+            _s = str(_ln).strip()
+            if not _s.startswith('DN:'):
+                continue
+            _body = _s[3:].strip()
+            if _body.startswith('FAIL'):
+                _fail = _body
+                continue
+            for _tok in _body.split():
+                if '=' in _tok:
+                    _k, _v = _tok.split('=', 1)
+                    _kv[_k if _k.startswith('dn_') else ('dn_' + _k)] = _v
+
+        if _fail is not None and not _kv:
+            #   계산 불가: 0 으로 뭉개지 않는다(nan + 사유). CSV 는 그대로.
+            with io.open(_ptxt, 'a', encoding='utf-8') as _f:
+                _f.write('dn_deg=nan\n')
+                _f.write('dn_note=%s\n' % _fail)
+            emit('[DN] !!! DN 계산 실패 -> dn_deg=nan (%s)' % _fail)
+            return
+
+        if not _kv:
+            emit('[DN] !!! 줄 없음 (eval_abaqus.py 출력에 DN: 이 없다) - dn_ 아카이빙 생략')
+            return
+
+        _order = ['dn_deg', 'dn_psi_deg', 'dn_n_eq_x', 'dn_n_eq_y', 'dn_n_eq_z',
+                  'dn_n_elem', 'dn_area_ref']
+        _keys = [k for k in _order if k in _kv] + sorted(k for k in _kv if k not in _order)
+        with io.open(_ptxt, 'a', encoding='utf-8') as _f:
+            for _k in _keys:
+                _f.write('%s=%s\n' % (_k, _kv[_k]))
+        emit('[DN] %d개 key(dn_ 접두)를 %s 에 append | dn_deg=%s deg dn_psi_deg=%s '
+             'n_eq=(%s,%s,%s) n_elem=%s'
+             % (len(_keys), os.path.basename(_ptxt), _kv.get('dn_deg', 'nan'),
+                _kv.get('dn_psi_deg', 'nan'), _kv.get('dn_n_eq_x', 'nan'),
+                _kv.get('dn_n_eq_y', 'nan'), _kv.get('dn_n_eq_z', 'nan'),
+                _kv.get('dn_n_elem', 'nan')))
+    except Exception as _e:
+        emit('[DN] 실패(무시, 런은 계속): %s' % _e)
+
+
 def _r13_ct_keys():
     """[§19.97] 점별 results_*.txt 에 넣을 R-13 Step-ClampTension 판독 키.
 
@@ -2129,9 +2187,16 @@ try:
     p = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     rc = p.returncode
     _eval_bad = (rc != 0)
+    #   [19.106] DN: 줄 수집. 아래 FAIL 검사가 'DN:FAIL reason=...' 의 부분문자열 'FAIL' 을
+    #     잡아 성공한 HF 런을 실패로 뒤집기 때문에, DN 줄은 **먼저** 걷어내고 continue 한다.
+    #     (RESULTS: 4필드 계약과 무관한 진단 줄이다.)
+    _dn_lines = []
     for _ln in ((p.stdout or "") + (p.stderr or "")).splitlines():
         _ls = _ln.strip()
         if not _ls:
+            continue
+        if _ls.startswith("DN:"):
+            _dn_lines.append(_ls)
             continue
         if _ls.startswith("RESULTS:FAIL") or "Target step not found" in _ls or "FAIL" in _ls:
             _eval_bad = True
@@ -2165,6 +2230,9 @@ try:
             pass
         _extra.update(_r13_ct_keys())
         _archive_result(x_c, d_c, 'HF', _rc, _extra)
+        # [19.106] DN: 줄 -> 점별 txt 에 dn_ 접두 append (_archive_result 의 'w' 뒤).
+        #     RESULTS 4필드와 all_results.csv 열 스키마는 그대로다.
+        _archive_dn(x_c, d_c, _dn_lines)
         # 성공한 HF 런에서만: HF ODB 설계점 태깅 + slope_stats 아카이빙(예외 안전).
         #     _archive_result 가 점별 txt 를 'w' 로 다시 쓰므로 **그 뒤에** append 해야 한다.
         _archive_slope(x_c, d_c)
