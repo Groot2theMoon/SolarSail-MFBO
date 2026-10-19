@@ -49,7 +49,142 @@ import time
 import traceback
 import numpy as np
 
+# ===== SETTINGS =====
+#   [§19.108] 실행/모델 설정값은 전부 이 블록에 있다. 값을 고칠 때는 여기만 본다.
+#     종전에는 CASE(147줄) / CLAMP_DC(190줄) / Top 3-tendon 스위치(201줄) 처럼 설정이 본문 중간에
+#     흩어져 있어 수정 지점을 찾기 어려웠다. 값/주석/그룹 내 정의 순서는 그대로 두고 위치만 모았다.
+#   이 아래 파생부는 이 값을 읽어 계산한다 (손대지 않는다):
+#     _CASE_TABLE -> resolve_case -> _ROUTE -> HAS_CABLES/HAS_CLAMPS/... -> _require_constant(...)
+#     CLI 파생: DISP -> CLAMP_PULL -> CLAMP_DC_EFF -> CLAMP_PERT, V_CL/V_CR, DIR_CL/DIR_CR, JOB_NAME
+#   그룹: ① CASE ② 형상/격자 ③ 재료 ④ 하중/프리텐션 ⑤ 좌굴 솔버 ⑥ 모드 판정
+#         ⑦ 스위치/진단 / misc
+# ============================================================================
+
+# ---- ① CASE 선택 ----
+CASE = 'clamp_only'
+
+# ---- ② 형상/격자 ----
+BASE = 20.0   # m
+HEIGHT = 10.0 # m
+ELEM_CODE_QUAD = S4         # 1차 셸(S4/S3). 막 계열(M3D4/M3D3)은 기각 — 재시도 금지(notes §4·§24).
+ELEM_CODE_TRI = S3          # 위와 같은 이유로 3절점 1차 셸
+
+# ---- 메쉬 종류 ----
+#   True = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201, 미러쌍 누락 0).
+#           논문 Table A.1 토폴로지 일치. 자유 메쉬와 달리 좌우대칭이라 한쪽에만 모드가 생기지 않는다.
+#   False = 자유 메쉬(약 1.82만 요소, 구 경로).
+USE_GRID_MESH = True
+_ALL_ELEM = 'All_Elem' if USE_GRID_MESH else 'All'
+
+SEED_DIV = 200.0 
+THICKNESS = 5.0e-6
+
+CLAMP_EXCL_R = 0.21   # m — 클램프 패치 노드를 경계 u3 구속에서 뺀다.
+#   CLAMP_EXCL_R > 0 인 이유: 클램프 패치 노드는 Coupling 으로 RP(u3=0)에 묶여 있어, 같은
+#   노드에 BC_Edges_Only_Z(u3=0)이 겹치면 Abaqus 가 이중 구속으로 죽는다(.dat FTL).
+#   격자 메쉬는 경계 노드가 규칙적으로 놓여 패치가 그 노드들을 확실히 잡는다(자유 메쉬는 잠복).
+#   물리 변화는 없다 — 제외 노드는 Coupling(u3=0)으로 그대로 면외 고정이다.
+#   0.0 으로 두면 검사기의 이중구속 검사(check_clamp_edge_overlap)가 실패한다. CLI 4번째 인자로 덮는다.
+
+V1 = (BASE/2.0, HEIGHT, 0.0) # Top
+V2 = (BASE, 0.0, 0.0)        # Right
+V3 = (0.0, 0.0, 0.0)         # Left
+
+# ---- ③ 재료 ----
+SIGMA0 = 700.0          # 초기응력 [Pa] 
+
+# ---- ④ 하중/프리텐션 ----
+# ---- 케이블 (mode.py / HF 와 동일) ----
+CABLE_RADIUS = 5.0e-4 # m
+CABLE_AREA = np.pi * (CABLE_RADIUS**2)
+LEN_TOP = 0.280 # m
+LEN_BOT = 0.689 # m
+CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이(HF 와 같아야 한다 — 검사기 HF↔buckle 계약).
+PRETENSION_MODE = 'corner2'
+if PRETENSION_MODE not in ('corner2', 'paper3'):
+    raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
+DISP_TOP_OVER_CORNER = 1.4142135623   # Top 케이블 구동량 = 코너 당김 x 이 값(√2)
+
+# ---- 프리텐션 (CLI 두 번째 인자로 덮어쓴다) ----
+DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점
+
+# 코너 하중 각도 [deg] — 전 케이스가 'hf'(28.6 = 우리 HF/케이블 방향).
+CORNER_ANGLE_DEG = 28.6
+
+CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c).
+
+# ---- 클램프 당김 방향 (CLAMP_DIR) ----
+#   normal(기본, HF 와 동일 부품 형상): CL=(-1,+1)/√2, CR=(+1,+1)/√2, 크기 CLAMP_PULL=d_c x DISP.
+CLAMP_DIR = 'normal'
+
+# ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
+PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
+
+PATTERN_SIGN = 1.0            # 좌굴 '하중 패턴' 부호: 1.0 = 바깥으로 더 당김
+
+DISP_MAX = 1.0e-3   # m
+
+# ---- ⑤ 좌굴 솔버 ----
+# ---- 스텝 체인: GlobalTension 하나에 꼭짓점 + 클램프를 모두 넣는다 ----
+#   Step-GlobalTension = 꼭짓점+클램프 (DEAD = base state) / Step-Buckle = 고유값 (LIVE = perturbation).
+#   클램프를 perturbation 스텝에 걸면 LIVE 로만 작용해 base state 에 기압축을 못 만든다 — 그래서
+#   GlobalTension 쪽에 있어야 한다. base_state_probe 는 이 스텝을 본다(클램프 기여 진단).
+BASE_STATE_STEP = 'Step-GlobalTension'
+
+N_EIG_BUCKLE = 10   # 추출 요청 고유값 수
+BUCKLE_VECTORS = 25   # subspace 기저 벡터 수
+BUCKLE_MAXITER = 5000
+BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
+BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
+BUCKLE_MIN_EIGEN = 0.0          # LANCZOS 전용 (음의 고유값도 보고 싶으면 -1e30 등)
+BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 넘기지 않는다)
+
+if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
+    raise RuntimeError("BUCKLE_SOLVER must be 'SUBSPACE' or 'LANCZOS' (got %r)"
+                       % (BUCKLE_SOLVER,))
+EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
+
+MODE_STABILIZATION = 0.0005   # GlobalTension 안정화 계수.
+
+# ---- ⑥ 모드 판정 ----
+# ---- 판정 임계값 (계획 §4: 3번 런 결과 뒤에 확정한다 — 지금은 잠정값) ----
+SPREAD_MIN_PCT = 2.0   # lambda 스프레드 하한(중복 근 배제).
+#   실측 대조: 클램프-프리 성공 런 26.9~31.3% (구별되는 모드) /
+#              클램프 포함 국소 중복 근 0.28% (사실상 같은 값 100개).
+U3_FRAC_MIN = 0.10     # 모드의 면외 비율 하한(면내 모드 배제). O(1) vs O(1e-16).
+#   buckle_mode_report.U3_FRAC_MIN 과 같은 값이어야 한다(형상 도구와 게이트가 같은 기준).
+CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거리 안이면 '압축영역 분포' 로 본다.
+
+# ---- ⑦ 스위치/진단 ----
+CLEAN_PERTURBATION = True
+
+# ---- [§19.107] PULL_TOP: Top 꼭짓점도 케이블 방향 지정변위를 받는다 (HF §19.105 와 같은 의미) ----
+#   False(기본) = 종전 그대로 Top 완전 고정. BC/스텝 호출이 종전과 **바이트 동일**해야 한다
+#     (.inp 재현성 최우선 - 기존 좌굴 런을 다시 돌려도 같은 덱이 나와야 한다).
+#   True = Top 을 3-tendon 상태로 만든다: BC_Anchor_Top 에서 u1/u2 를 떼고 u3+회전만 남긴 뒤
+#     Right/Left 와 **같은 규칙**(u1 = v*cos, u2 = -v*sin)으로 케이블 방향 변위를 준다.
+#   왜 필요한가: HF 가 PULL_TOP=True(3-tendon)로 도는데 모드 소스가 Top 고정(2-tendon)이면
+#     좌굴모드가 **다른 프리스트레스 상태**의 것이 되어 임퍼펙션 방향이 틀어진다
+#     (§19.104 에서 합성표로 고친 것과 같은 종류의 조용한 오염).
+#   제어는 **이 상수 하나**다(환경변수 오버라이드 없음): 직접 편집 -> 실행 -> False 복원.
+#     run_abaqus.py 의 PULL_TOP 과 같은 방식이다. 두 변형을 비교할 때도 이 줄만 고친다.
+PULL_TOP = False   # True = Top 꼭짓점도 케이블 방향 프리텐션 (Galhofo 3-tendon). 실행 후 반드시 False 복원.
+
+# Top 케이블 방향 코사인.
+#   근거(코드): 아래 build_model 의 `connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))`
+#     -> 케이블 축이 +y 다(= (u1,u2) = (0,+1)). Right/Left 와 **같은 대입식**을 쓰기 위해
+#     (u1 = v*cos, u2 = -v*sin) 규약에 맞춘 값이 COS=0.0, SIN=-1.0 이다(즉 u2 = +v).
+#     HF §19.105 의 top_cos/top_sin 과 같은 값/같은 규약이다.
+TOP_PULL_COS = 0.0
+TOP_PULL_SIN = -1.0
+
+# ---- misc (어느 그룹에도 안 들어가는 이름/경로/병렬 설정) ----
 TAG = '[run_abaqus_buckle]'
+RUN_DIR_NAME = "buckle"
+NUMCPUS = 4
+
+MODEL_PREFIX = 'SailModel_Buckle'
+INSTANCE_NAME = 'MEMBRANE-1'
 
 # ---- 스크립트 위치(_HERE) / Abaqus 작업 디렉터리(_RUN) 결정 ----
 # 주의: `abaqus cae noGUI=script.py` 로 실행하면 스크립트가 execfile 로 로드되어
@@ -83,8 +218,6 @@ _HERE = _resolve_here()
 #   HF/LF 산출물(run_abaqus_new.py -> code/aba)과 섞으면 두 가지가 조용히 망가진다:
 #     (a) *IMPERFECTION, FILE=... 이 stale .fil 을 읽을 수 있다
 #     (b) .dat/.msg/.sta 진단 로그가 어느 해석 것인지 구분되지 않는다
-RUN_DIR_NAME = "buckle"
-NUMCPUS = 4
 _RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_RUN)
@@ -95,56 +228,8 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import aba_grid_mesh                                                           
 
-MODEL_PREFIX = 'SailModel_Buckle'
-INSTANCE_NAME = 'MEMBRANE-1'
-
-BASE = 20.0   # m
-HEIGHT = 10.0 # m
-ELEM_CODE_QUAD = S4         # 1차 셸(S4/S3). 막 계열(M3D4/M3D3)은 기각 — 재시도 금지(notes §4·§24).
-ELEM_CODE_TRI = S3          # 위와 같은 이유로 3절점 1차 셸
-
-# ---- 메쉬 종류 ----
-#   True = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201, 미러쌍 누락 0).
-#           논문 Table A.1 토폴로지 일치. 자유 메쉬와 달리 좌우대칭이라 한쪽에만 모드가 생기지 않는다.
-#   False = 자유 메쉬(약 1.82만 요소, 구 경로).
-USE_GRID_MESH = True
-_ALL_ELEM = 'All_Elem' if USE_GRID_MESH else 'All'
-
-SEED_DIV = 200.0 
-THICKNESS = 5.0e-6
-
-# ---- 케이블 (mode.py / HF 와 동일) ----
-CABLE_RADIUS = 5.0e-4 # m
-CABLE_AREA = np.pi * (CABLE_RADIUS**2)
-LEN_TOP = 0.280 # m
-LEN_BOT = 0.689 # m
-CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이(HF 와 같아야 한다 — 검사기 HF↔buckle 계약).
-PRETENSION_MODE = 'corner2'
-if PRETENSION_MODE not in ('corner2', 'paper3'):
-    raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
-DISP_TOP_OVER_CORNER = 1.4142135623   # Top 케이블 구동량 = 코너 당김 x 이 값(√2)
-
-CLAMP_EXCL_R = 0.21   # m — 클램프 패치 노드를 경계 u3 구속에서 뺀다.
-#   CLAMP_EXCL_R > 0 인 이유: 클램프 패치 노드는 Coupling 으로 RP(u3=0)에 묶여 있어, 같은
-#   노드에 BC_Edges_Only_Z(u3=0)이 겹치면 Abaqus 가 이중 구속으로 죽는다(.dat FTL).
-#   격자 메쉬는 경계 노드가 규칙적으로 놓여 패치가 그 노드들을 확실히 잡는다(자유 메쉬는 잠복).
-#   물리 변화는 없다 — 제외 노드는 Coupling(u3=0)으로 그대로 면외 고정이다.
-#   0.0 으로 두면 검사기의 이중구속 검사(check_clamp_edge_overlap)가 실패한다. CLI 4번째 인자로 덮는다.
-
-V1 = (BASE/2.0, HEIGHT, 0.0) # Top
-V2 = (BASE, 0.0, 0.0)        # Right
-V3 = (0.0, 0.0, 0.0)         # Left
-
 def clamp_coord_L(x): return (10-10*x, 10-10*x, 0)
 def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
-
-# ---- 프리텐션 (CLI 두 번째 인자로 덮어쓴다) ----
-DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점
-
-# 코너 하중 각도 [deg] — 전 케이스가 'hf'(28.6 = 우리 HF/케이블 방향).
-CORNER_ANGLE_DEG = 28.6
-
-CASE = 'clamp_only'
 
 _CASE_TABLE = {
     #  seed       : 꼭짓점 케이블만(클램프 하드웨어 0). base=코너 전량 DISP(케이블 끝단 구동),
@@ -184,72 +269,10 @@ def _require_constant(name, have, want):
 _require_constant('PRETENSION_MODE', PRETENSION_MODE, 'corner2')
 _require_constant('CORNER_ANGLE_DEG', CORNER_ANGLE_DEG, 28.6)
 
-CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c).
-
-CLEAN_PERTURBATION = True
-
-# ---- [§19.107] PULL_TOP: Top 꼭짓점도 케이블 방향 지정변위를 받는다 (HF §19.105 와 같은 의미) ----
-#   False(기본) = 종전 그대로 Top 완전 고정. BC/스텝 호출이 종전과 **바이트 동일**해야 한다
-#     (.inp 재현성 최우선 - 기존 좌굴 런을 다시 돌려도 같은 덱이 나와야 한다).
-#   True = Top 을 3-tendon 상태로 만든다: BC_Anchor_Top 에서 u1/u2 를 떼고 u3+회전만 남긴 뒤
-#     Right/Left 와 **같은 규칙**(u1 = v*cos, u2 = -v*sin)으로 케이블 방향 변위를 준다.
-#   왜 필요한가: HF 가 PULL_TOP=True(3-tendon)로 도는데 모드 소스가 Top 고정(2-tendon)이면
-#     좌굴모드가 **다른 프리스트레스 상태**의 것이 되어 임퍼펙션 방향이 틀어진다
-#     (§19.104 에서 합성표로 고친 것과 같은 종류의 조용한 오염).
-#   제어는 **이 상수 하나**다(환경변수 오버라이드 없음): 직접 편집 -> 실행 -> False 복원.
-#     run_abaqus.py 의 PULL_TOP 과 같은 방식이다. 두 변형을 비교할 때도 이 줄만 고친다.
-PULL_TOP = False   # True = Top 꼭짓점도 케이블 방향 프리텐션 (Galhofo 3-tendon). 실행 후 반드시 False 복원.
-
-# Top 케이블 방향 코사인.
-#   근거(코드): 아래 build_model 의 `connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))`
-#     -> 케이블 축이 +y 다(= (u1,u2) = (0,+1)). Right/Left 와 **같은 대입식**을 쓰기 위해
-#     (u1 = v*cos, u2 = -v*sin) 규약에 맞춘 값이 COS=0.0, SIN=-1.0 이다(즉 u2 = +v).
-#     HF §19.105 의 top_cos/top_sin 과 같은 값/같은 규약이다.
-TOP_PULL_COS = 0.0
-TOP_PULL_SIN = -1.0
-
-# ---- 클램프 당김 방향 (CLAMP_DIR) ----
-#   normal(기본, HF 와 동일 부품 형상): CL=(-1,+1)/√2, CR=(+1,+1)/√2, 크기 CLAMP_PULL=d_c x DISP.
-CLAMP_DIR = 'normal'
 if HAS_CLAMP_CABLES and not HAS_CLAMPS:
     raise RuntimeError("CASE=%r: clamp_cable=True 는 clamps=True 를 요구합니다 — RP_CL/CR 패치가 "
                        "Tie 앵커다." % (CASE,))
 
-
-# ---- 스텝 체인: GlobalTension 하나에 꼭짓점 + 클램프를 모두 넣는다 ----
-#   Step-GlobalTension = 꼭짓점+클램프 (DEAD = base state) / Step-Buckle = 고유값 (LIVE = perturbation).
-#   클램프를 perturbation 스텝에 걸면 LIVE 로만 작용해 base state 에 기압축을 못 만든다 — 그래서
-#   GlobalTension 쪽에 있어야 한다. base_state_probe 는 이 스텝을 본다(클램프 기여 진단).
-BASE_STATE_STEP = 'Step-GlobalTension'
-
-# ---- 판정 임계값 (계획 §4: 3번 런 결과 뒤에 확정한다 — 지금은 잠정값) ----
-SPREAD_MIN_PCT = 2.0   # lambda 스프레드 하한(중복 근 배제).
-#   실측 대조: 클램프-프리 성공 런 26.9~31.3% (구별되는 모드) /
-#              클램프 포함 국소 중복 근 0.28% (사실상 같은 값 100개).
-U3_FRAC_MIN = 0.10     # 모드의 면외 비율 하한(면내 모드 배제). O(1) vs O(1e-16).
-#   buckle_mode_report.U3_FRAC_MIN 과 같은 값이어야 한다(형상 도구와 게이트가 같은 기준).
-CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거리 안이면 '압축영역 분포' 로 본다.
-
-# ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
-PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
-
-N_EIG_BUCKLE = 10   # 추출 요청 고유값 수
-BUCKLE_VECTORS = 25   # subspace 기저 벡터 수
-BUCKLE_MAXITER = 5000
-BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
-BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
-BUCKLE_MIN_EIGEN = 0.0          # LANCZOS 전용 (음의 고유값도 보고 싶으면 -1e30 등)
-BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 넘기지 않는다)
-
-if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
-    raise RuntimeError("BUCKLE_SOLVER must be 'SUBSPACE' or 'LANCZOS' (got %r)"
-                       % (BUCKLE_SOLVER,))
-EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
-
-MODE_STABILIZATION = 0.0005   # GlobalTension 안정화 계수.
-PATTERN_SIGN = 1.0            # 좌굴 '하중 패턴' 부호: 1.0 = 바깥으로 더 당김
-
-SIGMA0 = 700.0          # 초기응력 [Pa] 
 # 인자 — 한 번에 한 케이스만(x_c [disp_m]). 스윕 없음.
 #   러너가 자기 플래그와 그 값을 앞에 붙이고 셸의 '--' 는 전달되지 않는다.
 _LAUNCHER_WORDS = ('abaqus', 'cae', 'cae.exe', 'abq', 'standard', 'explicit')
@@ -334,7 +357,6 @@ if DISP < 0.0:
     raise RuntimeError('disp_m must be >= 0 (got %r).' % (DISP,))
 # 상한 가드. DISP 는 이 모델의 크기(20 m)에 비해 작아야 한다.
 #   정상 운용점은 DISP_GLOBAL = 1.8e-05 m (18 um), 논문 좌굴모델도 모서리 5e-4 m / 정점 1e-3 m 다.
-DISP_MAX = 1.0e-3   # m
 if DISP > DISP_MAX:
     raise RuntimeError(
         'disp_m=%r m is above the sanity cap DISP_MAX=%r m. '
@@ -601,8 +623,6 @@ def connect_cable(a, name, part, sail_corner, vector_dir, radius=1e-4, cable_len
     node_end = inst.nodes.getByBoundingSphere(center=end_coord, radius=radius)
     region_end = regionToolset.Region(nodes=node_end)
     return region_start, region_end
-
-
 
 def build_model(disp):
     global my_model

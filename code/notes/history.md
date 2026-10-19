@@ -4395,3 +4395,81 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   (b) 세 케이블 RF 균등성, (c) MAC 이 0.9 근처로 애매하게 나오는 모드가 있는지(그때는 λ 스프레드와
   모드 형상(`buckle_mode_report.py`)을 함께 본다). ODB 입력 경로는 odbAccess 가 없어 미검증이고,
   `.dat` 에는 보통 고유벡터가 없으므로 MAC 은 ODB 또는 모드표 경로로만 얻어진다.
+
+#### §19.108 세팅/상수를 파일 상단 SETTINGS 블록으로 집중 (동작·덱 바이트 동일, 2026-10-19)
+
+[왜] `run_abaqus_buckle.py` 의 설정값이 본문 중간에 흩어져 있었다 — `CASE` 147줄, `CLAMP_DC` 187줄,
+  `PULL_TOP` 201줄, `DISP_MAX` 337줄. 값을 하나 바꾸려면 1200줄을 훑어야 했고, 스윕/진단 런마다
+  손대는 지점이 달라 오편집 위험이 있었다(§19.107 에서도 `PULL_TOP` 한 줄을 찾는 데 10줄짜리
+  주석 블록이 필요했다). "어디를 고치면 되는가" 를 파일 하나의 한 블록으로 답할 수 있어야 한다.
+
+[무엇] 값·주석·**그룹 내 정의 순서를 그대로** 두고 위치만 옮겼다(값 변경 0건, 리터럴 승격 0건).
+  - 블록: import 직후 `# ===== SETTINGS =====` (52~187줄). 그룹 ① CASE ② 형상/격자 ③ 재료
+    ④ 하중/프리텐션 ⑤ 좌굴 솔버 ⑥ 모드 판정 ⑦ 스위치/진단 + misc(이름/경로/병렬).
+  - **파생 순서 보존**: `CASE` 만 블록으로 올리고 `_CASE_TABLE -> resolve_case -> _ROUTE ->
+    HAS_CABLES/... -> _require_constant(...)` 는 종전 위치(파생부)에 그대로 뒀다. 정의 전 참조가
+    생기지 않게 하기 위해서다. 함수 정의(`clamp_coord_L/R`, `_resolve_here`, `parse_args`,
+    `build_model`, `run_job_safely`, `report_job`)는 하나도 옮기지 않았다.
+  - `CLAMP_DIR` 은 상수 한 줄만 올리고, 그것을 쓰는 `if HAS_CLAMP_CABLES and not HAS_CLAMPS: raise`
+    검사는 파생부에 남겼다(`HAS_*` 가 `_ROUTE` 파생이라 블록 안으로 넣으면 정의 전 참조).
+  - `TOP_PULL_COS/SIN` 은 `PULL_TOP` **바로 뒤**에 붙여 둔다 — `buckle_pull_top_stub.py` 의
+    `const_block()` 이 `PULL_TOP = ...` ~ `TOP_PULL_SIN = ...` **텍스트 구간**을 떼어 `os` 없이
+    exec 하기 때문이다(사이에 다른 실행문이 끼면 그 검사가 조용히 None 이 된다).
+  - 하단 실행부(제출/대기/판정/ledger)는 손대지 않았다. `_LAUNCHER_WORDS`, `_JOB_ARTIFACTS`,
+    `_COMPLETION_STRINGS` 는 설정이 아니라 구현 상수라 종전 위치에 남겼다.
+  - 인라인 리터럴은 **승격하지 않았다**(아래 목록). 코드 중간의 `0.2`(꼭짓점 패치 반경),
+    `2.5e9/0.34`(막 E/nu), `1e-8`(minInc) 같은 값은 의미가 호출 문맥에 묶여 있어 이름을 붙이면
+    오히려 오해를 부른다.
+
+[검증 - 실제 실행, 리팩터 전/후 비교]
+  - `python3 -m py_compile run_abaqus_buckle.py` OK.
+  - **상수 대조**(핵심): 모듈 head(실행 블록 앞)를 스텁(`buckle_stub_harness._stub_modules`)으로
+    exec 해 `{name: repr(value)}` 를 전/후 추출 — **87개, 키 집합·값 완전 동일**
+    (`sorted(a)==sorted(b)`, `only-pre []`, `only-post []`, `value diffs []`). 모듈 수준 콘솔
+    출력(`_HERE`/`_RUN`/argv/CASE/d_c/x_c/DIR/pert/solver 11줄)도 `diff` **0바이트**.
+  - **BC trace + 콘솔 로그 회귀**: `python3 buckle_pull_top_stub.py` 58/58 PASS 이고 하네스 로그가
+    전/후 **sha256 동일**(`e5304601…36c9`). 하네스는 기저를 `PULL_TOP` 도입 커밋의 **부모 소스**로
+    자동 선택하므로(`baseline_source()`), 이 동일성은 "종전 2-tendon 동작 불변" 의 증거다
+    (seed 10호출 / clamp_only 20호출 trace 동일).
+  - **전체 배선**: `buckle_stub_harness.py clamp_only 0.5` / `seed 0.5` 를 전 소스와 후 소스로 각각
+    실행 -> 로그 58줄 / 45줄 **sha256 동일**. mdb 호출 순서·BC·스텝·노드셋·잡이름이 전부 같다.
+  - 기존 게이트: `buckle_compare.py selftest` 9/9 · `test_seed_path.py` 49/49 ·
+    `check_model_consistency.py` PASS · `static_leak_check.py` 이상 없음(4 파일).
+  - **삭제 0 검사**: 전/후 비공백 줄 multiset 비교 -> `LOST 0`, `GAINED 18`(전부 새 헤더/그룹 주석).
+    즉 옮긴 줄은 텍스트가 한 글자도 바뀌지 않았다.
+
+[덱 바이트 동일의 근거와 한계] 이 환경에는 Abaqus 라이선스가 없어 `.inp` 를 직접 생성하지 못했다.
+  덱 텍스트를 만드는 것은 `build_model()` 의 mdb 호출열이고, (a) 그 호출열이 두 케이스 모두
+  바이트 동일하고 (b) `JOB_NAME`(덱 파일명 겸 잡 이름)이 동일하며 (c) 입력이 되는 상수 87개가
+  동일하다 — 세 축이 모두 같으므로 덱도 같다. 실런에서 `.inp` 를 diff 하려면 리팩터 전 커밋과
+  같은 인자로 각각 `job.writeInput()` 만 수행해 비교하면 된다(제출 없이).
+
+[남긴 인라인 리터럴 - 승격 안 함, 파일:줄]
+  - 231/232 `10` x2 (clamp_coord_L/R): 클램프 좌표 기준 = BASE/2. BASE 를 바꾸면 같이 고쳐야 함.
+  - 270 `28.6`: `_require_constant('CORNER_ANGLE_DEG', …, 28.6)` 의 기대값(상수와 중복).
+  - 310 `1e-3`: 사용법 문자열 안의 예시값.
+  - 351/354 `0.03` / `0.95`: x_c 안전대역(경고 조건 + 경고 문구에 중복).
+  - 363 `20` / `10` / `5e-6` / `1.8e-05`: 상한 가드 오류 메시지 본문(BASE/HEIGHT/THICKNESS/DISP_GLOBAL 중복).
+  - 377 `28.6`: `angle_deg` — CORNER_ANGLE_DEG 와 별개로 다시 적힌 값(cos/sin 계산용).
+  - 383 `2.0 ** 0.5`: `_s2` = √2 (클램프 단위벡터).
+  - 391/392 `5.0e-5`: alpha 표기 기준 당김(로그용, `DISP/5.0e-5`).
+  - 435 `1.0`: `time.sleep(1.0)` — 잡 완료 후 대기.
+  - 600 `1e-4`: `connect_cable(..., radius=1e-4)` 기본 케이블 반경.
+  - 636 `1420.0`: 막 밀도. 637 `2.5e9` / `0.34`: 막 E / nu. 641 `62.0e9` / `0.36`: 케이블 E / nu.
+    (§③ 재료 그룹에 이름있는 상수가 없는 이유 — 재료는 테이블 리터럴로 들어간다.)
+  - 687 `0.1`: `seedPart(deviationFactor=0.1)`.
+  - 696~698 `0.2`: 꼭짓점 강체패치 반경. 704/705 `0.21`: 클램프 패치 반경
+    (CLAMP_EXCL_R 과 값이 같지만 **별개 의미** — 하나로 묶으면 안 된다).
+  - 774 `0.05`: `adaptiveDampingRatio`. 775 `0.0001` / `1e-8` / `1000`: initialInc / minInc / maxNumInc.
+  - 1008 `1000.0` / 1020 `1.0e5` / 1029 `1.0e6`: 잡이름 태그 스케일. 1009 `100`: `_f_tag`.
+  - 1128 `100.0`: 스프레드 백분율. 1148 `8`: 모드표 상한(`min(8, N_EIG_BUCKLE)`).
+  - 1160 `-3` / 1167 `%.3f`: 로그 포맷 폭.
+
+[실행]
+  `cd code && python3 -m py_compile run_abaqus_buckle.py`
+  `python3 buckle_pull_top_stub.py`                       # 58/58, 기저=도입 커밋 부모
+  `python3 buckle_stub_harness.py clamp_only 0.5`         # 전체 mdb 호출열
+  `python3 buckle_stub_harness.py seed 0.5`
+  `python3 buckle_compare.py selftest` / `python3 test_seed_path.py` /
+  `python3 check_model_consistency.py` / `python3 static_leak_check.py`
+  값 고치기: 이제 `run_abaqus_buckle.py` 의 `# ===== SETTINGS =====` 블록만 본다.
