@@ -18,8 +18,10 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     clamp_excl_r_m 클램프 반경 내 노드를 면외 구속에서 제외 [m]. 생략 = CLAMP_EXCL_R(0.21).
 
 [§19.107] Top 꼭짓점도 케이블 방향으로 당기는 3-tendon 모드 소스
-    기본은 Top 완전 고정(2-tendon, 종전과 바이트 동일). `SOLARSAIL_PULL_TOP=1` 로 실행하면
+    기본은 Top 완전 고정(2-tendon, 종전과 바이트 동일). 아래 상수 `PULL_TOP` 을 True 로 편집해 실행하면
     Top 의 u1/u2 를 풀고 프리텐션 변위(DISP, +y)를 준다 -> HF 의 PULL_TOP=True(§19.105) base state 와 정합.
+    제어는 **상수 단일 경로**다(환경변수 없음): True 로 편집 -> 실행 -> False 로 복원.
+    True 런은 잡 이름이 `_3t` 로 갈리므로 두 변형의 산출물이 같은 디렉터리에 공존하고,
     두 런의 모드가 같은 것인지는 `python3 buckle_compare.py <A> <B> <n_modes>` (MAC) 로 판정한다.
 
 산출물 (code/buckle/)  <job>.odb/.dat/.msg/.sta/.fil/... + <job>.diag.txt. 고유값 표는 .dat 의
@@ -194,23 +196,9 @@ CLEAN_PERTURBATION = True
 #   왜 필요한가: HF 가 PULL_TOP=True(3-tendon)로 도는데 모드 소스가 Top 고정(2-tendon)이면
 #     좌굴모드가 **다른 프리스트레스 상태**의 것이 되어 임퍼펙션 방향이 틀어진다
 #     (§19.104 에서 합성표로 고친 것과 같은 종류의 조용한 오염).
-#   env 오버라이드: SOLARSAIL_PULL_TOP=1 -> True. 소스를 편집하지 않고 두 변형을 같은 파일로
-#     돌리기 위한 것이다(비교 도구 buckle_compare.py 의 두 입력이 이렇게 나온다).
-PULL_TOP = False
-_PULL_TOP_ENV = 'SOLARSAIL_PULL_TOP'
-_PULL_TOP_SRC = 'constant'
-_pt_raw = os.environ.get(_PULL_TOP_ENV)
-if _pt_raw is not None and _pt_raw.strip() != '':
-    _pt_v = _pt_raw.strip().lower()
-    if _pt_v in ('1', 'true', 'yes', 'on', 'y'):
-        PULL_TOP, _PULL_TOP_SRC = True, 'env %s=%s' % (_PULL_TOP_ENV, _pt_raw.strip())
-    elif _pt_v in ('0', 'false', 'no', 'off', 'n'):
-        PULL_TOP, _PULL_TOP_SRC = False, 'env %s=%s' % (_PULL_TOP_ENV, _pt_raw.strip())
-    else:
-        #   조용히 무시하면 사용자는 3-tendon 으로 돌았다고 믿는다 - 해석 불가 값은 경고 1줄.
-        print("%s WARNING: %s=%r 해석 불가 -> 상수값 PULL_TOP=%s 를 쓴다 "
-              "(허용: 1/0, true/false, yes/no, on/off)"
-              % (TAG, _PULL_TOP_ENV, _pt_raw, PULL_TOP))
+#   제어는 **이 상수 하나**다(환경변수 오버라이드 없음): 직접 편집 -> 실행 -> False 복원.
+#     run_abaqus.py 의 PULL_TOP 과 같은 방식이다. 두 변형을 비교할 때도 이 줄만 고친다.
+PULL_TOP = False   # True = Top 꼭짓점도 케이블 방향 프리텐션 (Galhofo 3-tendon). 실행 후 반드시 False 복원.
 
 # Top 케이블 방향 코사인.
 #   근거(코드): 아래 build_model 의 `connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))`
@@ -886,11 +874,11 @@ def build_model(disp):
     print("%s 프리텐션 = %s : 아래 %.4e m%s"
           % (TAG, PRETENSION_MODE, disp_a, _top_note))
     if PULL_TOP:
-        #   [§19.107] 실제 적용값 + 어느 경로(상수/env)가 이겼는지를 1줄로 남긴다.
+        #   [§19.107] 실제 적용값을 1줄로 남긴다. 제어는 상수 하나뿐이므로 출처 표기는 없다.
         #     False 경로에는 이 줄이 없다(종전 로그/덱과 동일하게 유지).
-        print("%s [BC] PULL_TOP=True (%s) -> Top 꼭짓점도 케이블 방향 변위: 프리텐션 %.4e m "
+        print("%s [BC] PULL_TOP=%s (constant) -> Top 꼭짓점도 케이블 방향 변위: 프리텐션 %.4e m "
               "(u1=%.6f, u2=%.6f), BC_Anchor_Top 은 u3+회전만"
-              % (TAG, _PULL_TOP_SRC, disp_a,
+              % (TAG, PULL_TOP, disp_a,
                  disp_a * TOP_PULL_COS, -disp_a * TOP_PULL_SIN))
     # ---- 하중/구속 배선 ----
     if CLAMP_LOAD == 'base':
@@ -1171,7 +1159,7 @@ try:
         'case': CASE, 'x_c': x_c, 'DISP': DISP, 'CLAMP_DC': CLAMP_DC,
         'CLAMP_DIR': CLAMP_DIR,
         'clamp_load': CLAMP_LOAD, 'corner_dir': CORNER_DIR,
-        'PULL_TOP': PULL_TOP, 'pull_top_src': _PULL_TOP_SRC,
+        'PULL_TOP': PULL_TOP,
         'window': [N_EIG_BUCKLE, BUCKLE_VECTORS], 'PERTURBATION': PERTURBATION,
         'ELEM_TAG': ELEM_TAG, 'job': JOB_NAME,
         'sysNeg': _M.get('sysNeg'), 'reduced_to': _M.get('reduced_to'),

@@ -15,9 +15,10 @@
         - BC_Anchor_Top 에 u1/u2 **없고** u3/ur1~ur3 만 (region=A1 그대로)
         - Disp_Control_Top: Initial(u1=u2=SET, region=A1) -> GlobalTension(0, +DISP)
         - Step-Buckle: seed 는 (0, +PERTURBATION)(세 꼭짓점 동일 크기), clamp_only 는 (0,0)(코너와 동일)
-        - 로그 정확히 1줄, 실제 적용값/env 출처 포함, cp949 인코딩 가능
-  (iii) env 오버라이드: 상수 블록을 **실제로 exec** 해서 SOLARSAIL_PULL_TOP 값별 해석을 본다
-        (1/true/yes/on -> True, 0/false/no/off -> False, 미설정 -> 상수 False, 해석 불가 -> 경고+상수).
+        - 로그 정확히 1줄, 실제 적용값(프리텐션) 포함, cp949 인코딩 가능
+  (iii) 상수 단일 경로: 소스에 `SOLARSAIL_PULL_TOP` 문자열 **0회**(env 오버라이드 제거 확인),
+        상수 블록을 os/environ 없이 **실제 exec** 해서 기본값 False / 로그 0줄 / 헬퍼변수 0,
+        그리고 `PULL_TOP` 줄만 True 로 바꿔치기한 소스가 (ii) 의 True 동작과 **같은 trace** 를 내는지.
   (iv)  잡이름: False 는 종전 이름과 동일, True 는 '_3t' 가 붙고 80자 이하(두 케이스).
   (v)   방향: TOP_PULL_COS/SIN 이 소스의 Cable_Top 방향 (0,1) 과 같은 규약인지.
   (vi)  금지문자(em/en dash, 화살표, smart quote, NBSP, bullet, ellipsis) 0 - cp949 로그 안전.
@@ -202,7 +203,6 @@ def make_ns(src, pt, case, logs, grid=None):
         'PULL_TOP': pt,
         'TOP_PULL_COS': field(src, 'TOP_PULL_COS'),
         'TOP_PULL_SIN': field(src, 'TOP_PULL_SIN'),
-        '_PULL_TOP_SRC': 'constant',
     })
     if case == 'seed':
         ns.update({'CASE': 'seed', 'HAS_CABLES': True, 'HAS_CLAMPS': False,
@@ -260,6 +260,10 @@ def find_steps(rec, name):
 # ------------------------------------------------------------------ 상수 블록 exec
 CONST_A = u'PULL_TOP = False'
 CONST_B = u'TOP_PULL_SIN = -1.0'
+PULL_TOP_LINE = re.compile(r'(?m)^PULL_TOP = (True|False)[ \t]*(?:#.*)?$')
+#   소스에 남아 있으면 안 되는 env 이름. 하네스는 이 값을 **읽지 않는다**(os.environ 미참조) --
+#   여기서는 '소스에 0회' 를 세기 위한 needle 로만 쓴다.
+ENV_NEEDLE = u'SOLARSAIL' u'_PULL_TOP'
 
 
 def const_block(src):
@@ -269,29 +273,33 @@ def const_block(src):
     return src[a:b + len(CONST_B)]
 
 
-def resolve(pull_top_env):
-    """상수 블록을 실제로 실행해 (PULL_TOP, SRC, 로그) 를 얻는다."""
-    src = read_source(SRC_PATH)
+def const_value(src):
+    """소스의 `PULL_TOP = True|False` 줄을 **읽는다**(하네스가 값을 주입하지 않는다)."""
+    m = PULL_TOP_LINE.search(src)
+    return None if m is None else (m.group(1) == 'True')
+
+
+def flip_constant(src, value):
+    """사용자가 하는 편집과 같은 조작: 상수 줄 1줄만 바꿔치기한 소스를 돌려준다."""
+    return PULL_TOP_LINE.sub('PULL_TOP = %s' % ('True' if value else 'False'), src, count=1)
+
+
+def exec_const(src):
+    """상수 블록을 os/environ 없이 실제 실행 -> (PULL_TOP, logs, ns).
+
+    블록이 아직 env 를 본다면 'os' 가 없어 NameError 로 **즉시 FAIL** 한다.
+    """
     block = const_block(src)
+    if block is None:
+        return None, [], {}
     logs = []
 
     def _print(*a):
         logs.append(' '.join(str(x) for x in a))
 
-    ns = {'os': os, 'TAG': '[run_abaqus_buckle]', 'print': _print}
-    old = os.environ.get('SOLARSAIL_PULL_TOP')
-    try:
-        if pull_top_env is None:
-            os.environ.pop('SOLARSAIL_PULL_TOP', None)
-        else:
-            os.environ['SOLARSAIL_PULL_TOP'] = pull_top_env
-        exec(compile(block, '<pull_top_consts>', 'exec'), ns)
-    finally:
-        if old is None:
-            os.environ.pop('SOLARSAIL_PULL_TOP', None)
-        else:
-            os.environ['SOLARSAIL_PULL_TOP'] = old
-    return ns['PULL_TOP'], ns['_PULL_TOP_SRC'], logs
+    ns = {'TAG': '[run_abaqus_buckle]', 'print': _print}
+    exec(compile(block, '<pull_top_consts>', 'exec'), ns)
+    return ns['PULL_TOP'], logs, ns
 
 
 # ------------------------------------------------------------------ 잡이름
@@ -358,9 +366,11 @@ def main():
 
     # ---------------------------------------------------------------- (i) 회귀
     print("\n[(i)] PULL_TOP=False 회귀 (기저 %s 대비)" % ref)
+    TRACE_OLD = {}
     for case in ('seed', 'clamp_only'):
         mN, lgN, _ = run(r_new, src, False, case)
         mO, lgO, _ = run(r_old, base, False, case)
+        TRACE_OLD[case] = mO.trace()
         check('%s: BC 호출 추적 문자열 동일 (%d 호출)' % (case, len(mN.rec)),
               mN.trace() == mO.trace(),
               '\n--- new ---\n' + mN.trace() + '\n--- base ---\n' + mO.trace())
@@ -375,8 +385,10 @@ def main():
 
     # ---------------------------------------------------------------- (ii) True
     print("\n[(ii)] PULL_TOP=True")
+    TRACE_NEW, LOG_NEW = {}, {}
     for case in ('seed', 'clamp_only'):
         mT, lgT, ns = run(r_new, src, True, case)
+        TRACE_NEW[case], LOG_NEW[case] = mT.trace(), lgT
         a = find_bc(mT.rec, 'BC_Anchor_Top')
         print("         [%s] BC_Anchor_Top = %s" % (case, list(a.items())))
         check('%s: BC_Anchor_Top 에 u1/u2 없음' % case, 'u1' not in a and 'u2' not in a, a)
@@ -421,19 +433,39 @@ def main():
                   ('%.4e' % DG) in pl[0], pl[0])
         check('%s: 로그 cp949 인코딩 가능(§19.95)' % case, all(_enc_ok(s) for s in lgT), lgT)
 
-    # ---------------------------------------------------------------- (iii) env
-    print("\n[(iii)] env 오버라이드 (상수 블록 실제 실행)")
-    cases = [(None, False), ('1', True), ('0', False), ('true', True), ('TRUE', True),
-             ('yes', True), ('on', True), ('false', False), ('no', False), ('off', False)]
-    for raw, want in cases:
-        got, src_tag, logs = resolve(raw)
-        check('SOLARSAIL_PULL_TOP=%-6r -> PULL_TOP=%s' % (raw, want), got is want,
-              (got, src_tag, logs))
-        if raw is not None and want:
-            check('  출처 문자열에 env 값 포함', 'SOLARSAIL_PULL_TOP' in src_tag, src_tag)
-    got, src_tag, logs = resolve('maybe')
-    check('해석 불가 값(maybe) -> 상수 False 유지', got is False, (got, src_tag))
-    check('해석 불가 값은 경고 1줄', len(logs) == 1 and 'WARNING' in logs[0], logs)
+    # ---------------------------------------------------------------- (iii) 상수 단일 경로
+    print("\n[(iii)] 상수 단일 경로 (env 오버라이드 없음)")
+    check('소스에 %s 문자열 0회' % ENV_NEEDLE, src.count(ENV_NEEDLE) == 0, src.count(ENV_NEEDLE))
+
+    blk = const_block(src)
+    check('상수 블록 추출 (PULL_TOP = ... ~ TOP_PULL_SIN)', blk is not None)
+    check('상수 블록에 os/environ 참조 0',
+          blk is not None and 'os.' not in blk and 'environ' not in blk,
+          None if blk is None else [l for l in blk.split('\n') if 'os.' in l or 'environ' in l])
+    check('PULL_TOP 대입 정확히 1줄', len(PULL_TOP_LINE.findall(src)) == 1,
+          PULL_TOP_LINE.findall(src))
+
+    pt_c, lg_c, ns_c = exec_const(src)      # os 없이 실행: env 를 보면 NameError 로 즉시 FAIL
+    check('기본 상수 False (os 없이 exec)', pt_c is False, (pt_c, lg_c))
+    check('상수 해석은 로그 0줄', lg_c == [], lg_c)
+    check('상수 해석이 헬퍼변수를 남기지 않음(_PULL_TOP* 0)',
+          not [k for k in ns_c if k.startswith('_PULL_TOP')], sorted(ns_c))
+
+    srcT = flip_constant(src, True)
+    check('상수 줄 바꿔치기: True 로 1줄만 변경', const_value(srcT) is True and srcT != src)
+    print("         True 로 바꾼 줄: %s" % [l for l in srcT.split('\n') if l.startswith('PULL_TOP = ')])
+    for case in ('seed', 'clamp_only'):
+        mC0, _, _ = run(r_new, src, const_value(src), case)
+        check('%s: 상수 False 실행이 기저 trace 와 동일' % case,
+              mC0.trace() == TRACE_OLD[case], mC0.trace())
+        mC1, lgC1, _ = run(region_bc(srcT), srcT, const_value(srcT), case)
+        check('%s: 상수만 True 로 바꿔치기 -> (ii) trace 와 동일' % case,
+              mC1.trace() == TRACE_NEW[case],
+              '\n--- flip ---\n' + mC1.trace() + '\n--- (ii) ---\n' + TRACE_NEW[case])
+        check('%s: 상수 True 로그가 (ii) 와 동일' % case, lgC1 == LOG_NEW[case],
+              (lgC1, LOG_NEW[case]))
+        nT = job_name(srcT, const_value(srcT), case)
+        check('%s: 상수 True 잡이름이 _3t' % case, bool(nT) and nT.endswith('_3t'), nT)
 
     # ---------------------------------------------------------------- (iv) 잡이름
     print("\n[(iv)] 잡이름 (두 런이 공존해야 비교가 된다)")

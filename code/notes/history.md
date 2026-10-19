@@ -4303,6 +4303,9 @@ n_z<0 은 뒤집어 +z 면을 봄). 뒤집기는 필수다: connectivity 가 역
 
 #### §19.107 좌굴 모드 소스에 PULL_TOP 스위치 + MAC 비교 도구 (3-tendon 모드 정합, 2026-10-19)
 
+[2026-10-19] env 오버라이드 제거 — 제어는 상수 단일 경로(사용자 요구).
+  (아래 [무엇 1] 1 번의 `SOLARSAIL_PULL_TOP` 해석은 폐기됐다. 상수 `PULL_TOP` 만 고친다.)
+
 [왜] §19.105 에서 HF(`run_abaqus.py`)에 `PULL_TOP` 을 넣어 Top 꼭짓점까지 케이블 방향으로 당기는
 3-tendon 런이 가능해졌는데, **모드 소스(`run_abaqus_buckle.py`)에는 그 스위치가 없었다**. 그래서
 HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) base state 에서 뽑힌 것이 된다.
@@ -4353,13 +4356,14 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - 노드 라벨 교집합이 10 미만이면 "같은 메쉬가 아니다" 로 판정 불가 처리한다(조용한 0 금지).
 
 [검증 - Abaqus 없이, 실제 실행]
-  - `buckle_pull_top_stub.py` **59/59 OK**: 구속조건 구역(`# ---- 구속조건 ----` ~ `return model_name`)을
+  - `buckle_pull_top_stub.py` **58/58 OK** (env 검증 17개 -> 상수 검증 16개, 2026-10-19): 구속조건 구역(`# ---- 구속조건 ----` ~ `return model_name`)을
     소스에서 떼어 가짜 my_model/어셈블리로 **실행**하고 BC 호출을 기록한다.
       (i) `PULL_TOP=False` 의 BC 추적 + 콘솔 로그가 **도입 이전 소스(git HEAD)** 와 문자열 동일
           (seed 10호출 / clamp_only 20호출). `Disp_Control_Top` 없음, PULL_TOP 로그 0줄.
       (ii) True: BC_Anchor_Top 에 u1/u2 없고 u3+회전 유지 / Disp_Control_Top GlobalTension (0,+1.8e-5) /
           seed Buckle (0,+0.01), clamp_only Buckle (0,0)(코너와 동일) / 로그 1줄 + cp949 가능.
-      (iii) env: 1/true/TRUE/yes/on -> True, 0/false/no/off -> False, 미설정 -> False, 'maybe' -> False+경고 1줄.
+      (iii) 상수 단일 경로: 소스에 `SOLARSAIL_PULL_TOP` 0회 / 상수 블록을 os 없이 exec -> False, 로그 0줄 /
+          `PULL_TOP` 줄만 True 로 바꿔치기 -> (ii) 와 **같은 trace**, 잡이름 `_3t`.
       (iv) 잡이름: False 는 종전과 동일, True 는 `_3t`(71자/77자).
       (v) 방향 (0,-TOP_PULL_SIN) == 소스의 Cable_Top 방향 (0,1). (vi) 새 줄 37개 금지문자 0.
   - `buckle_compare.py selftest` **9/9**: 같은 벡터 MAC=1.0 / 직교 0.0 / 부호반전 1.0 / 스케일 2.5배 1.0 /
@@ -4381,8 +4385,8 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 
 [실행]
   2-tendon(기본):  `abaqus cae noGUI=run_abaqus_buckle.py -- 0.5`
-  3-tendon:        PowerShell `$env:SOLARSAIL_PULL_TOP=1; abaqus cae noGUI=run_abaqus_buckle.py -- 0.5`
-                   bash       `SOLARSAIL_PULL_TOP=1 abaqus cae noGUI=run_abaqus_buckle.py -- 0.5`
+  3-tendon:        `run_abaqus_buckle.py` 의 `PULL_TOP = False` 를 True 로 **직접 편집** -> 실행 -> False 복원
+                   (env 없음. `grep -n '^PULL_TOP = ' run_abaqus_buckle.py` 로 확인/복원)
   비교:            `abaqus python buckle_compare.py buckle\<2t>.odb buckle\<3t>.odb 4`
                    (또는 `abaqus python aba_mode_from_odb.py <odb> Step-Buckle <out.txt> 4` 후 `python3 buckle_compare.py A.txt B.txt 4`)
 
