@@ -50,10 +50,15 @@ CABLE_RHO CABLE_E CABLE_NU PATCH_R_CLAMP
 RELEASE_EDGE_U3 EDGE_SPRING_ALPHA EDGE_SPRING_K'''.split())
 NEW_NAMES = set(['CABLE_RHO', 'CABLE_E', 'CABLE_NU', 'PATCH_R_CLAMP',
                  #   [§19.111] 자유변 면외 구속 스위치 3개
-                 'RELEASE_EDGE_U3', 'EDGE_SPRING_ALPHA', 'EDGE_SPRING_K'])
+                 'RELEASE_EDGE_U3', 'EDGE_SPRING_ALPHA', 'EDGE_SPRING_K',
+                 #   [§19.112] GUARD 허용목록(스프링 요소 타입) - aba_imperfection 에서 임포트
+                 'EDGE_SPRING_ELEM_TYPES'])
 #   [§19.111] 새 기능이 만든 실행문을 식별하는 표지. 상수 재배치(§19.110) 감사와 기능 추가를
 #     구분하기 위해, B 의 '전부 동일' 판정에서 **이 이름을 포함한 문**만 차이를 허용한다.
+#     [§19.112] 요소타입 GUARD 개정도 같은 기능 계열이므로 EDGE_SPRING 표지를 함께 쓴다
+#       (임포트 문 1줄 추가가 여기 해당한다).
 NEW_FEATURE = 'RELEASE_EDGE_U3'
+NEW_FEATURE_MARKS = (NEW_FEATURE, 'EDGE_SPRING')
 D_C = 0.3    # 12조합 회귀에서 CLAMP_* 파생값 계산용(임의 고정값)
 
 FAIL = []
@@ -287,7 +292,8 @@ def main(argv):
         print('    pre %d문 / post %d문 (상수 정의 제외 %d/%d, 인라인 %d/%d회)'
               % (len(sa), len(sb), len(da), len(db), ia, ib))
         bad = [(i, x, y) for i, (x, y) in enumerate(zip(sa, sb))
-               if x != y and NEW_FEATURE not in sa_raw[i] and NEW_FEATURE not in sb_raw[i]]
+               if x != y and not any(m in sa_raw[i] or m in sb_raw[i]
+                                     for m in NEW_FEATURE_MARKS)]
         n_new = sum(1 for x, y in zip(sa, sb) if x != y) - len(bad)
         print('    차이 %d문 (그중 신규 스위치 블록 %d문 -> 허용)' % (len(bad) + n_new, n_new))
         check('실행문 개수 동일', len(sa) == len(sb), '%d vs %d' % (len(sa), len(sb)))

@@ -26,6 +26,10 @@
       (vi)  HF Postbuckle 구역은 True 에서 BC_Edges_Only_Z 재생성 0회(스프링은 model-level).
       (vii) 새 문자열 금지문자(em/en dash, 화살표, smart quote, NBSP, bullet, ellipsis) 0,
             로그 cp949 인코딩 가능.
+      (viii)[§19.112] 요소타입 GUARD - run_abaqus.py 의 GUARD 구역을 소스에서 떼어 실행한다.
+            True + Spring1(400=노드수) PASS / False + Spring1 FAIL(종전대로, 기저 구현과 문자 동일) /
+            True + Spring1 399 FAIL(개수 불일치) / False + 스프링 없음 PASS(기저와 (ok,counts,err)
+            동일 + 덱 sha256 불변). 추가로 True 인데 스프링 0, 셸 폴백(S4R) 동반, 경계노드수 미정의.
 
 사용
     python3 release_edge_u3_stub.py        # PASS/FAIL, 실패 시 EXIT=1
@@ -34,11 +38,14 @@ Abaqus/라이선스 불필요(표준 라이브러리만).
 """
 from __future__ import print_function
 
+import hashlib
 import io
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -236,6 +243,104 @@ def field(src, name):
         return float(eval(m.group(1).strip(), {'__builtins__': {}}, {}))
     except Exception:
         return None
+
+
+# ------------------------------------------------------------------ §19.112 GUARD 구역
+#   run_abaqus.py 의 제출 전 요소타입 GUARD 블록. 'return False' 가 있으므로 함수로 감싸 실행한다.
+GUARD_A = u'    # 제출 전 요소 타입 검증'
+GUARD_B = u"    # 'write' 는 덱만 생성하고 종료한다"
+
+
+def guard_region(src):
+    return region(src, GUARD_A, GUARD_B, dedent=True)
+
+
+def synthetic_deck(path, n_spring=0, n_s4=10, n_s3=2, extra_blocks=()):
+    """요소타입 GUARD 입력용 최소 덱. 요소 수를 정확히 세도록 **한 줄에 요소 1개**씩 쓴다.
+
+    실측 덱(2026-10-19 사용자 로그)과 같은 구성: T3D2 3 + S4 9900 + S3 200 + Spring1 400.
+    여기서는 규모만 줄인다(개수 판정 로직은 규모와 무관).
+    """
+    lines = ['*Heading', '** §19.112 guard probe']
+    lines.append('*Element, type=T3D2')
+    for i in range(3):
+        lines.append('%d, 1, 2' % (i + 1))
+    lines.append('*Element, type=S4')
+    for i in range(n_s4):
+        lines.append('%d, 1, 2, 3, 4' % (i + 1))
+    lines.append('*Element, type=S3')
+    for i in range(n_s3):
+        lines.append('%d, 1, 2, 3' % (i + 1))
+    for t, n in extra_blocks:
+        lines.append('*Element, type=%s' % t)
+        for i in range(n):
+            lines.append('%d, 1, 2' % (i + 1))
+    if n_spring:
+        lines.append('*Element, type=Spring1')
+        for i in range(n_spring):
+            lines.append('%d, %d' % (i + 1, 100 + i))
+    with io.open(path, 'w', encoding='utf-8') as f:
+        f.write(u'\n'.join(lines) + u'\n')
+
+
+def run_guard(src, flag, job, n_labels, verifier, cwd):
+    """GUARD 구역을 소스에서 떼어 함수로 감싸 **실행**한다(텍스트 grep 아님).
+
+    flag        RELEASE_EDGE_U3 값(True 면 상수 줄만 치환한 소스를 쓴다)
+    n_labels    _keep_labels(경계 노드 라벨) 흉내. None 이면 이름 자체를 정의하지 않는다.
+    verifier    실제 검증 함수(수정본 또는 기저본). 호출 인자를 기록해 배선까지 본다.
+    반환        (rc, logs, calls)  calls = [(args, kwargs), ...]
+    """
+    src_flag = flip_flag(src, 'True') if flag else src
+    rg = guard_region(src_flag)
+    if rg is None:
+        return None, [], []
+    logs, calls = [], []
+
+    def _verifier(*a, **k):
+        calls.append((a, k))
+        return verifier(*a, **k)
+
+    ns = {'__name__': 'guard_probe', 'RELEASE_EDGE_U3': bool(flag), 'job_name': job,
+          'ELEM_CODE_QUAD': 'S4', 'ELEM_CODE_TRI': 'S3',
+          'EDGE_SPRING_ELEM_TYPES': ('Spring1', 'SPRINGA'),
+          'verify_inp_element_types': _verifier,
+          'emit': lambda *a: logs.append(' '.join(str(x) for x in a))}
+    if n_labels is not None:
+        ns['_keep_labels'] = list(range(n_labels))
+    src_probe = 'def _guard():\n' + textwrap.indent(rg, '    ')
+    cwd0 = os.getcwd()
+    os.chdir(cwd)
+    try:
+        exec(compile(src_probe, '<guard>', 'exec'), ns)
+        rc = ns['_guard']()
+    finally:
+        os.chdir(cwd0)
+    return rc, logs, calls
+
+
+def guard_module(text, name):
+    """aba_imperfection.py 소스를 모듈처럼 exec 해서 함수만 꺼낸다(stdlib only 라 가능)."""
+    ns = {'__name__': name}
+    exec(compile(text, '<%s>' % name, 'exec'), ns)
+    return ns
+
+
+def guard_baseline_source():
+    """GUARD 개정 이전의 aba_imperfection.py. 커밋 전/후 모두 동작한다(§19.111 하네스와 같은 규칙)."""
+    rel = 'code/aba_imperfection.py'
+    head = git(['show', 'HEAD:%s' % rel])
+    if 'expect_extra_total' not in head:
+        return head, 'HEAD'
+    try:
+        hs = git(['log', '--reverse', '--format=%H', '-S', 'expect_extra_total',
+                  '--', rel]).split()
+        if hs:
+            return (git(['show', '%s^:%s' % (hs[0], rel)]),
+                    '%s^ (도입 커밋의 부모)' % hs[0][:8])
+    except Exception:
+        pass
+    return git(['show', 'HEAD~1:%s' % rel]), 'HEAD~1'
 
 
 # ------------------------------------------------------------------ 구역 실행
@@ -492,6 +597,81 @@ def main():
           ('[BC] RELEASE_EDGE_U3=True -> BC_Edges_Only_Z 제거, EdgeZ_Spring ' in hf)
           and ('[BC] RELEASE_EDGE_U3=True -> BC_Edges_Only_Z 제거, EdgeZ_Spring ' in bk))
 
+    # ---------------------------------------------------------------- (viii) §19.112 GUARD
+    print("\n[(viii)] §19.112 요소타입 GUARD - Spring1 조건부 허용 + 개수 검증")
+    sys.path.insert(0, HERE)
+    import aba_imperfection as AI
+    gbase_text, gbase_ref = guard_baseline_source()
+    BASE = guard_module(gbase_text, 'aba_imperfection_base')
+    print("         기저 검증기 = %s" % gbase_ref)
+    check('GUARD 구역 추출 (run_abaqus.py)', guard_region(hf) is not None)
+    check('기저 검증기는 개정 전 서명(allow_extra/expect_extra_total 없음)',
+          'allow_extra' not in gbase_text and 'expect_extra_total' not in gbase_text)
+    check('수정 검증기: EDGE_SPRING_ELEM_TYPES = (Spring1, SPRINGA)',
+          tuple(AI.EDGE_SPRING_ELEM_TYPES) == ('Spring1', 'SPRINGA'), AI.EDGE_SPRING_ELEM_TYPES)
+
+    gtmp = tempfile.mkdtemp(prefix='guard_')
+    job = 'GuardProbe'
+    inp = os.path.join(gtmp, job + '.inp')
+    #   (라벨, 스위치, 스프링수, 경계노드수, 추가 요소블록, 기대 rc, 오류문 조각)
+    SPECS = [
+        ('C1 True  + Spring1 400 (= 노드수) -> PASS', True, 400, 400, (), True, None),
+        ('C2 False + Spring1 400 -> FAIL (종전대로)', False, 400, 400, (), False,
+         "extra=['Spring1']"),
+        ('C3 True  + Spring1 399 (!= 노드수) -> FAIL', True, 399, 400, (), False,
+         'extra_count=399 != expected 400'),
+        ('C4 False + Spring1 0 -> PASS (기저와 바이트 동일)', False, 0, 400, (), True, None),
+        ('C5 True  + Spring1 0 -> FAIL (스프링 미생성)', True, 0, 400, (), False,
+         'extra_count=0 != expected 400'),
+        ('C6 True  + Spring1 400 + S4R 5 -> FAIL (셸 폴백은 그대로 잡힘)', True, 400, 400,
+         (('S4R', 5),), False, "extra=['S4R']"),
+        ('C7 True  + 경계노드수 미정의 -> FAIL (검증 불가 거부)', True, 400, None, (), False,
+         '경계 노드수'),
+    ]
+    try:
+        for (label, flag, n_spr, n_lab, extra, want_rc, frag) in SPECS:
+            tag = label.split()[0]
+            synthetic_deck(inp, n_spring=n_spr, extra_blocks=extra)
+            sha0 = _sha256(inp)
+            rc, logs, calls = run_guard(hf, flag, job, n_lab,
+                                        AI.verify_inp_element_types, gtmp)
+            sha1 = _sha256(inp)
+            check(label, (rc is not False) == want_rc, 'rc=%s / logs=%s' % (rc, logs))
+            if frag is not None:
+                check('  %s: 오류문에 %r' % (tag, frag), any(frag in l for l in logs), logs)
+            check('  %s: GUARD 는 덱을 고치지 않는다 (sha256 불변)' % tag, sha0 == sha1, (sha0, sha1))
+            if not flag:
+                #   False 경로 = 종전 판정 그대로: 인자가 늘지 않고 결과 문자열도 같아야 한다.
+                check('  %s: False 호출에 추가 인자 없음 (2-인자 그대로)' % tag,
+                      calls and calls[0][1] == {}, calls)
+                old = BASE['verify_inp_element_types'](inp, ('S4', 'S3'))
+                new = AI.verify_inp_element_types(inp, ('S4', 'S3'))
+                check('  %s: (ok, counts, err) 가 기저 구현과 완전 동일' % tag,
+                      old == new, (old, new))
+            else:
+                if calls:
+                    kw = calls[0][1]
+                    check('  %s: True 호출 인자 = allow_extra + expect_extra_total(노드수)' % tag,
+                          sorted(kw) == ['allow_extra', 'expect_extra_total']
+                          and tuple(kw['allow_extra']) == ('Spring1', 'SPRINGA')
+                          and kw['expect_extra_total'] == (400 if n_lab is None else n_lab), calls)
+                else:
+                    check('  %s: 검증기 호출 전에 거부 (개수 미상 -> 조용한 통과 금지)' % tag,
+                          rc is False and not calls, (rc, calls))
+                check('  %s: 로그에 허용목록 + 스위치 상태' % tag,
+                      tag != 'C7' and any('허용목록=' in l and 'Spring1' in l for l in logs)
+                      or tag == 'C7' and any('RELEASE_EDGE_U3=True' in l for l in logs), logs)
+            if not want_rc and tag != 'C7':
+                check('  %s: 실패 로그에 허용목록과 RELEASE_EDGE_U3 상태를 함께 찍는다' % tag,
+                      any('허용목록=' in l and 'RELEASE_EDGE_U3=' in l for l in logs), logs)
+            if tag == 'C1':
+                #   원인 재현: 기저 구현(2-인자)은 같은 정상 덱을 Spring1 때문에 막았다.
+                old = BASE['verify_inp_element_types'](inp, ('S4', 'S3'))
+                check('  C1: 기저 구현은 같은 덱을 오탐 (원인 재현: %s)' % old[2],
+                      old[0] is False and "extra=['Spring1']" in old[2], old)
+    finally:
+        shutil.rmtree(gtmp, ignore_errors=True)
+
     print("\nRESULT: %s (%d checks, %d fail)" % ('PASS' if not FAIL else 'FAIL', N[0], len(FAIL)))
     if FAIL:
         for f in FAIL:
@@ -506,6 +686,12 @@ def _enc_ok(s):
         return True
     except Exception:
         return False
+
+
+def _sha256(path):
+    """파일 바이트 해시 — GUARD 가 덱을 **고치지 않았는지** 증명용."""
+    with open(path, 'rb') as f:
+        return hashlib.sha256(f.read()).hexdigest()
 
 
 if __name__ == '__main__':

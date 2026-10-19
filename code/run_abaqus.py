@@ -303,6 +303,7 @@ from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: 
                               imperfection_text, report, load_mode_table,
                               build_perturbation, perturbation_report, mode_table_info,
                               verify_inp_element_types,
+                              EDGE_SPRING_ELEM_TYPES,
                               point_tag, lf_odb_name, lf_job_name,
                               seed_table_path, seed_gate, BUCKLE_SCRIPT_NAME,
                               SEED_DIR_NAME, job_completed_from_logs, value_tag)
@@ -688,13 +689,39 @@ def run_job_safely(job_name, model_name=None, stabilize=None, hard_fail=True):
     emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
     # 제출 전 요소 타입 검증 — 조용한 폴백을 Standard 토큰을 태우기 전에 잡는다(§3).
+    #   [§19.112] RELEASE_EDGE_U3=True 는 자유변 면외 구속을 to-ground 스프링으로 바꾼다 ->
+    #     덱에 노드별 `Spring1` 요소(n = All_Edges_NoClamp 노드수)가 **정당하게** 들어간다.
+    #     종전 가드는 'S' 로 시작하는 타입을 전부 셸 폴백 후보로 봤기 때문에 이 이름을
+    #     extra=['Spring1'] 으로 오탐해 잡을 제출 전에 막았다(실측 2026-10-19).
+    #     -> True 일 때만 허용목록에 추가하고 개수(경계 노드수)까지 검증한다.
+    #     False 는 추가 인자 없이 호출 = 종전 판정/문구 그대로(스프링이 있는데 False 면 종전처럼 실패).
+    _edge_kw = {}
+    _edge_n = 0
+    _allow = [ELEM_CODE_QUAD, ELEM_CODE_TRI]
+    if RELEASE_EDGE_U3:
+        #   스프링 1개 = 경계 노드 1개. 이 수를 모르면 '타입만 맞다' 로 통과시킬 수 없으므로
+        #   검증 불가를 명시하고 제출을 거부한다(조용한 통과 금지).
+        _edge_n = len(globals().get('_keep_labels') or ())
+        if _edge_n <= 0:
+            emit("!!! ERROR: RELEASE_EDGE_U3=True 인데 All_Edges_NoClamp 경계 노드수를 모른다"
+                 " (_keep_labels 미정의/빈 셋) -> 스프링 개수를 검증할 수 없어 제출하지 않는다.")
+            return False
+        _edge_kw = dict(allow_extra=EDGE_SPRING_ELEM_TYPES, expect_extra_total=_edge_n)
+        _allow += list(EDGE_SPRING_ELEM_TYPES)
+    emit("[GUARD] 허용목록=%s  RELEASE_EDGE_U3=%s%s"
+         % ([getattr(_c, 'name', _c) for _c in _allow], RELEASE_EDGE_U3,
+            ('  (스프링 기대 개수 %d = All_Edges_NoClamp 노드수)' % _edge_n)
+            if RELEASE_EDGE_U3 else '  (스프링 타입 불허)'))
     _ok_et, _cnt_et, _err_et = verify_inp_element_types(
-        job_name + '.inp', (ELEM_CODE_QUAD, ELEM_CODE_TRI))
+        job_name + '.inp', (ELEM_CODE_QUAD, ELEM_CODE_TRI), **_edge_kw)
     emit("[GUARD] .inp 요소 타입 블록: %s" % (_cnt_et or _err_et))
     if _err_et or not _ok_et:
         emit("!!! ERROR: .inp 요소 타입 검증 실패 (요청=%s): %s"
              % ((ELEM_CODE_QUAD, ELEM_CODE_TRI), _err_et or _cnt_et))
-        emit("    잡을 제출하지 않는다. ELEM_CODE_* 지정 방식을 고쳐라.")
+        emit("    허용목록=%s  RELEASE_EDGE_U3=%s  -> Spring1 은 RELEASE_EDGE_U3=True 일 때만 허용된다."
+             % ([getattr(_c, 'name', _c) for _c in _allow], RELEASE_EDGE_U3))
+        emit("    잡을 제출하지 않는다. ELEM_CODE_* 지정 방식을 고쳐라"
+             " (스프링이 정당하면 RELEASE_EDGE_U3 와 스프링 개수를 확인).")
         return False
     # 'write' 는 덱만 생성하고 종료한다(수동 패처 워크플로우).
     if RUN_MODE == 'write':

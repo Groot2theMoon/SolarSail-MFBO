@@ -4738,3 +4738,78 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   `python3 check_model_consistency.py`    # PASS
   스윕: `run_abaqus.py` / `run_abaqus_buckle.py` 의 `EDGE_SPRING_ALPHA` **한 줄만** 편집(1e-3 -> 1e-1 -> 1.0),
         `RELEASE_EDGE_U3 = True` 로 두고 실행. 끝나면 둘 다 기본값(False / 1e-3)으로 복원.
+
+#### §19.112 요소타입 GUARD 의 `Spring1` 오탐 - RELEASE_EDGE_U3=True 일 때만 조건부 허용 + 개수 검증 (2026-10-19)
+
+[증상 - 사용자 실런 2026-10-19 20:36]
+  `RELEASE_EDGE_U3=True, EDGE_SPRING_ALPHA=1e-3` 로 HF 를 돌리자 잡이 **제출 전에** 막혔다.
+  사다리 4레벨이 전부 같은 지점에서 실패:
+  ```
+  [GUARD] .inp 요소 타입 블록: {'T3D2': 3, 'S4': 9900, 'S3': 200, 'Spring1': 400}
+  !!! ERROR: .inp 요소 타입 검증 실패 (요청=(S4, S3)): extra=['Spring1'] want=['S4', 'S3']
+      잡을 제출하지 않는다. ELEM_CODE_* 지정 방식을 고쳐라.
+  ```
+  스프링 400 = `All_Edges_NoClamp` 경계 노드 400 (§19.111 로그의 `n=400` 과 일치).
+
+[원인 - GUARD 의 extra 판정이 `S` 접두사만 봤다]
+  - 위치: `code/run_abaqus.py:691` (제출 직전 블록), 공용 판정은
+    `code/aba_imperfection.py:356` `verify_inp_element_types()`.
+  - 판정식(`§3 3차 교정`)은 "요청 집합에 없는 **S/M3D/STRI 로 시작하는** 타입 = 셸 폴백" 이었다.
+    `Spring1` 은 문자 그대로 `S` 로 시작한다 -> 셸 폴백 후보로 분류 -> `extra=['Spring1']`.
+  - 즉 **덱은 정상**이었다. §19.111 이 의도적으로 넣은 to-ground 스프링(`*Element, type=Spring1`,
+    노드당 1개)을 가드가 알지 못했을 뿐이다. `ELEM_CODE_*` 를 고쳐도 고쳐지지 않는 종류의 실패다.
+
+[조치 1 - 조건부 허용(허용은 스위치가 켜졌을 때만)]
+  - `aba_imperfection.EDGE_SPRING_ELEM_TYPES = ('Spring1', 'SPRINGA')` 신설(CAE 표기 = `Spring1`,
+    고전 키워드 표기 = `SPRINGA`, 같은 스프링).
+  - `verify_inp_element_types(inp_path, want_codes, allow_extra=None, expect_extra_total=None)`:
+    `allow_extra` 는 extra 목록에서 **그 타입만** 빼고, 다른 셸/막 계열 타입은 종전대로 실패시킨다.
+    기본값이 비어 있으면 판정·문구가 **개정 전과 동일**하다(`t not in allow` 가 항상 True).
+  - `run_abaqus.py` GUARD 블록은 `RELEASE_EDGE_U3=True` 일 때만
+    `allow_extra=EDGE_SPRING_ELEM_TYPES, expect_extra_total=len(_keep_labels)` 를 넘긴다.
+    False 는 **추가 인자 없이** 호출한다 -> 스프링이 있는데 False 면 종전처럼 제출 거부(강도 유지).
+
+[조치 2 - 개수 검증(타입만 맞으면 통과, 를 없앤다)]
+  - 스프링 1개 = 경계 노드 1개이므로 `sum(counts[Spring1]) == len(All_Edges_NoClamp)` 를 요구한다.
+  - 불일치면 `extra_count=399 != expected 400 (허용=['Spring1','SPRINGA'], 실제={'Spring1': 399})`.
+    스프링이 0개(BC 대체가 조용히 실패)여도 `extra_count=0 != expected 400` 으로 잡힌다.
+  - 경계 노드수 자체를 모르면(`_keep_labels` 미정의/빈 셋) **검증 불가로 제출 거부**
+    (`!!! ERROR: ... 경계 노드수 ... 스프링 개수를 검증할 수 없어 제출하지 않는다`). 조용한 통과 금지.
+
+[조치 3 - 오류문 개선(다음 혼동 방지)]
+  - GUARD 는 판정 **전에** 허용목록과 스위치 상태를 찍는다:
+    `[GUARD] 허용목록=['S4','S3','Spring1','SPRINGA']  RELEASE_EDGE_U3=True  (스프링 기대 개수 400 = ...)`
+    / False 면 `허용목록=['S4','S3']  RELEASE_EDGE_U3=False  (스프링 타입 불허)`.
+  - 실패 시에도 `허용목록=... RELEASE_EDGE_U3=...  -> Spring1 은 RELEASE_EDGE_U3=True 일 때만 허용된다.`
+    를 함께 찍는다(로그만 보고 "왜 막혔나" 를 알 수 있게).
+  - `run_abaqus_buckle.py` 에는 요소타입 GUARD 자체가 **없다**(grep 확인: `verify_inp_element_types`
+    호출 0). 그래서 고칠 것이 없다 - 좌굴 덱은 이 가드를 거치지 않는다.
+
+[검증 - 실제 실행(Abaqus/라이선스 불필요), `release_edge_u3_stub.py` 에 (viii) 41 checks 추가]
+  - GUARD 구역(`run_abaqus.py:691` ~ `write` 주석 전)을 **소스에서 떼어** 함수로 감싸 실행하고,
+    실제 `verify_inp_element_types` 로 합성 덱(`T3D2 3 / S4 10 / S3 2 / Spring1 N`)을 판정한다.
+    기저(개정 전 `aba_imperfection.py`, git `HEAD`)와 결과 튜플을 직접 비교한다.
+  - 4케이스: `python3 release_edge_u3_stub.py` -> **PASS (100 checks, 0 fail)**
+    1. True + Spring1 400(=노드수) -> **PASS** (기저 구현은 같은 덱을 `extra=['Spring1']` 로 오탐 -> 원인 재현 확인)
+    2. False + Spring1 400 -> **FAIL(종전대로)** - 오류문/결과가 기저 구현과 **문자 동일**
+    3. True + Spring1 399(개수 불일치) -> **FAIL** + `extra_count=399 != expected 400`
+    4. False + Spring1 없음 -> **PASS**, `(ok, counts, err)` 가 기저와 동일 + 덱 sha256 불변
+    5. (추가) True + Spring1 0 -> FAIL  6. (추가) True + Spring1 400 + S4R 5 -> FAIL(셸 폴백은 그대로)
+    7. (추가) True + 경계노드수 미정의 -> FAIL(검증 불가 거부)
+    - 모든 케이스에서 호출 인자까지 확인: False = 2-인자 그대로 / True = `allow_extra`+`expect_extra_total`.
+  - 기존 하네스/검사기: `pull_top_stub.py` **68/68** · `buckle_pull_top_stub.py` **84/84** ·
+    `hf_settings_stub.py` **20/20**(12조합 trace 해시 `bbec7630...` §19.111 과 **동일**) ·
+    `buckle_compare.py selftest` **9/9** · `test_seed_path.py` **49/49** ·
+    `check_model_consistency.py` **PASS** · `static_leak_check.py` 이상 없음.
+  - `hf_settings_stub.py` 를 2곳 고쳤다(하네스 선언): 신규 상수 `EDGE_SPRING_ELEM_TYPES` 를
+    `NEW_NAMES` 에 추가, B 판정의 표지를 `NEW_FEATURE_MARKS=('RELEASE_EDGE_U3','EDGE_SPRING')` 로
+    확장(임포트 1줄 추가가 같은 기능 계열임을 명시).
+
+[주의 - 사용자 로그의 R-13 수치]
+  - 로그에 찍힌 `uz_ave=2.3e-22` / "압축 없음" 류는 **27일 전 stale ODB 판독**이며 이 런의 값이 아니다.
+    GUARD 가 제출 전에 막았으므로 이 런은 ODB 자체를 만들지 않았다. 이 런의 수치는 재실행 후에만 읽을 수 있다.
+
+[실행 - 같은 alpha=1e-3 그대로]
+  `cd code`  ( `run_abaqus.py` 의 `RELEASE_EDGE_U3 = True`, `EDGE_SPRING_ALPHA = 1.0e-3` )
+  HF 재실행 -> 로그에 `[GUARD] 허용목록=['S4','S3','Spring1','SPRINGA']  RELEASE_EDGE_U3=True
+  (스프링 기대 개수 400 ...)` 와 `'Spring1': 400` 이 보이면 통과다.

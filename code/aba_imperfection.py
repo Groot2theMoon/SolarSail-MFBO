@@ -345,7 +345,16 @@ def _norm_elem_code(x):
     return n.strip("'\"").strip()
 
 
-def verify_inp_element_types(inp_path, want_codes):
+#   [§19.112] RELEASE_EDGE_U3=True 는 자유변 면외 구속을 '하드 u3=0' 에서 to-ground 스프링으로
+#     바꾼다 -> 덱에 **노드별 스프링 요소**(n = All_Edges_NoClamp 노드수)가 정당하게 생긴다.
+#     CAE 는 그 요소를 `*Element, type=Spring1` 로 쓴다(고전 키워드 표기는 SPRINGA — 같은 스프링).
+#     종전 가드는 'S' 로 시작하는 타입을 전부 셸 폴백 후보로 봤기 때문에 `Spring1` 이
+#     extra=['Spring1'] 로 잡혀 **정상 덱을 제출 전에 막았다**(실측 2026-10-19).
+EDGE_SPRING_ELEM_TYPES = ('Spring1', 'SPRINGA')
+
+
+def verify_inp_element_types(inp_path, want_codes, allow_extra=None,
+                             expect_extra_total=None):
     """방금 쓴 .inp 에서 `*Element, type=` 블록을 읽어 **요소 수까지** 세고, 요청 요소코드가
     실제로 들어갔는지 확인한다.
 
@@ -354,8 +363,17 @@ def verify_inp_element_types(inp_path, want_codes):
     definitions` (막 섹션 vs 셸 요소 불일치). 콘솔에는 단서가 없었다. '요소코드를 바꿨다'는
     선언은 검증이 아니다.
 
+    allow_extra  이번 덱에서 **정당하게** 있을 수 있는 비(非)셸 요소 타입(예: §19.111/§19.112 의
+                 `Spring1`). 기본 None = 종전과 **완전히 같은** 판정(하위호환). 여기 넣은 타입만
+                 extra 목록에서 빠지고, 다른 셸/막 계열 타입은 그대로 실패시킨다 — 허용은 기능
+                 스위치가 켜졌을 때만 호출자가 넘긴다.
+    expect_extra_total  allow_extra 요소 수의 기대값(보통 스프링 대상 경계 노드수).
+                 None 이면 개수 검증을 하지 않는다. 값이 있으면 합계와 비교해 **불일치면 실패**한다.
+                 왜: 스프링이 절반만 생성되거나(셋이 비었거나) 다른 영역에 붙으면 BC 대체가
+                 조용히 어긋난다 — '타입이 있으니 통과' 로는 잡히지 않는다.
+
     반환: (ok, counts, err_str)
-      ok      = 요청 코드가 전부 .inp 에 존재하는가
+      ok      = 요청 코드가 전부 .inp 에 존재하는가 (+ allow_extra 개수 기대값 일치)
       counts  = {요소코드: **요소 수**}   (블록 수가 아니라 요소 수 — 메쉬가 바뀌었는지 판정용)
     """
     counts, cur = {}, None
@@ -374,6 +392,9 @@ def verify_inp_element_types(inp_path, want_codes):
     except Exception as e:
         return None, {}, '%s: %s' % (type(e).__name__, e)
     want = [_norm_elem_code(w) for w in want_codes]
+    #   [§19.112] 허용목록(allow_extra)은 **비어 있으면 종전 판정과 문자 단위로 같다**.
+    #     `t not in allow` 는 allow 가 빈 리스트일 때 항상 True 이므로 extra 계산이 동일하다.
+    allow = [_norm_elem_code(t) for t in (allow_extra or ())]
     # 판정 규칙 (실측 2026-10-05 3차 교정):
     #   처음엔 `all(w in got)` 로 썼는데 **메쉬가 순수 사각형이라 S3 블록이 없는 정상 덱**을
     #   'setElementType 이 무시됐다'고 오탐했다(요청 (S4,S3) 인데 .inp 에 S4 만 존재).
@@ -384,9 +405,20 @@ def verify_inp_element_types(inp_path, want_codes):
     got = set(counts)
     _extra = [t for t in got
               if (t.startswith('S') or t.startswith('M3D') or t.startswith('STRI'))
-              and t not in want]
+              and t not in want and t not in allow]
     ok = any(w in got for w in want) and not _extra
-    return ok, counts, ('' if ok else 'extra=%s want=%s' % (_extra, want))
+    err = '' if ok else 'extra=%s want=%s' % (_extra, want)
+    #   [§19.112] 개수 검증: 허용한 스프링이 **기대한 노드수만큼** 실제로 나갔는가.
+    #     ('타입이 있으니 통과' 는 셋이 비거나 일부만 걸린 경우를 놓친다.)
+    if expect_extra_total is not None:
+        _n_extra = sum(counts.get(t, 0) for t in allow)
+        if _n_extra != int(expect_extra_total):
+            ok = False
+            _detail = ('extra_count=%d != expected %d (허용=%s, 실제=%s)'
+                       % (_n_extra, int(expect_extra_total), allow,
+                          dict((t, counts[t]) for t in allow if t in counts)))
+            err = (err + '; ' if err else '') + _detail
+    return ok, counts, err
 
 
 def job_completed_from_logs(job_name):
