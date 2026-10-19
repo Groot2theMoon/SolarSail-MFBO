@@ -4531,3 +4531,105 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
             `run_abaqus.py` 의 `TOP_PULL_SCALE = 1.0` -> `0.389`
   확인: 로그의 `[BC] PULL_TOP=True TOP_PULL_SCALE=0.389 -> Top(u1=...,u2=...)` 1줄.
         (1.0 이면 이 줄이 **없다** - 그게 정상이다.)
+
+#### §19.110 run_abaqus.py 세팅/인자를 SETTINGS 블록으로 집중 (동작·덱 바이트 동일, 2026-10-19)
+
+[왜] `run_abaqus_buckle.py` 는 §19.108 에서 설정을 파일 상단 한 블록으로 모았는데, HF 본체인
+  `run_abaqus.py`(2259줄)에는 그 정리가 없었다. 값이 본문 깊숙이 흩어져 있었다 —
+  `NUMCPUS` 97 / `N_EIG` 836 / `MODE_SOURCE` 840 / `STABILIZE_LADDER` 862 / `NO_CLAMP` 1028(+재대입 1421) /
+  `PULL_TOP` 1032 / `TOP_PULL_SCALE` 1039 / `SIGMA0` 1429 / `DISP_GLOBAL` 1205 / `GLOBAL_FINAL` 1210 /
+  `_EIGENSOLVER` 1523 / `BUCKLE_ODB` 1703. 두 스크립트의 구조가 달라 "어디를 고치면 되는가" 를
+  같은 방식으로 답할 수 없었다.
+
+[무엇] 값·주석·**그룹 내 정의 순서를 그대로** 두고 위치만 옮겼다. 값 변경 0건.
+  - 블록: import 직후(59줄 뒤) `# ===== SETTINGS =====` (61~252줄). 7그룹 =
+    ① 실행 모드/스위치(BASE_PROBE, EIG_RECORD, RUN_SELF_BUCKLE_JOB, NO_CLAMP, PULL_TOP,
+    TOP_PULL_SCALE, RUN_MODE) ② 형상/격자(MODEL_NAME, INSTANCE_NAME, BASE, HEIGHT, ELEM_CODE_*,
+    SEED_DIV, THICKNESS, TARGET_STRESS, CLAMP_EXCL_R, CABLE_RADIUS/AREA, LEN_TOP/BOT,
+    CLAMP_CABLE_LEN, V1~V3, USE_GRID_MESH) ③ 재료(SIGMA0 + 승격 4개) ④ 하중/프리텐션(sqrt2,
+    PRETENSION_SCALE, DISP_GLOBAL, PERTURBATION, GLOBAL_FINAL, angle_deg/rad, cos/sin, top_cos/sin)
+    ⑤ 좌굴/임퍼펙션(N_EIG, MODE_SOURCE*, IMPERFECTION_*, STABILIZE_LADDER, MODE_SOURCE_ODB,
+    MODE_SOURCE_STEP_NAME, MODE_INSTANCE, SEED_FAMILY_NAME, N_EIG_BUCKLE, BUCKLE_VECTORS)
+    ⑥ HF 솔버(NUMCPUS, _EIGENSOLVER) ⑦ 경로/식별자(RUN_DIR_NAME, BUCKLE_ODB, HF_ODB).
+  - **파생 순서 보존**: 옮긴 것은 리터럴/단순식뿐이다. 다음은 종전 위치에 그대로 뒀다.
+    `_resolve_here()/_HERE/_RUN`(경로) · CLI 파싱(`fidelity/x_c/d_c`) · `V_CL/V_CR` ·
+    `CLAMP_PULL/CLAMP_PERT/CLAMP_FINAL`(= 값 x `d_c`) · `MODE_TABLE`/`IMPERFECTION_MODES`(모드표 게이트) ·
+    `_ALL_ELEM` · `_IS_HF_RUN` LF 진폭 override(런타임 `fidelity` 파생) · `LF_ODB/LF_JOB` ·
+    `_steps_in_order/_BUCKLE_STEP_NO` · `BUCKLE_MODEL` · `_JOB_ARTIFACTS`.
+    `SEEDS_DIR/SEED_FAMILY_TABLE` 은 `_HERE` + `aba_imperfection.SEED_DIR_NAME`(import 산물) 파생이라
+    블록에 넣을 수 없다 -> 모드표 선택 블록에 남기고 그 이유를 ⑦ 에 주석으로 적었다.
+    검증 가드(`if MODE_SOURCE not in ...`, `if IMPERFECTION_MODE not in ...`)와
+    `_SRC_ENV = os.environ.get('SOLARSAIL_MODE_ODB')`/`_MODE_TABLE_ENV` 블록도 위치·순서 그대로다.
+  - **`NO_CLAMP` 중복 대입**: 종전에는 1028줄 정의와 1421줄(클램프 RP 직전) 인라인 재대입이 둘 다
+    있었고 값은 양쪽 다 `True` 였다. SETTINGS ① 에 한 번만 정의하고 **1421줄 재대입을 지웠다**.
+    유효값 동일 증명: (a) 두 대입 모두 리터럴 `True`, (b) 두 지점 사이에 `NO_CLAMP` 를 쓰는 문장이
+    없다(AST 로 모듈 수준 대입 2개 확인: pre `[(1028,'NO_CLAMP = True'), (1421,'NO_CLAMP = True')]`
+    -> post `[(93,'NO_CLAMP = True')]`, `global NO_CLAMP` 0건), (c) 리팩터 전/후 상수 대조에서
+    `NO_CLAMP = True` 동일. **부수 효과(의도된 정리)**: 종전에는 1028줄만 `False` 로 고쳐도 1421줄이
+    덮어써 무효였다 — 이제 SETTINGS ① 이 유일한 정의다. 현재 값(True)에서는 덱/로그 변화 0.
+  - **재료 상수 승격**(값 동일, 이름만 부여):
+      | 이름 | 값 | 종전 위치/리터럴 |
+      |---|---|---|
+      | `CABLE_RHO` | 1440.0 | 1276 `mat_cable.Density(table=((1440.0, ),))` |
+      | `CABLE_E` | 62.0e9 | 1277 `mat_cable.Elastic(table=((62.0e9, 0.36),))` |
+      | `CABLE_NU` | 0.36 | 1277 같은 줄 |
+      | `PATCH_R_CLAMP` | 0.21 | 1437/1438 `create_rigid_patch(..., radius=0.21)` |
+  - **승격 보류(검사기 계약 — 값 이중화를 만들지 않으려고 리터럴 유지)**: 막(Kapton) `1420.0` /
+    `2.5e9` / `0.34` (1334/1335) 와 꼭짓점 패치 `radius=0.2` (1476~1478).
+    `check_model_consistency.py` 의 SHARED 가 `mat.Density(table=((1420.0,),))`,
+    `mat.Elastic(table=((2.5e9, 0.34),))`, `radius=0.2` 를 **리터럴 문자열**로 buckle/mode 스크립트와
+    대조하기 때문이다. 실측(사본에서 승격 후 실행): `HF=False buckle=True` 3항목 +
+    `HF=False mode=True` 3항목 -> `RESULT: 불일치 (HF↔buckle 위반 3 / HF↔모드소스 위반 3)`.
+    두 파일 모두 이번 커밋에서 손댈 수 없으므로(금지 목록) 리터럴을 그대로 뒀다.
+    승격하려면 검사기의 SHARED 를 상수 이름 기준으로 바꾸는 별도 커밋이 먼저다.
+
+[검증 - 실제 실행, 리팩터 전(HEAD 0d35dab) vs 후]
+  - `python3 -m py_compile run_abaqus.py` OK.
+  - **상수 대조**(신설 하네스 `code/hf_settings_stub.py`): 모듈을 문장 단위로 exec(Abaqus/numpy 스텁)해
+    모듈 수준 상수를 `{name: repr}` 로 추출 — **pre 111개 / post 115개, 공통 111개 값 diff 0,
+    only-pre 0개, 신규 4개는 승격분뿐**(CABLE_RHO/E/NU, PATCH_R_CLAMP = 1440.0/6.2e10/0.36/0.21).
+    모듈 헤드 콘솔 로그 **13줄 동일**(격리 사본에는 `seeds/modes_seed.txt` 가 없어 seed 게이트에서
+    중단 — 그 지점까지의 로그가 바이트 동일).
+  - **실행문(AST) 대조**: 상수 정의문을 제외한 **모든 실행문 154개**를 상수 인라인 후 `ast.unparse`
+    로 비교 — **154/154 동일**(인라인 400/405회). 모델 조립·스텝·BC·제출 블록이 전부 포함되므로
+    "덱을 만드는 호출열 + 인자값" 이 같다. (`radius=PATCH_R_CLAMP` -> `0.21`,
+    `((CABLE_RHO,),)` -> `((1440.0,),)` 로 접혀 문자 그대로 일치.)
+  - **12조합 회귀**: 3구역(BC / Step-HighTension / Step-Postbuckle) x PULL_TOP x NO_CLAMP = **12/12
+    trace + 로그 동일**, 집계 trace 해시 `bbec76302cf09efd7cdd6691e2515317ec4cfcaac42a8188bfa31b03179f497a`.
+  - `python3 hf_settings_stub.py` -> PASS (20 checks, 0 fail).
+  - `python3 pull_top_stub.py` -> **68/68 PASS**(출력 sha256 `d22ee966…`).
+  - `python3 buckle_pull_top_stub.py` **84/84** · `buckle_compare.py selftest` **9/9** ·
+    `test_seed_path.py` **49/49** · `check_model_consistency.py` **PASS**(HF↔buckle 30 / HF↔모드소스 27) ·
+    `static_leak_check.py` 이상 없음(4 파일).
+  - **삭제/변경 최소화 확인**: 비주석 코드줄 multiset 비교 — 제거 66줄 중 61줄은 그대로 재삽입,
+    실제 변경은 5줄뿐(`NO_CLAMP` 중복 1줄 삭제, `mat_cable.Density/Elastic` 2줄, `radius=0.21` 2줄).
+
+[한계 — 정직하게] 이 환경에는 Abaqus 라이선스가 없어 `.inp` 를 직접 생성하지 못했다. 위 동일성은
+  (a) 상수 111개, (b) 실행문 154개(= mdb 호출열), (c) 12조합 BC trace 세 축이다. 세 축이 모두 같고
+  잡 이름/덱 파일명도 같으므로 덱과 콘솔 로그는 같아야 하지만, **실런 .inp diff 는 아직 없다**.
+  실런에서 확인하려면 리팩터 전 커밋과 같은 인자로 `RUN_MODE='write'` 만 돌려 `.inp` 를 비교하면 된다.
+
+[승격하지 않은 인라인 리터럴 — 파일:줄(현행), 값, 의미]
+  - 426/430 `0.05`/`0.95`, `0.0`/`2.0`: x_c/d_c 유효범위 가드(오류 메시지 본문에 같은 값이 또 있다).
+  - 761 `1.0`: `time.sleep(1.0)` — 잡 완료 후 대기(동작 리스크).
+  - 695, 842 `--ran=5e-3 --can=1e-2 --i0=8 --ir=10`: riks 패처 기본 인자(패처 자체 기본값과 계약).
+  - 1334/1335 `1420.0`, `2.5e9`, `0.34`: 막 재료 테이블(검사기 SHARED 계약 — 위 참조).
+  - 1476~1478 `radius=0.2`: 꼭짓점 강체패치 반경(검사기 SHARED 계약).
+  - 1449 `deviationFactor=0.1`: 자유 메쉬(USE_GRID_MESH=False) 경로 전용.
+  - 1542/1552/2112 `stabilizationMagnitude` 0.0002/0.0002/0.01: 스텝별 감쇠(Postbuckle 은 사다리가 덮어쓴다).
+  - 1544/1554 `initialInc=0.0001, minInc=1e-8, maxNumInc=1000` · 2120 `initialInc=1e-4, maxNumInc=10000` ·
+    1815/1816 `initialInc=0.01, maxNumInc=100`: 증분 제어(수렴 튜닝값, 문맥 종속).
+  - 1598 `maxIterations=5000`: subspace 반복 한도. 1566(주석 처리된 `numEigen=20`)도 그대로 뒀다.
+  - 1846/2167 `frequency=10`: 필드출력 주기(ODB 크기 절감).
+  - `influenceRadius=WHOLE_SURFACE`, `elemShape=QUAD_DOMINATED`, `deviationFactor` 등 Abaqus API 상수.
+
+[실행]
+  `cd code`
+  `python3 hf_settings_stub.py`          # 상수 대조 + 실행문 154개 + 12조합 회귀 (20 checks)
+  `python3 pull_top_stub.py`             # 68/68
+  `python3 buckle_pull_top_stub.py`      # 84/84
+  `python3 buckle_compare.py selftest`   # 9/9
+  `python3 test_seed_path.py`            # 49/49
+  `python3 check_model_consistency.py`   # PASS
+  `python3 static_leak_check.py`
+  값 바꾸기: `run_abaqus.py` 의 `# ===== SETTINGS =====` 블록만 본다(그룹 ①~⑦).

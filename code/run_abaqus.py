@@ -58,6 +58,199 @@ import subprocess
 import time
 import numpy as np
 
+# ===== SETTINGS =====
+#   [§19.110] 실행/모델 설정값은 전부 이 블록에 있다. 값을 고칠 때는 여기만 본다.
+#     종전에는 설정이 2259줄 본문에 흩어져 있었다 — NUMCPUS 97 / N_EIG 836 / MODE_SOURCE 840 /
+#     STABILIZE_LADDER 862 / NO_CLAMP(정의 1028 + 인라인 재대입 1421) / PULL_TOP 1032 /
+#     TOP_PULL_SCALE 1039 / SIGMA0 1429 / DISP_GLOBAL 1205 / GLOBAL_FINAL 1210 /
+#     _EIGENSOLVER 1523 / BUCKLE_ODB 1703. 값/주석/**그룹 내 정의 순서는 그대로** 두고
+#     위치만 모았다(값 변경 0건 -> 생성 덱과 콘솔 로그가 종전과 바이트 동일해야 한다).
+#   이 아래의 파생부는 이 값을 읽어 계산한다 (손대지 않는다):
+#     _HERE/_RUN(경로) -> CLI 파싱(fidelity/x_c/d_c) -> V_CL/V_CR
+#     -> CLAMP_PULL/CLAMP_PERT/CLAMP_FINAL(d_c 곱) -> MODE_TABLE/IMPERFECTION_MODES(모드표 게이트)
+#     -> LF_ODB/LF_JOB -> _ALL_ELEM -> _steps_in_order/_BUCKLE_STEP_NO -> BUCKLE_MODEL
+#   그룹: ① 실행 모드/스위치 ② 형상/격자 ③ 재료 ④ 하중/프리텐션 ⑤ 좌굴/임퍼펙션
+#         ⑥ HF 솔버 ⑦ 경로/식별자
+#   ⚠️ 런타임 인자(Fidelity, x_c, d_c)는 상수가 아니다 — 아래 CLI 파싱부가 sys.argv[-3:] 로 읽는다.
+# ============================================================================
+
+# ---- ① 실행 모드/스위치 ----
+BASE_PROBE = True                # 각 잡 직후 base_state_probe.py (R-13) 자동 실행
+EIG_RECORD = True                # 좌굴 고유치 이력 기록 (coalescence_check.py record)
+RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-24). 이유는 측정된 실패 경로다:
+                             #   이 잡은 _EIGENSOLVER='LANCZOS' 로 제출되는데(아래), 이 모델의 좌굴 base state 는
+                             #   이미 분기하중을 넘은 부정정 상태다(시스템 음수 고유값 실측 56~88개). 매뉴얼이 열거한
+                             #   LANCZOS 금지 조건 중 'preloaded above the bifurcation load' 에 정확히 해당하므로
+                             #   ***ERROR: THE LANCZOS SOLVER CANNOT BE USED FOR BUCKLING ANALYSIS 로 거부된다.
+                             #   run_job_safely 는 ABORTED 를 보면 sys.exit(1) 하므로, 이 잡이 켜져 있으면
+                             #   HF_Postbuckle 이 제출되기도 전에 스크립트가 끝난다(제출 순서: LF 840 -> Buckle 862 -> HF 1010).
+                             # SUBSPACE 로 바꿔도 클램프 모델은 좌굴모드 0개로 죽어 같은 경로다. 모드 추출은 이제
+                             #   ODB 모드표 경로(run_abaqus_mode.py -> modes_ClampFree_Buckle.txt)가 담당하므로
+                             #   이 진단 잡은 불필요하다. 클램프 base state 증거가 다시 필요하면 True 로 되돌리되
+                             #   그때는 _EIGENSOLVER 와 제출 순서를 함께 손봐야 한다.
+#   [§19.104] NO_CLAMP 상수를 이 블록으로 올렸다(값/의미 불변 - 종전에는 클램프 RP 조립부에 있었고,
+#     모드표 결정보다 **뒤**라 여기서 볼 수 없었다). True = 클램프 생략 baseline(run_abaqus_cable 대조).
+NO_CLAMP = True
+#   [§19.105] PULL_TOP: True = 윗 꼭짓점(Top)도 케이블 방향 지정변위로 당긴다(Galhofo 2022 3-tendon 정합).
+#     False(기본) = 종전 그대로 Top 완전 고정 - 기존 런 재현성이 우선이다(BC/스텝 호출 바이트 동일).
+#     NO_CLAMP 와 **독립**이다: 네 조합(PULL_TOP x NO_CLAMP) 모두 유효하고, 클램프 유무와 서로 간섭하지 않는다.
+PULL_TOP = False
+#   [§19.109] TOP_PULL_SCALE: 세 당김의 힘 평형 보정 계수 - **Top 지정변위에만** 곱한다.
+#     케이블 힘 F = E*A*u/L 이므로 대칭 3-tendon 의 평형은 F_top = 2*sin(theta)*F_bot,
+#     즉 u_top = 2*sin(theta)*(LEN_TOP/LEN_BOT)*u_bot (theta = angle_deg = 28.6 deg).
+#     1.0 (기본) = 종전과 동일(보정 없음, 덱/로그 바이트 동일). 0.389 = 힘 평형 조건.
+#     유도: 2*sin(28.6 deg)*0.280/0.689 = 0.389 (길이를 무시한 0.9574 는 틀린 값이다).
+#     Right/Left/클램프 변위에는 곱하지 않는다(세 당김 중 Top 만 평형 보정 대상).
+TOP_PULL_SCALE = 1.0
+# 실행 모드.
+#   'auto'  : 덱 생성 -> riks_patch_input.py 로 *Controls 주입 -> 제출 -> 결과 추출까지 한 번에.
+#             mfbo.py 가 이 경로로 HF 를 부른다(덱 생성만 하면 RESULTS: 가 없어 실패로 읽힌다).
+#   'write' : 덱만 생성하고 종료. 수동으로 패처/job 을 돌리는 워크플로우(latex/디버깅용).
+#   'plain' : 패처 없이 원본 덱을 그대로 제출. 패처 자체를 의심할 때만 쓴다(진단용, 40분 낭비 주의).
+RUN_MODE = 'auto'
+
+# ---- ② 형상/격자 ----
+MODEL_NAME = 'SailModel_Triangle'
+INSTANCE_NAME = 'MEMBRANE-1'
+
+BASE = 20.0   # m
+HEIGHT = 10.0 # m
+# 막 요소는 1차(S4/S3) 유지 — 2차는 base state 를 더 나쁘게 만들어 기각됐다(§4).
+#   요소코드는 모드 소스와 같아야 한다(*IMPERFECTION 이 노드 라벨로 주입된다).
+ELEM_CODE_QUAD = S4         # [2026-10-04] 막(M3D4/M3D3) 실험 철회 -> 1차 셸 복귀.
+ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 셸 복귀
+SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
+THICKNESS = 5.0e-6 # F2: 2.5e-6 -> 5.0e-6 (cable 변형, 2.5um는 수렴 매우 어려움)
+TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
+
+CLAMP_EXCL_R = 0.0   # m — 0.0 이면 제외 노드가 없어 All_Edges_NoClamp == All_Edges 다.
+#   [2026-10-06 철회] 0.2 로 두면 클램프 부착 구간의 경계 노드가 면외 자유로워져 base state 가
+#   불안정해진다(실측: lambda 전부 음수, CONVERGED 0, 스프레드 0.406 %). 이전에 CONVERGED=100
+#   이었던 설정과 같게 0.0 으로 되돌린다. 근거와 실측은 §9.
+                     #     이 반경 내 경계 노드는 면외 z 구속에서 제외한다(§9).
+                     #     근거: 논문 (c) 는 클램프 없는 모델의 조건이고, 클램프가 붙은 선을 면외 고정하면 클램프의 물리가 왜곡된다.
+
+# 케이블 파라미터 (Galhofo reference)
+CABLE_RADIUS = 5.0e-4 # m
+CABLE_AREA = np.pi * (CABLE_RADIUS**2)
+LEN_TOP = 0.280 # m
+LEN_BOT = 0.689 # m
+
+CLAMP_CABLE_LEN = 0.5 # m
+
+# 좌표 정의
+V1 = (BASE/2.0, HEIGHT, 0.0) # Top
+V2 = (BASE, 0.0, 0.0)        # Right
+V3 = (0.0, 0.0, 0.0)         # Left
+# ---- 메쉬 종류 (2026-10-07) ----
+#   True  = aba_grid_mesh 균일 격자(.inp -> PartFromInputFile, orphan mesh). 좌우 완전 대칭.
+#   False = 기존 자유 메쉬(seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 1.82만 요소).
+#   !! 네 스크립트(buckle/mode/HF/cable)가 **같은 값**을 써야 한다.
+USE_GRID_MESH = True
+
+# ---- ③ 재료 ----
+#   승격한 것: 케이블(Kevlar) 물성 3개 + 클램프 패치 반경. 값은 종전 리터럴과 **동일**하다.
+#   승격하지 않은 것(검사기 계약): 막(Kapton) `1420.0` / `2.5e9` / `0.34` 와 꼭짓점 패치
+#     `radius=0.2` 는 check_model_consistency.py 의 SHARED 항목이
+#     `mat.Density(table=((1420.0,),))` / `mat.Elastic(table=((2.5e9, 0.34),))` / `radius=0.2`
+#     같은 **리터럴 문자열**로 buckle 스크립트와 대조한다 -> 이름을 붙이면 그 게이트가 FAIL 한다.
+#     (값 이중화를 만들지 않으려고 리터럴을 그대로 뒀다. notes §19.110 참조.)
+CABLE_RHO = 1440.0                 # kg/m^3 — Kevlar 밀도 (종전 mat_cable.Density 리터럴)
+CABLE_E = 62.0e9                   # Pa — Kevlar 영률 (종전 mat_cable.Elastic 리터럴)
+CABLE_NU = 0.36                    # - — Kevlar 푸아송비 (종전 mat_cable.Elastic 리터럴)
+# 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
+SIGMA0 = 500.0                   # 수렴 보조용 초기응력 [Pa]
+PATCH_R_CLAMP = 0.21               # m — 클램프 강체패치 반경 (종전 radius=0.21 리터럴 2곳)
+
+# ---- ④ 하중/프리텐션 ----
+sqrt2 = 1.414
+# ---- 사전 장력(prestrain) 캘리브레이션 ----
+# 사전 장력 크기. base state 장력을 키워 시스템행렬 부정정(음수 고유값) 완화를 시도한다.
+# 1.0 = 기존값. 값을 바꾸려면 이 상수를 직접 수정한다(구 MFBO_PRETENSION_SCALE 환경변수는 제거됨).
+PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
+# PRETENSION_SCALE=10 -> 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배. 운용점 조정은 DISP_GLOBAL 로 한다(§8).
+DISP_GLOBAL = 165e-6
+# 좌굴 스텝 perturbation — K_delta 를 만든다. 너무 작으면 고유값 분리가 나빠져 추출이 실패한다(§8b).
+PERTURBATION = 0.01
+GLOBAL_FINAL = 1e-3  # 최종 하중: 코너 당김 1e-3 m
+# 하중 각도 (28.6도)
+angle_deg = 28.6
+angle_rad = np.deg2rad(angle_deg)
+cos_val = float(np.cos(angle_rad))
+sin_val = float(np.sin(angle_rad))
+#   [§19.105] Top 케이블 방향 코사인. 케이블은 connect_cable('Cable_Top', ..., V1, (0.0, 1.0, 0.0)) 로
+#     +y 축에 놓인다 -> 방향 (u1, u2) = (0, +1). Right/Left 와 **같은 대입식**을 쓰기 위해
+#     (u1 = v*cos, u2 = -v*sin) 규약에 맞춘 값이 top_cos=0.0, top_sin=-1.0 이다(즉 u2 = +v).
+top_cos = 0.0
+top_sin = -1.0
+
+# ---- ⑤ 좌굴/임퍼펙션 ----
+N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
+# 2-모델 레시피 — 모드는 클램프-프리 모델에서 뽑아 클램프 모델에 임퍼펙션으로 주입한다(§5).
+#   클램프 패치는 메쉬를 바꾸지 않으므로 두 모델의 막 노드 라벨이 같다 -> *IMPERFECTION 매핑이 성립한다.
+MODE_SOURCE = 'external'     # 'external' = 클램프 없는 외부 .fil(run_abaqus_mode.py) | 'self' = 자기 좌굴 잡
+#   모드 소스 = run_abaqus_mode.py (클램프 없음, HF 파라미터 정렬). 산출물은 code\ 에 쌓인다.
+#   (이전 소스였던 run_abaqus_cable.py 의 Buckle_Analysis.fil 을 쓰려면 아래 이름만 교체한다.)
+MODE_SOURCE_FIL = os.path.join('..', 'ClampFree_Buckle.fil')   # code\aba -> code\
+MODE_SOURCE_DAT = os.path.join('..', 'ClampFree_Buckle.dat')
+MODE_SOURCE_MSG = os.path.join('..', 'ClampFree_Buckle.msg')
+MODE_SOURCE_STEP = 2         # 소스 .fil 안의 스텝 번호 (케이블 런: 1=GlobalTension 2=Buckle)
+IMPERFECTION_NAME = 'ClampFree_Buckle'   # 모드 소스 잡 이름과 '같은' 이름 -> 원장 C-1(조용한 0-모드 소비) 차단
+                                         # (MODE_SOURCE_FIL 의 basename 과 함께 움직여야 한다)
+IMPERFECTION_MODES = (1, 2, 3, 4)   # 기본 = 논문(Galhofo) 주입 모드 1~4.
+IMPERFECTION_MAX_MODES = 4          # 상한. 모드표에 있는 모드가 더 적으면 그만큼만 쓴다(아래에서 자동 조정).
+                                    #  모드 3개를 주입한다(lambda1 탈락). 논문 lambda 스프레드 0.036% 라 모드 3.4 의 기여가 작다(§5a).
+IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t 이지만 우리는 1.0 을 쓴다.
+#   [§19.81] LF 는 **무결함** 모델로 계산한다(사용자 결정).
+#     LF 는 MFBO 의 "싼 대리 모델"이다 — 그 정의가 시드표/진폭에 의존하면 같은 설계점의 LF 값이
+#     시드에 따라 흔들려 다중충실도 구조가 약해진다. LF 분기에서는 섭동 크기를 0 으로 만들어
+#     메쉬를 완전하게 둔다(주름은 HF 에서만 발달한다는 해석과도 일치).
+#   [§19.85] HF 완주 사다리(사용자 지시: 0.005 - 0.01 - 0.02 - 0.05).
+#     실측 근거: 같은 점 (x_c=0.8, d_c=0.75)에서 stabilize=0.003 -> TOO MANY ATTEMPTS(τ=0.622),
+#     0.01 -> 완주. 감쇠가 지배 변수임이 단일 변수 실험으로 확정됐다. 첫 레벨로 제출하고
+#     실패하면 다음 레벨로 승급한다(각 레벨의 선택 결과를 로그에 남긴다).
+STABILIZE_LADDER = (0.005, 0.01, 0.02, 0.05)
+#   [2026-10-12 §19.57 **되돌림**] 0.1 로 낮췄다가 되돌린다. 바로 아래 2026-10-06 실측이 반대를 말한다:
+#   0.10 -> 증분 눌림 2215 증분/약 90분 + 초기 결함이 약해 분기가 늦게 갈라져 수렴이 어려움,
+#   1.0 -> 271 증분/11분. 그리고 논문 대조 성공(97.7 t vs 91.1 t = 1.07배)도 **1.0 에서** 나왔다.
+#   씨드 진폭은 포스트버클링 진폭을 정하지 않는다(진폭은 하중이 정한다) -> 논문 정합에 0.10 t 는 불필요.
+#   [2026-10-06 실측] 0.10 이면 증분이 눌려 2215 증분 / 약 90 분이 걸린다. 1.0 이면 271 증분 / 11 분이다
+#   (HF_x025k). 진폭이 작으면 초기 결함이 약해 분기가 늦게 갈라지고 수렴이 어려워진다.
+#   진폭 민감도를 보려면 이 상수를 0.50 등으로 바꿔 재실행한다.
+IMPERFECTION_MODE = 'odb_table'   # 'odb_direct'(기본) | 'odb_table' | 'file'
+#   [2026-10-12] 설계점별 시드표 - 경로 결정과 시드 게이트는 아래 `_available_mode_numbers` def
+#     뒤 "[§19.104] 임퍼펙션 표 선택" 블록으로 **옮겼다**. 이유: 클램프 없는 baseline(NO_CLAMP=True)
+#     은 순수 seed 가족 표를 써야 하는데 표 선택 시점에 NO_CLAMP 상수가 필요하고, 그 상수는 종전
+#     모델 조립부(클램프 RP 직전)에 있어 여기서 볼 수 없었다(값/의미 불변, 위치만 이동).
+MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
+MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
+MODE_INSTANCE = 'MEMBRANE-1'                                    # 막 인스턴스 이름
+SEED_FAMILY_NAME = 'modes_seed.txt'   # seed 가족 표(꼭짓점 케이블만, x_c 무관, 모드 4개)
+# A: 추출 요청 고유값 수. base state 가 부정정이면 줄이는 것이 subspace 수렴에 유리하다(§8a).
+N_EIG_BUCKLE = 100
+# subspace 반복의 기저 벡터 수 (구 MFBO_VECTORS 환경변수는 2026-09-21 제거됨)
+BUCKLE_VECTORS = 250
+
+# ---- ⑥ HF 솔버 ----
+# Abaqus 병렬 스레드/도메인 수 (1 = 단일 CPU, 4 = 대략 1.5~2.5배 빠름).
+#   라이선스 토큰이 없으면 잡이 라이선스 오류로 즉시 죽는다 -> 그때는 1 로.
+NUMCPUS = 4
+# A: 좌굴 고유값 추출 솔버. **기본 LANCZOS** — Abaqus 의 *BUCKLE 기본 솔버이자 이 코드의
+#    원래 설정(LANCZOS + maxBlocks=DEFAULT)이다. 요소 ~1만 개 / DOF ~4만 개 + 두께 5um 라
+#    강성 조건수가 극단적이어서 SUBSPACE(작은 모델·다수 모드용)로는 100개 모드 추출이
+#    'EIGENVALUES CANNOT BE FOUND' (0 CONVERGED) 로 실패했다.
+#    SUBSPACE 로 강제하려면 _EIGENSOLVER 상수를 'SUBSPACE' 로 수정 (구 MFBO_EIGENSOLVER 환경변수는 제거됨)
+_EIGENSOLVER = "LANCZOS"         # "SUBSPACE" 로 바꾸면 좌굴 추출 재시도
+
+# ---- ⑦ 경로/식별자 ----
+#   SEEDS_DIR / SEED_FAMILY_TABLE 은 여기 없다 — _HERE 와 aba_imperfection.SEED_DIR_NAME 의
+#   파생이라 import 뒤(모드표 선택 블록)에서 계산한다. LF_ODB/LF_JOB 도 (x_c,d_c) 파생이다.
+# 산출물 디렉터리 = code/aba. mfbo.py 의 RUN_DIR_NAME 과 같은 값이어야 한다.
+RUN_DIR_NAME = "aba"
+BUCKLE_ODB = 'Buckle_Analysis.odb'
+HF_ODB = 'HF_Postbuckle.odb'
+# ============================================================================
+
 # ---- 스크립트 위치(_HERE) / Abaqus 작업 디렉터리(_RUN) 결정 ----
 # 주의: `abaqus cae noGUI=script.py` 로 실행하면 스크립트가 execfile 로 로드되어
 #       __file__ 이 정의되지 않는다(NameError). 아래처럼 우선순위를 둔다.
@@ -90,14 +283,7 @@ def _resolve_here():
     return os.getcwd()
 
 _HERE = _resolve_here()
-# 산출물 디렉터리 = code/aba. mfbo.py 의 RUN_DIR_NAME 과 같은 값이어야 한다.
-RUN_DIR_NAME = "aba"
-# Abaqus 병렬 스레드/도메인 수 (1 = 단일 CPU, 4 = 대략 1.5~2.5배 빠름).
-#   라이선스 토큰이 없으면 잡이 라이선스 오류로 즉시 죽는다 -> 그때는 1 로.
-NUMCPUS = 4
-BASE_PROBE = True                # 각 잡 직후 base_state_probe.py (R-13) 자동 실행
-EIG_RECORD = True                # 좌굴 고유치 이력 기록 (coalescence_check.py record)
-# ---- 코드 상수 끝 ----
+#   RUN_DIR_NAME/NUMCPUS/BASE_PROBE/EIG_RECORD 는 SETTINGS ⑦/⑥/① 에 있다.
 _RUN = os.path.join(_HERE, RUN_DIR_NAME)
 os.makedirs(_RUN, exist_ok=True)
 os.chdir(_RUN)
@@ -832,73 +1018,22 @@ def print_job_diag(job_name):
                 if _lines[_j].strip():
                     emit("      | %d| %s" % (_j + 1, _lines[_j].strip()[:170]))
 
-sqrt2 = 1.414
-N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
 
-# 2-모델 레시피 — 모드는 클램프-프리 모델에서 뽑아 클램프 모델에 임퍼펙션으로 주입한다(§5).
-#   클램프 패치는 메쉬를 바꾸지 않으므로 두 모델의 막 노드 라벨이 같다 -> *IMPERFECTION 매핑이 성립한다.
-MODE_SOURCE = 'external'     # 'external' = 클램프 없는 외부 .fil(run_abaqus_mode.py) | 'self' = 자기 좌굴 잡
-#   모드 소스 = run_abaqus_mode.py (클램프 없음, HF 파라미터 정렬). 산출물은 code\ 에 쌓인다.
-#   (이전 소스였던 run_abaqus_cable.py 의 Buckle_Analysis.fil 을 쓰려면 아래 이름만 교체한다.)
-MODE_SOURCE_FIL = os.path.join('..', 'ClampFree_Buckle.fil')   # code\aba -> code\
-MODE_SOURCE_DAT = os.path.join('..', 'ClampFree_Buckle.dat')
-MODE_SOURCE_MSG = os.path.join('..', 'ClampFree_Buckle.msg')
-MODE_SOURCE_STEP = 2         # 소스 .fil 안의 스텝 번호 (케이블 런: 1=GlobalTension 2=Buckle)
-IMPERFECTION_NAME = 'ClampFree_Buckle'   # 모드 소스 잡 이름과 '같은' 이름 -> 원장 C-1(조용한 0-모드 소비) 차단
-                                         # (MODE_SOURCE_FIL 의 basename 과 함께 움직여야 한다)
-IMPERFECTION_MODES = (1, 2, 3, 4)   # 기본 = 논문(Galhofo) 주입 모드 1~4.
-IMPERFECTION_MAX_MODES = 4          # 상한. 모드표에 있는 모드가 더 적으면 그만큼만 쓴다(아래에서 자동 조정).
-                                    #  모드 3개를 주입한다(lambda1 탈락). 논문 lambda 스프레드 0.036% 라 모드 3.4 의 기여가 작다(§5a).
-IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t 이지만 우리는 1.0 을 쓴다.
-
-#   [§19.81] LF 는 **무결함** 모델로 계산한다(사용자 결정).
-#     LF 는 MFBO 의 "싼 대리 모델"이다 — 그 정의가 시드표/진폭에 의존하면 같은 설계점의 LF 값이
-#     시드에 따라 흔들려 다중충실도 구조가 약해진다. LF 분기에서는 섭동 크기를 0 으로 만들어
-#     메쉬를 완전하게 둔다(주름은 HF 에서만 발달한다는 해석과도 일치).
-#   [§19.85] HF 완주 사다리(사용자 지시: 0.005 - 0.01 - 0.02 - 0.05).
-#     실측 근거: 같은 점 (x_c=0.8, d_c=0.75)에서 stabilize=0.003 -> TOO MANY ATTEMPTS(τ=0.622),
-#     0.01 -> 완주. 감쇠가 지배 변수임이 단일 변수 실험으로 확정됐다. 첫 레벨로 제출하고
-#     실패하면 다음 레벨로 승급한다(각 레벨의 선택 결과를 로그에 남긴다).
-STABILIZE_LADDER = (0.005, 0.01, 0.02, 0.05)
-
+#   [§19.110] LF 진폭 override — 런타임 인자(fidelity) 파생이라 SETTINGS 밖에 남긴다.
+#     근거([§19.81] LF 는 무결함 모델)는 SETTINGS ⑤ 의 IMPERFECTION_AMPL_T 주석 참조.
 try:
     _IS_HF_RUN = (fidelity == 'HF')
 except NameError:
     _IS_HF_RUN = True                 # 알 수 없으면 종전 동작(HF 가정) 유지
 if not _IS_HF_RUN:
     IMPERFECTION_AMPL_T = 0.0
-#   [2026-10-12 §19.57 **되돌림**] 0.1 로 낮췄다가 되돌린다. 바로 아래 2026-10-06 실측이 반대를 말한다:
-#   0.10 -> 증분 눌림 2215 증분/약 90분 + 초기 결함이 약해 분기가 늦게 갈라져 수렴이 어려움,
-#   1.0 -> 271 증분/11분. 그리고 논문 대조 성공(97.7 t vs 91.1 t = 1.07배)도 **1.0 에서** 나왔다.
-#   씨드 진폭은 포스트버클링 진폭을 정하지 않는다(진폭은 하중이 정한다) -> 논문 정합에 0.10 t 는 불필요.
-#   [2026-10-06 실측] 0.10 이면 증분이 눌려 2215 증분 / 약 90 분이 걸린다. 1.0 이면 271 증분 / 11 분이다
-#   (HF_x025k). 진폭이 작으면 초기 결함이 약해 분기가 늦게 갈라지고 수렴이 어려워진다.
-#   진폭 민감도를 보려면 이 상수를 0.50 등으로 바꿔 재실행한다.
-RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-24). 이유는 측정된 실패 경로다:
-                             #   이 잡은 _EIGENSOLVER='LANCZOS' 로 제출되는데(아래), 이 모델의 좌굴 base state 는
-                             #   이미 분기하중을 넘은 부정정 상태다(시스템 음수 고유값 실측 56~88개). 매뉴얼이 열거한
-                             #   LANCZOS 금지 조건 중 'preloaded above the bifurcation load' 에 정확히 해당하므로
-                             #   ***ERROR: THE LANCZOS SOLVER CANNOT BE USED FOR BUCKLING ANALYSIS 로 거부된다.
-                             #   run_job_safely 는 ABORTED 를 보면 sys.exit(1) 하므로, 이 잡이 켜져 있으면
-                             #   HF_Postbuckle 이 제출되기도 전에 스크립트가 끝난다(제출 순서: LF 840 -> Buckle 862 -> HF 1010).
-                             # SUBSPACE 로 바꿔도 클램프 모델은 좌굴모드 0개로 죽어 같은 경로다. 모드 추출은 이제
-                             #   ODB 모드표 경로(run_abaqus_mode.py -> modes_ClampFree_Buckle.txt)가 담당하므로
-                             #   이 진단 잡은 불필요하다. 클램프 base state 증거가 다시 필요하면 True 로 되돌리되
-                             #   그때는 _EIGENSOLVER 와 제출 순서를 함께 손봐야 한다.
+
 if MODE_SOURCE not in ('external', 'self'):
     raise RuntimeError("MODE_SOURCE 는 'external' 또는 'self' 여야 합니다 (현재 %r)" % (MODE_SOURCE,))
 
 # 임퍼펙션 주입 방식 — 모드 소스의 스텝 타입이 방식을 결정한다(§6).
 #   *BUCKLE   -> 'odb_direct'(기본). *BUCKLE 은 .fil 출력이 금지되므로 모드 프레임은 ODB 에만 있다.
 #   *FREQUENCY -> 'file' (.fil + *IMPERFECTION, FILE=).
-IMPERFECTION_MODE = 'odb_table'   # 'odb_direct'(기본) | 'odb_table' | 'file'
-#   [2026-10-12] 설계점별 시드표 - 경로 결정과 시드 게이트는 아래 `_available_mode_numbers` def
-#     뒤 "[§19.104] 임퍼펙션 표 선택" 블록으로 **옮겼다**. 이유: 클램프 없는 baseline(NO_CLAMP=True)
-#     은 순수 seed 가족 표를 써야 하는데 표 선택 시점에 NO_CLAMP 상수가 필요하고, 그 상수는 종전
-#     모델 조립부(클램프 RP 직전)에 있어 여기서 볼 수 없었다(값/의미 불변, 위치만 이동).
-MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
-MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
-MODE_INSTANCE = 'MEMBRANE-1'                                    # 막 인스턴스 이름
 
 # ---- 모드 소스 오버라이드 (2026-10-07, C-route) ----
 #   기본 소스는 **클램프 없는** 모델(ClampFree_Buckle)이다 — 클램프 모델의 좌굴이 오래 실패했기
@@ -978,7 +1113,6 @@ def _available_mode_numbers(path):
 #   그래서 NO_CLAMP=True 는 (a) 합성표 대신 seed 가족 표를 쓰고 (b) 그 표의 상위 4모드를 쓴다.
 #   NO_CLAMP=False 경로(합성표 + 설계점 지문 게이트)는 종전과 **동일**하다.
 # =====================================================================
-SEED_FAMILY_NAME = 'modes_seed.txt'   # seed 가족 표(꼭짓점 케이블만, x_c 무관, 모드 4개)
 
 
 def seed_family_gate(table_path, max_modes):
@@ -1023,20 +1157,6 @@ def seed_family_gate(table_path, max_modes):
 SEEDS_DIR = os.path.join(_HERE, SEED_DIR_NAME)   # [§19.73] cae noGUI 는 execfile 이라 __file__ 이 없다
 SEED_FAMILY_TABLE = os.path.join(SEEDS_DIR, SEED_FAMILY_NAME)   # [§19.104] 순수 seed 가족 표
 _MODE_TABLE_ENV = os.environ.get('SOLARSAIL_MODE_TABLE')
-#   [§19.104] NO_CLAMP 상수를 이 블록으로 올렸다(값/의미 불변 - 종전에는 클램프 RP 조립부에 있었고,
-#     모드표 결정보다 **뒤**라 여기서 볼 수 없었다). True = 클램프 생략 baseline(run_abaqus_cable 대조).
-NO_CLAMP = True
-#   [§19.105] PULL_TOP: True = 윗 꼭짓점(Top)도 케이블 방향 지정변위로 당긴다(Galhofo 2022 3-tendon 정합).
-#     False(기본) = 종전 그대로 Top 완전 고정 - 기존 런 재현성이 우선이다(BC/스텝 호출 바이트 동일).
-#     NO_CLAMP 와 **독립**이다: 네 조합(PULL_TOP x NO_CLAMP) 모두 유효하고, 클램프 유무와 서로 간섭하지 않는다.
-PULL_TOP = False
-#   [§19.109] TOP_PULL_SCALE: 세 당김의 힘 평형 보정 계수 - **Top 지정변위에만** 곱한다.
-#     케이블 힘 F = E*A*u/L 이므로 대칭 3-tendon 의 평형은 F_top = 2*sin(theta)*F_bot,
-#     즉 u_top = 2*sin(theta)*(LEN_TOP/LEN_BOT)*u_bot (theta = angle_deg = 28.6 deg).
-#     1.0 (기본) = 종전과 동일(보정 없음, 덱/로그 바이트 동일). 0.389 = 힘 평형 조건.
-#     유도: 2*sin(28.6 deg)*0.280/0.689 = 0.389 (길이를 무시한 0.9574 는 틀린 값이다).
-#     Right/Left/클램프 변위에는 곱하지 않는다(세 당김 중 Top 만 평형 보정 대상).
-TOP_PULL_SCALE = 1.0
 if NO_CLAMP:
     # 합성표(2+2)도 env 오버라이드도 쓰지 않는다 - 클램프 모드가 섞이면 그대로 오염이다(§19.104).
     MODE_TABLE = SEED_FAMILY_TABLE
@@ -1152,43 +1272,7 @@ elif IMPERFECTION_MODE == 'odb_direct':
     emit("[IMPERFECTION] 모드당 노드 %d개 / λ %s"
          % (len(_mode_table[IMPERFECTION_MODES[0]]),
             ['%.6e' % _lam[_picks[m - 1]] for m in IMPERFECTION_MODES]))
-# A: 추출 요청 고유값 수. base state 가 부정정이면 줄이는 것이 subspace 수렴에 유리하다(§8a).
-N_EIG_BUCKLE = 100
-# subspace 반복의 기저 벡터 수 (구 MFBO_VECTORS 환경변수는 2026-09-21 제거됨)
-BUCKLE_VECTORS = 250
 
-MODEL_NAME = 'SailModel_Triangle'
-INSTANCE_NAME = 'MEMBRANE-1'
-
-BASE = 20.0   # m
-HEIGHT = 10.0 # m
-# 막 요소는 1차(S4/S3) 유지 — 2차는 base state 를 더 나쁘게 만들어 기각됐다(§4).
-#   요소코드는 모드 소스와 같아야 한다(*IMPERFECTION 이 노드 라벨로 주입된다).
-ELEM_CODE_QUAD = S4         # [2026-10-04] 막(M3D4/M3D3) 실험 철회 -> 1차 셸 복귀.
-ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 셸 복귀
-SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
-THICKNESS = 5.0e-6 # F2: 2.5e-6 -> 5.0e-6 (cable 변형, 2.5um는 수렴 매우 어려움)
-TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
-
-CLAMP_EXCL_R = 0.0   # m — 0.0 이면 제외 노드가 없어 All_Edges_NoClamp == All_Edges 다.
-#   [2026-10-06 철회] 0.2 로 두면 클램프 부착 구간의 경계 노드가 면외 자유로워져 base state 가
-#   불안정해진다(실측: lambda 전부 음수, CONVERGED 0, 스프레드 0.406 %). 이전에 CONVERGED=100
-#   이었던 설정과 같게 0.0 으로 되돌린다. 근거와 실측은 §9.
-                     #     이 반경 내 경계 노드는 면외 z 구속에서 제외한다(§9).
-                     #     근거: 논문 (c) 는 클램프 없는 모델의 조건이고, 클램프가 붙은 선을 면외 고정하면 클램프의 물리가 왜곡된다.
-
-# 케이블 파라미터 (Galhofo reference)
-CABLE_RADIUS = 5.0e-4 # m
-CABLE_AREA = np.pi * (CABLE_RADIUS**2)
-LEN_TOP = 0.280 # m
-LEN_BOT = 0.689 # m
-
-CLAMP_CABLE_LEN = 0.5 # m
-
-# 좌표 정의
-V1 = (BASE/2.0, HEIGHT, 0.0) # Top
-V2 = (BASE, 0.0, 0.0)        # Right
-V3 = (0.0, 0.0, 0.0)         # Left
 
 def clamp_coord_L(x): return (10-10*x, 10-10*x, 0)
 def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
@@ -1196,31 +1280,11 @@ def clamp_coord_R(x): return (10+10*x, 10-10*x, 0)
 V_CL = clamp_coord_L(x_c)
 V_CR = clamp_coord_R(x_c)
 
-# ---- 
-# ---- 사전 장력(prestrain) 캘리브레이션 ----
-# 사전 장력 크기. base state 장력을 키워 시스템행렬 부정정(음수 고유값) 완화를 시도한다.
-# 1.0 = 기존값. 값을 바꾸려면 이 상수를 직접 수정한다(구 MFBO_PRETENSION_SCALE 환경변수는 제거됨).
-PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
-# PRETENSION_SCALE=10 -> 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배. 운용점 조정은 DISP_GLOBAL 로 한다(§8).
-DISP_GLOBAL = 165e-6
+# ---- 런타임 파생 하중: SETTINGS ④ 의 값 x CLI d_c (정의는 여기 — d_c 가 필요하다) ----
 CLAMP_PULL = DISP_GLOBAL * d_c
-# 좌굴 스텝 perturbation — K_delta 를 만든다. 너무 작으면 고유값 분리가 나빠져 추출이 실패한다(§8b).
-PERTURBATION = 0.01
 CLAMP_PERT = PERTURBATION * d_c
-GLOBAL_FINAL = 1e-3  # 최종 하중: 코너 당김 1e-3 m
 CLAMP_FINAL = GLOBAL_FINAL * d_c
 
-
-# 하중 각도 (28.6도)
-angle_deg = 28.6
-angle_rad = np.deg2rad(angle_deg)
-cos_val = float(np.cos(angle_rad))
-sin_val = float(np.sin(angle_rad))
-#   [§19.105] Top 케이블 방향 코사인. 케이블은 connect_cable('Cable_Top', ..., V1, (0.0, 1.0, 0.0)) 로
-#     +y 축에 놓인다 -> 방향 (u1, u2) = (0, +1). Right/Left 와 **같은 대입식**을 쓰기 위해
-#     (u1 = v*cos, u2 = -v*sin) 규약에 맞춘 값이 top_cos=0.0, top_sin=-1.0 이다(즉 u2 = +v).
-top_cos = 0.0
-top_sin = -1.0
 
 # 모델 초기화 및 재질
 def _apply_imperfection_to_part(part):
@@ -1273,16 +1337,12 @@ my_model.HomogeneousShellSection(name='Section-Membrane', material='Kapton', thi
 
 # 케이블 (Kevlar)
 mat_cable = my_model.Material(name='Kevlar')
-mat_cable.Density(table=((1440.0, ),)) 
-mat_cable.Elastic(table=((62.0e9, 0.36),))
+mat_cable.Density(table=((CABLE_RHO, ),)) 
+mat_cable.Elastic(table=((CABLE_E, CABLE_NU),))
 my_model.TrussSection(name='Section-Cable', material='Kevlar', area=CABLE_AREA)
 
 # 파트 생성: 멤브레인
-# ---- 메쉬 종류 (2026-10-07) ----
-#   True  = aba_grid_mesh 균일 격자(.inp -> PartFromInputFile, orphan mesh). 좌우 완전 대칭.
-#   False = 기존 자유 메쉬(seedPart + QUAD_DOMINATED/FREE/MEDIAL_AXIS, 약 1.82만 요소).
-#   !! 네 스크립트(buckle/mode/HF/cable)가 **같은 값**을 써야 한다.
-USE_GRID_MESH = True
+#   [§19.110] 메쉬 종류 스위치(USE_GRID_MESH)의 정의와 근거는 SETTINGS ② 에 있다.
 #   orphan(격자) 경로는 한 이름이 노드용/요소용을 겸할 수 없다(2026-10-07 실측:
 #     ***ERROR: Unknown part instance node set MEMBRANE-1.ALL).
 #     All      = **절점**집합 -> 변위 BC.  All_Elem = **요소**집합 -> 섹션 + 초기응력.
@@ -1418,15 +1478,9 @@ rp2_obj, rp2_reg = create_rigid_patch('Right', V2, radius=0.2)
 rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 
 # 클램프 RP: 우측 빗변 중점 (15,5), 좌측 빗변 중점 (5,5). NO_CLAMP=True 면 클램프를 아예 만들지 않는다.
-NO_CLAMP = True          # True = 클램프 생략 진단 모델 (run_abaqus_cable 대조용)
-# 실행 모드.
-#   'auto'  : 덱 생성 -> riks_patch_input.py 로 *Controls 주입 -> 제출 -> 결과 추출까지 한 번에.
-#             mfbo.py 가 이 경로로 HF 를 부른다(덱 생성만 하면 RESULTS: 가 없어 실패로 읽힌다).
-#   'write' : 덱만 생성하고 종료. 수동으로 패처/job 을 돌리는 워크플로우(latex/디버깅용).
-#   'plain' : 패처 없이 원본 덱을 그대로 제출. 패처 자체를 의심할 때만 쓴다(진단용, 40분 낭비 주의).
-RUN_MODE = 'auto'
-# 초기 가짜 응력(수렴 보조). 케이블 변형=700 Pa, 우리=500 Pa -> 정렬 노브
-SIGMA0 = 500.0                   # 수렴 보조용 초기응력 [Pa]
+#   [§19.110] NO_CLAMP 정의는 SETTINGS ① 한 곳이다. 여기 있던 인라인 재대입
+#     (`NO_CLAMP = True`)은 같은 값의 중복이라 지웠다 — 정의(1028줄)와 재대입(1421줄)
+#     사이에 NO_CLAMP 를 쓰는 문장이 없어 유효값은 종전과 동일하다(상수 대조로 확인).
 if NO_CLAMP:
     emit("[run_abaqus] NO_CLAMP=True : 클램프(cable_CL/CR + 강체패치 + BC) 없이 모델링 (대조 실험)")
     rp_cl_obj = rp_cr_obj = rp_cl_reg = rp_cr_reg = None
@@ -1434,8 +1488,8 @@ else:
     #   [2026-10-12 §19.58] 0.2 -> 0.21: 거리 0.2 노드에서 부동소수 경계로 좌우 패치 노드 수가
     #   달라져(L6/R7) 클램프 부근 최소 주응력이 비대칭이었다. 0.21 은 8/8 대칭(실측)이고
     #   CLAMP_EXCL_R 과 같아 제외가 패치를 덮는다. 빌드 시점에 대칭을 강제 검사한다.
-    rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=0.21)
-    rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=0.21)
+    rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=PATCH_R_CLAMP)
+    rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=PATCH_R_CLAMP)
     _clm = aba_grid_mesh.patch_coords_from_set(a.sets['CL_Nodes'])
     _crm = aba_grid_mesh.patch_coords_from_set(a.sets['CR_Nodes'])
     if _clm is None or _crm is None:
@@ -1515,12 +1569,7 @@ my_model.BuckleStep(
 )"""
 
 if 'Step-Buckle' in my_model.steps: del my_model.steps['Step-Buckle']
-# A: 좌굴 고유값 추출 솔버. **기본 LANCZOS** — Abaqus 의 *BUCKLE 기본 솔버이자 이 코드의
-#    원래 설정(LANCZOS + maxBlocks=DEFAULT)이다. 요소 ~1만 개 / DOF ~4만 개 + 두께 5um 라
-#    강성 조건수가 극단적이어서 SUBSPACE(작은 모델·다수 모드용)로는 100개 모드 추출이
-#    'EIGENVALUES CANNOT BE FOUND' (0 CONVERGED) 로 실패했다.
-#    SUBSPACE 로 강제하려면 _EIGENSOLVER 상수를 'SUBSPACE' 로 수정 (구 MFBO_EIGENSOLVER 환경변수는 제거됨)
-_EIGENSOLVER = "LANCZOS"         # "SUBSPACE" 로 바꾸면 좌굴 추출 재시도
+#   [§19.110] 솔버 선택(_EIGENSOLVER)의 정의/근거는 SETTINGS ⑥ 에 있다.
 emit("[run_abaqus] buckle eigensolver=%s numEigen=%d vectors=%s"
       % (_EIGENSOLVER, N_EIG_BUCKLE, (BUCKLE_VECTORS if _EIGENSOLVER != 'LANCZOS' else 'n/a')))
 if _EIGENSOLVER == 'LANCZOS':
@@ -1700,14 +1749,12 @@ my_model.DisplacementBC(
     u3=0
 )
 
-BUCKLE_ODB = 'Buckle_Analysis.odb'
 #   [2026-10-12 §19.66] LF ODB 는 **설계점별 이름**이다(LF_Analysis_xc<NNN>_dc<NNN>.odb).
 #     고정 이름은 이전 설계점의 LF 가 이번 점의 지표로 둔갑할 수 있었다(짝 오염).
 #     HF ODB 는 고정 이름을 유지한다 — 즉시 eval 로 소비되고 남는 것은 수치이며, 점마다
 #     새 이름을 주면 수 GB 가 쌓인다.
 LF_ODB = lf_odb_name(x_c, d_c)
 LF_JOB = lf_job_name(x_c, d_c)
-HF_ODB = 'HF_Postbuckle.odb'
 
 cmd = ""
 # 버클링 준비 (모델 완성 후)
