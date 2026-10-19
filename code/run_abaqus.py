@@ -1030,6 +1030,13 @@ NO_CLAMP = True
 #     False(기본) = 종전 그대로 Top 완전 고정 - 기존 런 재현성이 우선이다(BC/스텝 호출 바이트 동일).
 #     NO_CLAMP 와 **독립**이다: 네 조합(PULL_TOP x NO_CLAMP) 모두 유효하고, 클램프 유무와 서로 간섭하지 않는다.
 PULL_TOP = False
+#   [§19.109] TOP_PULL_SCALE: 세 당김의 힘 평형 보정 계수 - **Top 지정변위에만** 곱한다.
+#     케이블 힘 F = E*A*u/L 이므로 대칭 3-tendon 의 평형은 F_top = 2*sin(theta)*F_bot,
+#     즉 u_top = 2*sin(theta)*(LEN_TOP/LEN_BOT)*u_bot (theta = angle_deg = 28.6 deg).
+#     1.0 (기본) = 종전과 동일(보정 없음, 덱/로그 바이트 동일). 0.389 = 힘 평형 조건.
+#     유도: 2*sin(28.6 deg)*0.280/0.689 = 0.389 (길이를 무시한 0.9574 는 틀린 값이다).
+#     Right/Left/클램프 변위에는 곱하지 않는다(세 당김 중 Top 만 평형 보정 대상).
+TOP_PULL_SCALE = 1.0
 if NO_CLAMP:
     # 합성표(2+2)도 env 오버라이드도 쓰지 않는다 - 클램프 모드가 섞이면 그대로 오염이다(§19.104).
     MODE_TABLE = SEED_FAMILY_TABLE
@@ -1618,11 +1625,17 @@ my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(stepName='Step-
 if PULL_TOP:
     #   [§19.105] Top Cable: 상향(+y) 당기기 - Right/Left 와 같은 대입식.
     my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(stepName='Step-GlobalTension', 
-        u1=DISP_GLOBAL * top_cos,
-        u2=-DISP_GLOBAL * top_sin
+        u1=DISP_GLOBAL * top_cos * TOP_PULL_SCALE,
+        u2=-DISP_GLOBAL * top_sin * TOP_PULL_SCALE
     )
     emit("[BC] PULL_TOP=True -> Top 꼭짓점도 케이블 방향 변위(프리텐션 %.6g m / 최종 %.6g m), BC_Anchor 는 u3 만"
          % (DISP_GLOBAL, GLOBAL_FINAL))
+    if TOP_PULL_SCALE != 1.0:
+        #   [§19.109] 1.0 이 아니면 실제 적용값을 1줄 더 남긴다(1.0 은 종전 로그와 바이트 동일).
+        emit("[BC] PULL_TOP=True TOP_PULL_SCALE=%.6g -> Top(u1=%.6e,u2=%.6e)"
+             % (TOP_PULL_SCALE,
+                DISP_GLOBAL * top_cos * TOP_PULL_SCALE,
+                -DISP_GLOBAL * top_sin * TOP_PULL_SCALE))
     emit("   [BC] 케이블 방향 (u1=v*cos, u2=-v*sin): Top cos=%.6f sin=%.6f / Right cos=%.6f sin=%.6f / Left cos=%.6f sin=%.6f"
          % (top_cos, top_sin, cos_val, sin_val, -cos_val, sin_val))
 
@@ -1651,8 +1664,8 @@ if PULL_TOP:
     #   [§19.105] 좌굴 perturbation 도 세 꼭짓점에 같은 크기로 준다(한 점만 다른 크기면
     #     좌굴 base state 가 비대칭이 되어 모드가 인위적 비대칭을 담는다).
     my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(stepName='Step-Buckle', 
-        u1=PERTURBATION * top_cos,
-        u2=-PERTURBATION * top_sin
+        u1=PERTURBATION * top_cos * TOP_PULL_SCALE,
+        u2=-PERTURBATION * top_sin * TOP_PULL_SCALE
     )
 if not NO_CLAMP:
     my_model.boundaryConditions['Disp_Control_CL'].setValuesInStep(stepName='Step-Buckle', 
@@ -1771,8 +1784,8 @@ if fidelity == 'LF':
         #   [§19.105] 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 GLOBAL_FINAL.
         my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
             stepName='Step-HighTension',
-            u1=GLOBAL_FINAL * top_cos,
-            u2=-GLOBAL_FINAL * top_sin
+            u1=GLOBAL_FINAL * top_cos * TOP_PULL_SCALE,
+            u2=-GLOBAL_FINAL * top_sin * TOP_PULL_SCALE
         )
     for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
         my_model.boundaryConditions[name].setValuesInStep(
@@ -2090,8 +2103,8 @@ elif fidelity == 'HF':
         #   [§19.105] 포스트버클 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 GLOBAL_FINAL.
         my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
             stepName='Step-Postbuckle',
-            u1=GLOBAL_FINAL * top_cos,
-            u2=-GLOBAL_FINAL * top_sin
+            u1=GLOBAL_FINAL * top_cos * TOP_PULL_SCALE,
+            u2=-GLOBAL_FINAL * top_sin * TOP_PULL_SCALE
         )
 
     for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):

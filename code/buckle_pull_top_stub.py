@@ -184,7 +184,7 @@ NS_BASE = {
 }
 
 
-def make_ns(src, pt, case, logs, grid=None):
+def make_ns(src, pt, case, logs, grid=None, scale=None):
     ang = math.radians(28.6)
     ns = dict(NS_BASE)
     ns.update({
@@ -203,6 +203,8 @@ def make_ns(src, pt, case, logs, grid=None):
         'PULL_TOP': pt,
         'TOP_PULL_COS': field(src, 'TOP_PULL_COS'),
         'TOP_PULL_SIN': field(src, 'TOP_PULL_SIN'),
+        #   [§19.109] 소스의 값을 그대로 주입한다(없으면 None -> 구역이 참조하면 NameError 로 FAIL).
+        'TOP_PULL_SCALE': (field(src, 'TOP_PULL_SCALE') if scale is None else float(scale)),
     })
     if case == 'seed':
         ns.update({'CASE': 'seed', 'HAS_CABLES': True, 'HAS_CLAMPS': False,
@@ -232,9 +234,9 @@ def field(src, name):
         return None
 
 
-def run(region, src, pt, case):
+def run(region, src, pt, case, scale=None):
     logs = []
-    ns = make_ns(src, pt, case, logs)
+    ns = make_ns(src, pt, case, logs, scale=scale)
     exec(compile(region, '<buckle_bc:%s>' % case, 'exec'), ns)
     return ns['my_model'], logs, ns
 
@@ -261,6 +263,8 @@ def find_steps(rec, name):
 CONST_A = u'PULL_TOP = False'
 CONST_B = u'TOP_PULL_SIN = -1.0'
 PULL_TOP_LINE = re.compile(r'(?m)^PULL_TOP = (True|False)[ \t]*(?:#.*)?$')
+#   [§19.109] TOP_PULL_SCALE 줄 - 사용자가 하는 편집과 같은 1줄 바꿔치기용.
+SCALE_LINE = re.compile(r'(?m)^TOP_PULL_SCALE = ([^#\n]+)')
 #   소스에 남아 있으면 안 되는 env 이름. 하네스는 이 값을 **읽지 않는다**(os.environ 미참조) --
 #   여기서는 '소스에 0회' 를 세기 위한 needle 로만 쓴다.
 ENV_NEEDLE = u'SOLARSAIL' u'_PULL_TOP'
@@ -282,6 +286,21 @@ def const_value(src):
 def flip_constant(src, value):
     """사용자가 하는 편집과 같은 조작: 상수 줄 1줄만 바꿔치기한 소스를 돌려준다."""
     return PULL_TOP_LINE.sub('PULL_TOP = %s' % ('True' if value else 'False'), src, count=1)
+
+
+def flip_scale(src, value):
+    """[§19.109] TOP_PULL_SCALE 줄 1줄만 바꿔치기(사용자 편집과 같은 조작)."""
+    return SCALE_LINE.sub('TOP_PULL_SCALE = %r' % float(value), src, count=1)
+
+
+def scale_value(src):
+    m = SCALE_LINE.search(src)
+    if m is None:
+        return None
+    try:
+        return float(m.group(1).strip())
+    except Exception:
+        return None
 
 
 def exec_const(src):
@@ -477,6 +496,67 @@ def main():
         check('%s: False 이름이 기저와 동일' % case, nF == nO, (nF, nO))
         check('%s: True 이름이 _3t 로 갈린다' % case, nT.endswith('_3t') and nT != nF, (nF, nT))
         check('%s: True 이름 80자 이하' % case, len(nT) <= 80, len(nT))
+
+    # ---------------------------------------------------------------- (vii) 0.389
+    print("\n[(vii)] TOP_PULL_SCALE = 0.389 (3-tendon 힘 평형) - Top 만 스케일, Right/Left 불변")
+    _ang = field(src, 'CORNER_ANGLE_DEG')
+    _lt, _lb = field(src, 'LEN_TOP'), field(src, 'LEN_BOT')
+    eq_formula = 2.0 * math.sin(math.radians(_ang)) * (_lt / _lb)
+    print("         유도: 2*sin(%.3f deg)*(LEN_TOP/LEN_BOT) = 2*%.6f*(%.3f/%.3f) = %.9f"
+          % (_ang, math.sin(math.radians(_ang)), _lt, _lb, eq_formula))
+    check('유도값이 0.389 와 일치 (|x-0.389| < 5e-4)', abs(eq_formula - 0.389) < 5e-4, eq_formula)
+    check('기본 TOP_PULL_SCALE = 1.0 (평형 보정 없음)', scale_value(src) == 1.0, scale_value(src))
+    check('TOP_PULL_SCALE 대입 정확히 1줄', len(SCALE_LINE.findall(src)) == 1,
+          SCALE_LINE.findall(src))
+
+    SQ = 0.389
+    srcS = flip_scale(src, SQ)
+    check('상수 줄 바꿔치기: 0.389 로 1줄만 변경',
+          srcS != src and scale_value(srcS) == SQ and scale_value(src) == 1.0)
+    print("         0.389 로 바꾼 줄: %s" % [l for l in srcS.split('\n')
+                                              if l.startswith('TOP_PULL_SCALE = ')])
+    for case in ('seed', 'clamp_only'):
+        m1, lg1, _ = run(r_new, src, True, case)                 # 기본 1.0
+        mS, lgS, _ = run(region_bc(srcS), srcS, True, case)      # 0.389
+        s1 = find_steps(m1.rec, 'Disp_Control_Top')
+        sS = find_steps(mS.rec, 'Disp_Control_Top')
+        print("         [%s] GlobalTension/Buckle Top (1.0 -> 0.389)" % case)
+        for st in ('Step-GlobalTension', 'Step-Buckle'):
+            print("             %-18s u1 %.6e -> %.6e / u2 %.6e -> %.6e"
+                  % (st, s1[st]['u1'], sS[st]['u1'], s1[st]['u2'], sS[st]['u2']))
+        gt = sS.get('Step-GlobalTension', {})
+        check('%s: GlobalTension Top u2 == 0.389 x (1.0 값) (절대오차 1e-12)' % case,
+              abs(gt.get('u2', 9e9) - s1['Step-GlobalTension']['u2'] * SQ) < 1e-12,
+              (gt.get('u2'), s1['Step-GlobalTension']['u2'] * SQ))
+        check('%s: GlobalTension Top u1 == 0 (방향 불변)' % case, abs(gt.get('u1', 9e9)) < 1e-18, gt)
+        bk = sS.get('Step-Buckle', {})
+        if case == 'seed':
+            check('seed: Buckle Top u2 == 0.389 x (1.0 값) (절대오차 1e-12)',
+                  abs(bk.get('u2', 9e9) - s1['Step-Buckle']['u2'] * SQ) < 1e-12,
+                  (bk.get('u2'), s1['Step-Buckle']['u2'] * SQ))
+        else:
+            check('clamp_only: Buckle Top 은 (0,0) 유지 (스케일과 무관)',
+                  abs(bk.get('u1', 9)) < 1e-18 and abs(bk.get('u2', 9)) < 1e-18, bk)
+        # Right/Left/클램프: 계수를 곱하지 않는다 -> 호출열이 1.0 런과 완전 동일
+        _oth = ['Disp_Control_Right', 'Disp_Control_Left']
+        if case == 'clamp_only':
+            _oth += ['Disp_Control_CL', 'Disp_Control_CR', 'BC_Clamp_CL', 'BC_Clamp_CR']
+        for nm in _oth:
+            a = [r for r in m1.rec if r[0] in ('setValuesInStep', 'DisplacementBC')
+                 and (r[1] == nm if r[0] == 'setValuesInStep' else dict(r[1]).get('name') == nm)]
+            b = [r for r in mS.rec if r[0] in ('setValuesInStep', 'DisplacementBC')
+                 and (r[1] == nm if r[0] == 'setValuesInStep' else dict(r[1]).get('name') == nm)]
+            check('%s: %s 호출 불변 (%d회)' % (case, nm, len(a)), a == b and a, (a, b))
+        # 로그: 1.0 은 추가 줄 0(바이트 동일), 0.389 는 정확히 1줄 + 실제 적용값
+        check('%s: 1.0 로그에 TOP_PULL_SCALE 줄 0' % case,
+              not any('TOP_PULL_SCALE' in s for s in lg1), lg1)
+        _sc = [s for s in lgS if 'TOP_PULL_SCALE' in s]
+        check('%s: 0.389 로그 정확히 1줄' % case, len(_sc) == 1, lgS)
+        if _sc:
+            print("         [%s] LOG| %s" % (case, _sc[0]))
+            check('%s: 로그에 실제 적용값(%.6e) 포함' % (case, gt.get('u2', 0.0)),
+                  ('%.6e' % gt.get('u2', 0.0)) in _sc[0], _sc[0])
+            check('%s: 로그 cp949 인코딩 가능' % case, _enc_ok(_sc[0]), _sc[0])
 
     # ---------------------------------------------------------------- (vi) 금지문자
     print("\n[(vi)] 새 문자열 문자 검사")

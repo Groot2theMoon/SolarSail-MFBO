@@ -161,7 +161,7 @@ def cable_top_dir(src):
 
 
 # ------------------------------------------------------------------ 구역 실행
-def make_ns(src, pt, nc):
+def make_ns(src, pt, nc, scale=None):
     logs = []
 
     def _emit(*a):
@@ -179,6 +179,8 @@ def make_ns(src, pt, nc):
         'PERTURBATION': field(src, 'PERTURBATION'),
         'top_cos': field(src, 'top_cos'), 'top_sin': field(src, 'top_sin'),
         'cos_val': math.cos(ang), 'sin_val': math.sin(ang),
+        #   [§19.109] 소스의 값을 그대로 주입(0.389 검증은 이 값만 바꿔 실행한다).
+        'TOP_PULL_SCALE': (field(src, 'TOP_PULL_SCALE') if scale is None else float(scale)),
         'emit': _emit,
     }
     # 소스에 있는 CLAMP_* 를 그대로 (없으면 계산)
@@ -193,10 +195,28 @@ def make_ns(src, pt, nc):
     return ns, logs
 
 
-def run(region, src, pt, nc):
-    ns, logs = make_ns(src, pt, nc)
+def run(region, src, pt, nc, scale=None):
+    ns, logs = make_ns(src, pt, nc, scale=scale)
     exec(compile(region, '<run_abaqus_bc>', 'exec'), ns)
     return ns['my_model'], logs
+
+
+#   [§19.109] TOP_PULL_SCALE 줄 1줄 바꿔치기(사용자 편집과 같은 조작).
+SCALE_LINE = re.compile(r'(?m)^TOP_PULL_SCALE = ([^#\n]+)')
+
+
+def flip_scale(src, value):
+    return SCALE_LINE.sub('TOP_PULL_SCALE = %r' % float(value), src, count=1)
+
+
+def scale_value(src):
+    m = SCALE_LINE.search(src)
+    if m is None:
+        return None
+    try:
+        return float(m.group(1).strip())
+    except Exception:
+        return None
 
 
 # ------------------------------------------------------------------ 기저(baseline) 소스
@@ -371,6 +391,54 @@ def main():
                 check('  조합 BC 개수: %d (Top 포함)' % _want,
                       len(mm.boundaryConditions) == _want,
                       sorted(mm.boundaryConditions))
+
+    # ---------------------------------------------------------------- (vi) 0.389
+    print("\n[(vi)] TOP_PULL_SCALE = 0.389 (3-tendon 힘 평형) - Top 만, Right/Left/클램프 불변")
+    _ang = field(src, 'angle_deg')
+    _lt, _lb = field(src, 'LEN_TOP'), field(src, 'LEN_BOT')
+    eq_formula = 2.0 * math.sin(math.radians(_ang)) * (_lt / _lb)
+    print("         유도: 2*sin(%.3f deg)*(LEN_TOP/LEN_BOT) = 2*%.6f*(%.3f/%.3f) = %.9f"
+          % (_ang, math.sin(math.radians(_ang)), _lt, _lb, eq_formula))
+    check('유도값이 0.389 와 일치 (|x-0.389| < 5e-4)', abs(eq_formula - 0.389) < 5e-4, eq_formula)
+    check('기본 TOP_PULL_SCALE = 1.0 (평형 보정 없음)', scale_value(src) == 1.0, scale_value(src))
+    check('TOP_PULL_SCALE 대입 정확히 1줄', len(SCALE_LINE.findall(src)) == 1,
+          SCALE_LINE.findall(src))
+
+    SQ = 0.389
+    srcS = flip_scale(src, SQ)
+    check('상수 줄 바꿔치기: 0.389 로 1줄만 변경',
+          srcS != src and scale_value(srcS) == SQ and scale_value(src) == 1.0)
+    for tag, rnew, step in (('GlobalTension', r_bc, 'Step-GlobalTension'),
+                            ('Buckle', r_bc, 'Step-Buckle'),
+                            ('HighTension', r_fin, 'Step-HighTension'),
+                            ('Postbuckle', r_post, 'Step-Postbuckle')):
+        m1, lg1 = run(rnew, src, True, False)                       # 1.0
+        mS, lgS = run(rnew, srcS, True, False, scale=SQ)            # 0.389
+        s1 = dict(find(m1.rec, 'setValuesInStep', 'Disp_Control_Top'))
+        sS = dict(find(mS.rec, 'setValuesInStep', 'Disp_Control_Top'))
+        print("         %-14s Top u1 %.6e -> %.6e / u2 %.6e -> %.6e"
+              % (tag, s1[step]['u1'], sS[step]['u1'], s1[step]['u2'], sS[step]['u2']))
+        check('%s: Top u2 == 0.389 x (1.0 값) (절대오차 1e-12)' % tag,
+              abs(sS[step]['u2'] - s1[step]['u2'] * SQ) < 1e-12,
+              (sS[step]['u2'], s1[step]['u2'] * SQ))
+        check('%s: Top u1 == 0 (방향 불변)' % tag, abs(sS[step]['u1']) < 1e-18, sS[step])
+        for nm in ('Disp_Control_Right', 'Disp_Control_Left'):
+            a = [r for r in m1.rec if r[0] == 'setValuesInStep' and r[1] == nm]
+            b = [r for r in mS.rec if r[0] == 'setValuesInStep' and r[1] == nm]
+            check('%s: %s 호출 불변 (%d회)' % (tag, nm, len(a)), a == b and a, (a, b))
+        check('%s: 1.0 로그에 TOP_PULL_SCALE 줄 0' % tag,
+              not any('TOP_PULL_SCALE' in s for s in lg1), lg1)
+        _sc = [s for s in lgS if 'TOP_PULL_SCALE' in s]
+        if tag in ('GlobalTension', 'Buckle'):
+            #   두 태그는 같은 BC 구역(r_bc)을 실행한다 -> 로그도 같다(추가 1줄).
+            check('%s: 0.389 로그 1줄(BC 구역)' % tag, len(_sc) == 1, lgS)
+        else:
+            check('%s: 로그 추가 0줄(로그는 BC 구역에서만)' % tag, not _sc, lgS)
+        if tag == 'GlobalTension' and _sc:
+            print("         LOG| %s" % _sc[0])
+            check('로그에 실제 적용값(%.6e) 포함' % sS[step]['u2'],
+                  ('%.6e' % sS[step]['u2']) in _sc[0], _sc[0])
+            check('로그 cp949 인코딩 가능', _enc_ok(_sc[0]), _sc[0])
 
     # ---------------------------------------------------------------- (v) 금지문자
     print("\n[(v)] 새 문자열 문자 검사")

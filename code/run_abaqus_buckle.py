@@ -111,6 +111,16 @@ DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용�
 # 코너 하중 각도 [deg] — 전 케이스가 'hf'(28.6 = 우리 HF/케이블 방향).
 CORNER_ANGLE_DEG = 28.6
 
+# ---- [§19.109] TOP_PULL_SCALE: 세 당김의 힘 평형 보정 (Top 지정변위에만 곱한다) ----
+#   왜: PULL_TOP=True(3-tendon)에서 세 케이블을 **같은 변위**로 당기면 힘 평형이 안 맞는다.
+#     케이블 힘은 F = E*A*u/L 이므로, 대칭 3-tendon 의 평형 조건은
+#         F_top = 2*sin(theta)*F_bot            (theta = CORNER_ANGLE_DEG = 28.6 deg)
+#         u_top = 2*sin(theta)*(LEN_TOP/LEN_BOT)*u_bot
+#     -> 2*sin(28.6 deg) * 0.280/0.689 = 0.389  (길이를 무시한 0.9574 는 틀린 값이다).
+#   1.0 (기본) = 종전과 동일(평형 보정 없음). BC 호출/덱/로그가 종전과 **바이트 동일**해야 한다.
+#   0.389      = 힘 평형 조건(실험값). Right/Left/클램프 변위는 이 계수를 곱하지 않는다.
+TOP_PULL_SCALE = 1.0
+
 CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c).
 
 # ---- 클램프 당김 방향 (CLAMP_DIR) ----
@@ -877,8 +887,8 @@ def build_model(disp):
                                 region=A1, u1=SET, u2=SET)
         my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
             stepName='Step-GlobalTension',
-            u1=disp_a * TOP_PULL_COS,
-            u2=-disp_a * TOP_PULL_SIN
+            u1=disp_a * TOP_PULL_COS * TOP_PULL_SCALE,
+            u2=-disp_a * TOP_PULL_SIN * TOP_PULL_SCALE
         )
     if PRETENSION_MODE == 'paper3':
         my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
@@ -899,7 +909,14 @@ def build_model(disp):
         print("%s [BC] PULL_TOP=%s (constant) -> Top 꼭짓점도 케이블 방향 변위: 프리텐션 %.4e m "
               "(u1=%.6f, u2=%.6f), BC_Anchor_Top 은 u3+회전만"
               % (TAG, PULL_TOP, disp_a,
-                 disp_a * TOP_PULL_COS, -disp_a * TOP_PULL_SIN))
+                 disp_a * TOP_PULL_COS * TOP_PULL_SCALE,
+                 -disp_a * TOP_PULL_SIN * TOP_PULL_SCALE))
+        if TOP_PULL_SCALE != 1.0:
+            #   [§19.109] 1.0 이 아니면 실제 적용값을 1줄 더 남긴다(1.0 은 종전 로그와 바이트 동일).
+            print("%s [BC] PULL_TOP=True TOP_PULL_SCALE=%.6g -> Top(u1=%.6e,u2=%.6e)"
+                  % (TAG, TOP_PULL_SCALE,
+                     disp_a * TOP_PULL_COS * TOP_PULL_SCALE,
+                     -disp_a * TOP_PULL_SIN * TOP_PULL_SCALE))
     # ---- 하중/구속 배선 ----
     if CLAMP_LOAD == 'base':
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
@@ -997,7 +1014,8 @@ def build_model(disp):
             #     (HF §19.105 와 같은 이유/같은 처리).
             my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
                 stepName='Step-Buckle',
-                u1=_ns * TOP_PULL_COS, u2=-_ns * TOP_PULL_SIN)
+                u1=_ns * TOP_PULL_COS * TOP_PULL_SCALE,
+                u2=-_ns * TOP_PULL_SIN * TOP_PULL_SCALE)
     return model_name
 
 ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', M3D4: 'm3d4', M3D3: 'm3d3'}.get(ELEM_CODE_QUAD)
@@ -1186,6 +1204,9 @@ try:
         'convMax': (max(_M['conv']) if _M.get('conv') else None),
         'wallclock': _M.get('wall'), 'lambdas': [], 'base_probe_ok': _BASE['probe_ok'],
     }
+    if TOP_PULL_SCALE != 1.0:
+        #   [§19.109] 기본값(1.0) 이 아닐 때만 열을 추가한다 - 종전 ledger 행과 바이트 동일 유지.
+        _row['TOP_PULL_SCALE'] = TOP_PULL_SCALE
     _datf = os.path.join(_RUN, '%s.dat' % JOB_NAME)
     if os.path.exists(_datf) and _HAS_PBL:
         _txt = _io.open(_datf, encoding='utf-8', errors='replace').read()

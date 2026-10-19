@@ -4473,3 +4473,61 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   `python3 buckle_compare.py selftest` / `python3 test_seed_path.py` /
   `python3 check_model_consistency.py` / `python3 static_leak_check.py`
   값 고치기: 이제 `run_abaqus_buckle.py` 의 `# ===== SETTINGS =====` 블록만 본다.
+
+#### §19.109 TOP_PULL_SCALE - 3-tendon 힘 평형 보정 (기본 1.0, 평형값 0.389, 2026-10-19)
+
+[왜] HF 와 버클을 모두 `PULL_TOP=True`(3-tendon)로 돌리면 **base state 가 불안정**해 고유모드가
+  수렴하지 않았다. 실측: SYSTEM MATRIX 음의 고유값 12개, DIFFERENTIAL MATRIX 음의 대각 16,122개,
+  최종 `ERROR: THE EIGENVALUES CANNOT BE FOUND`. 원인은 세 당김의 **힘 평형 불일치**다 - §19.105/107 은
+  Top/Right/Left 에 **같은 크기**의 지정변위를 줬지만, 케이블 힘은 `F = E*A*u/L` 이므로 길이가
+  다른 세 케이블에 같은 변위를 주면 힘이 평형을 이루지 않는다(과구속 -> 면내 압축이 인위적으로
+  커지고 시스템행렬이 부정정). 좌굴모드는 base state 의 함수이므로 이 불평형은 모드 자체를 오염시킨다.
+
+[무엇] 두 스크립트에 `TOP_PULL_SCALE` 상수 하나를 추가하고 **Top 꼭짓점 지정변위에만** 곱했다.
+  - 대칭 3-tendon 평형 조건: `F_top = 2*sin(theta)*F_bot` (theta = 코너 하중 각도)
+    -> `u_top = 2*sin(theta)*(LEN_TOP/LEN_BOT)*u_bot`.
+  - 값: `2*sin(28.6 deg)*(0.280/0.689) = 0.389067...` -> **0.389**.
+    길이비를 무시한 `2*sin(28.6 deg) = 0.9574` 는 **틀린 값**이다(힘은 변위/L 에 비례).
+  - `run_abaqus_buckle.py`: 상수는 `# ===== SETTINGS =====` 그룹 ④(`CORNER_ANGLE_DEG` 바로 뒤,
+    `CORNER_ANGLE_DEG`/`LEN_TOP`/`LEN_BOT` 를 그대로 참조). 적용 2곳 = `Step-GlobalTension`
+    프리텐션(`Disp_Control_Top`) + `Step-Buckle` perturbation(seed 라우트).
+  - `run_abaqus.py`: 상수는 `PULL_TOP` 바로 뒤(그 시점에 `angle_deg`/`LEN_*` 는 아직 정의 전이라
+    리터럴 1.0 만 둔다 - 유도식은 주석에 남겼다). 적용 4곳 = `Step-GlobalTension`,
+    `Step-Buckle` perturbation, `Step-HighTension`(LF 최종), `Step-Postbuckle`(HF 최종).
+  - **Right/Left/클램프는 건드리지 않았다**(곱셈 대상은 `Disp_Control_Top` 뿐).
+  - 기본 1.0 -> 종전과 **바이트 동일**(BC 호출/덱/로그/ledger). `1.0` 곱은 IEEE754 에서 항등이라
+    `disp*COS*SCALE` 의 값이 `disp*COS` 와 비트까지 같다.
+  - 로그: 1.0 이면 **아무 줄도 추가하지 않고**, 1.0 이 아니면 1줄만 더 찍는다 -
+    `[BC] PULL_TOP=True TOP_PULL_SCALE=0.389 -> Top(u1=...,u2=...)`.
+  - ledger(버클): 1.0 이 아니면 `TOP_PULL_SCALE` 열을 **추가**한다(기본 행은 종전과 바이트 동일).
+
+[검증 - Abaqus 없이 실제 실행]
+  - `python3 -m py_compile run_abaqus.py run_abaqus_buckle.py` OK.
+  - `python3 buckle_pull_top_stub.py` -> **84/84 PASS**(§19.108 의 58개 전부 + 신규 26개).
+  - `python3 pull_top_stub.py` -> **68/68 PASS**(기존 + 신규 20개).
+  - **1.0 회귀(핵심)**: `buckle_stub_harness.py seed 0.5` / `clamp_only 0.5` 의 전체 mdb 호출열이
+    변경 전(HEAD)과 **경로 정규화 후 sha256 동일**(seed `d9c96570...`, clamp `3f174cdb...`).
+    `PULL_TOP=True` 경로도 HEAD 와 trace+로그 **문자열 동일**(seed 1756자 / clamp_only 2974자,
+    run_abaqus.py 는 3구역 x PULL_TOP x NO_CLAMP = 12조합 전부 동일, trace sha256 위 회귀 스크립트).
+  - **0.389 동작(수치)**: 상수 줄만 `TOP_PULL_SCALE = 0.389` 로 바꿔치기해 실행.
+    - 버클 GlobalTension Top u2 : `1.800000e-05 -> 7.002000e-06` (= 0.389x)
+    - 버클 Buckle perturbation : `1.000000e-02 -> 3.890000e-03` (= 0.389x)
+    - HF GlobalTension        : `1.650000e-04 -> 6.418500e-05`
+    - HF HighTension/Postbuckle: `1.000000e-03 -> 3.890000e-04`
+    - 전부 절대오차 `< 1e-12`, Right/Left/클램프 호출열은 1.0 런과 **완전 동일**(불변 확인).
+  - 기존 게이트: `buckle_compare.py selftest` 9/9 · `test_seed_path.py` 49/49 ·
+    `check_model_consistency.py` PASS · `static_leak_check.py` 이상 없음(4 파일).
+
+[한계 — 정직하게] 이 환경에는 Abaqus 라이선스가 없다. 위 검증은 **배선(BC/스텝 호출)과 산술**까지다.
+  "0.389 로 두면 음의 고유값이 사라지고 모드가 수렴한다" 는 **실런으로만** 확인된다.
+  또한 `JOB_NAME`/HF ODB 이름은 스케일에 무관하므로, 1.0 런 산출물과 0.389 런 산출물이 **같은
+  이름**을 쓴다 -> 1.0 산출물을 먼저 백업(또는 다른 이름)한 뒤 0.389 로 바꿔 실행해야 비교가 된다.
+
+[실행]
+  `cd code`
+  `python3 buckle_pull_top_stub.py`      # 84/84 (0.389 수치 검증 포함)
+  `python3 pull_top_stub.py`             # 68/68
+  값 바꾸기: `run_abaqus_buckle.py` 의 `TOP_PULL_SCALE = 1.0` -> `0.389` (같은 줄, `PULL_TOP = True` 도 함께)
+            `run_abaqus.py` 의 `TOP_PULL_SCALE = 1.0` -> `0.389`
+  확인: 로그의 `[BC] PULL_TOP=True TOP_PULL_SCALE=0.389 -> Top(u1=...,u2=...)` 1줄.
+        (1.0 이면 이 줄이 **없다** - 그게 정상이다.)
