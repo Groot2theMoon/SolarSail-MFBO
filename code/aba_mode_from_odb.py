@@ -30,16 +30,20 @@ import sys
 
 DEFAULT_INSTANCE = 'MEMBRANE-1'
 
+#   2026-10-20: 0.0001 m paper 케이스는 base state가 post-buckled라 λ가 음수다.
+#   모드 **형상**은 임퍼펙션 기저로 유효하므로 음수 λ도 받는다(λ 부호는 하중계수 방향).
+ALLOW_NEGATIVE = True
+
 
 def pick_mode_frames(lambdas, n_modes):
-    """λ > 0 인 프레임을 앞에서부터 n_modes 개 고른다(음수/NaN λ 는 건너뛴다).
+    """앞에서부터 n_modes 개 프레임을 고른다 (NaN 제외, 음수 λ는 ALLOW_NEGATIVE일 때 허용).
 
     반환: 0-based 프레임 인덱스 리스트(순서 보존, 길이 <= n_modes).
     순수 함수로 분리한 이유: odbAccess 없이 로컬에서 단위검증할 수 있게 하기 위해서.
     """
     pick = []
     for i, v in enumerate(lambdas):
-        if v == v and v > 0.0:          # v == v -> NaN 제외
+        if v == v and (v > 0.0 or ALLOW_NEGATIVE):   # v == v -> NaN 제외
             pick.append(i)
             if len(pick) >= n_modes:
                 break
@@ -133,13 +137,15 @@ def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, ver
             _say("[MODES] 기저 프레임(frame 1, frameValue 0) 제외 - λ 목록을 한 칸 밀어 정렬")
 
         # --- 후보 프레임: 양수 λ 이고 ODB 프레임 범위 안 ---
-        cand = [m for m, v in enumerate(lam) if v > 0.0 and m < len(frames)][:BUCKLE_SCAN_MAX]
-        _over = [m + 1 for m, v in enumerate(lam) if v > 0.0 and m >= len(frames)]
+        cand = [m for m, v in enumerate(lam)
+                if v == v and (v > 0.0 or ALLOW_NEGATIVE) and m < len(frames)][:BUCKLE_SCAN_MAX]
+        _over = [m + 1 for m, v in enumerate(lam)
+                 if v == v and (v > 0.0 or ALLOW_NEGATIVE) and m >= len(frames)]
         if _over:
             _say("[MODES] 경고: λ 출처(%s)의 모드 %s 는 ODB 프레임(%d개) 범위 밖 -> 제외"
                  % (lam_src, _over, len(frames)))
         if not cand:
-            raise ValueError("양수 λ 모드가 없다 -> 좌굴모드가 수렴하지 않았다. λ: %s"
+            raise ValueError("모드가 없다 (λ>0 또는 ALLOW_NEGATIVE) -> 좌굴모드가 수렴하지 않았다. λ: %s"
                              % ', '.join('%.6e' % v for v in lam[:12]))
 
         # --- (2026-09-28 실측) 횡(면외) 성분 필터 ---

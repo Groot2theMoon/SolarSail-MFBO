@@ -74,7 +74,7 @@ MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
 #   모드는 임퍼펙션의 **형상 기저**일 뿐이고 진폭은 HF 가 0.1 t 로 따로 주므로,
 #   모드 추출은 안정 운용점(1.8e-5 m)에서 하고 2:1 형상만 논문과 맞춘다.
 PAPER_STATIC_DISP = 0.0005    # 논문 Fig. 12 정적 스텝 코너값 (D4: 모드 추출에 사용)
-MODE_PRESTRESS = 0.0005       # D4: 논문 정적변위. 1차 요소에서 재시도
+MODE_PRESTRESS = 0.0001       # 2026-10-20: 대칭 10모드 확인된 운용점 (λ 쌍 −1.5867e-4 등)
 
 # ---- ① CASE 선택 ----
 CASE = 'paper' if PAPER_MATCH else 'clamp_only'

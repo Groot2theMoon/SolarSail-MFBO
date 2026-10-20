@@ -103,12 +103,12 @@ def buckle_mesh_tag():
 
 
 def seed_case():
-    """모드 추출은 **seed + clamp_only 합성** (사용자 결정 2026-10-20).
+    """모드 추출은 **paper + clamp_only 합성** (2026-10-20 대칭 10모드 확정).
 
-    cable-free 'paper' 케이스는 run_abaqus_buckle.py 에 수동 실행용으로 남겨 둔다
-    (모드표의 1가족으로 쓰지 않는다 — 사용자는 두 가족 합성을 선택했다).
+    CASE='seed'(케이블) 대신 cable-free 'paper' 케이스를 쓴다. 0.0001 m 에서
+    10모드가 좌우 대칭 쌍으로 나왔고(λ −1.5867e-4 쌍 등), 모드 형상 기저로 충분하다.
     """
-    return 'seed'
+    return 'paper'
 
 
 def buckle_pert_tag():
