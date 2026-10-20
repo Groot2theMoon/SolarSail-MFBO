@@ -67,7 +67,7 @@ import numpy as np
 #     위치만 모았다(값 변경 0건 -> 생성 덱과 콘솔 로그가 종전과 바이트 동일해야 한다).
 #   이 아래의 파생부는 이 값을 읽어 계산한다 (손대지 않는다):
 #     _HERE/_RUN(경로) -> CLI 파싱(fidelity/x_c/d_c) -> V_CL/V_CR
-#     -> CLAMP_PULL/CLAMP_PERT/CLAMP_FINAL(d_c 곱) -> MODE_TABLE/IMPERFECTION_MODES(모드표 게이트)
+#     -> CLAMP_PRESTRESS = d_c * CABLE_PRESTRESS -> MODE_TABLE/IMPERFECTION_MODES(모드표 게이트)
 #     -> LF_ODB/LF_JOB -> _ALL_ELEM -> _steps_in_order/_BUCKLE_STEP_NO -> BUCKLE_MODEL
 #   그룹: ① 실행 모드/스위치 ② 형상/격자 ③ 재료 ④ 하중/프리텐션 ⑤ 좌굴/임퍼펙션
 #         ⑥ HF 솔버 ⑦ 경로/식별자
@@ -91,7 +91,7 @@ PAPER_EDGE_BC_FROM_INITIAL = bool(PAPER_MATCH)   # 3변 u3=0 을 Initial 에서 
 #   [2026-10-20] 논문 재현과 실제 설계를 분리한다.
 #     False = 논문 5PCS 그대로 (클램프 없음, NO_CLAMP=True)
 #     True  = 논문 프리텐션·BC·1차 메쉬는 유지하되 **클램프 + 꼭짓점 케이블을 모두 포함**
-#             (실제 포스트버클링 모델. CLAMP_PULL=DISP_GLOBAL*d_c 는 그대로 살아 있다.)
+#             (실제 포스트버클링 모델. 클램프 프리텐션 = 초기응력 d_c*CABLE_PRESTRESS.)
 PAPER_INCLUDE_CLAMPS = True
 #   [paper-match] 모드표 = **seed + clamp_only 합성표** (사용자 결정 2026-10-20).
 #     True  = seeds/modes_xc<xc>.txt (2+2 합성) 를 쓰고 seed_gate 지문 검사를 적용한다.
@@ -1361,9 +1361,11 @@ V_CL = clamp_coord_L(x_c)
 V_CR = clamp_coord_R(x_c)
 
 # ---- 런타임 파생 하중: SETTINGS ④ 의 값 x CLI d_c (정의는 여기 — d_c 가 필요하다) ----
-CLAMP_PULL = DISP_GLOBAL * d_c
-CLAMP_PERT = PERTURBATION * d_c
-CLAMP_FINAL = GLOBAL_FINAL * d_c
+#   [2026-10-20] 클램프 프리텐션 = 초기응력. d_c = 클램프/꼭짓점 케이블 **응력비**.
+CLAMP_PRESTRESS = CABLE_PRESTRESS * d_c
+CLAMP_PULL = 0.0                 # 변위 당김 없음 (기존 기록 호환)
+CLAMP_FINAL = 0.0                # 변위 당김 없음 (기존 기록 호환)
+CLAMP_PERT = PERTURBATION        # 자기좌굴 프로브용(설계하중 아님, d_c 무관)
 
 
 # 모델 초기화 및 재질
@@ -1664,7 +1666,7 @@ if _EIGENSOLVER == 'LANCZOS':
         # (B) base state = '클램프 당김 없는(GlobalTension 말단)' 상태.
         #   [§19.96 정정] 클램프 자체는 Initial 에서 생성되어 GlobalTension 내내 구속이 살아 있다
         #     (Tie_CL/Tie_CR + BC_CL/BC_CR u3=0 + Disp_Control_CL/CR u1=u2=0 — 위 구속조건 블록).
-        #     이 상태에서 빠지는 것은 '클램프 당김'(Step-ClampTension 의 CLAMP_PULL=DISP_GLOBAL*d_c) 뿐이다.
+        #     이 상태에서 빠지는 것은 '클램프 변위 당김'뿐이다. 클램프 프리텐션은 초기응력으로 바뀌었다.
         #     따라서 이 값은 클램프 구속(하중 분담)을 포함한다 — Galhofo 7000 Pa 같은
         #     '클램프 없는 프리텐션'과 대조하려면 NO_CLAMP=True 모델의 GlobalTension 말단을 써야 한다.
         #   ClampTension 말단을 base 로 쓰면 시스템행렬이 부정정(음수 고유값 수천 개)이 되어
@@ -1716,6 +1718,18 @@ if LOAD_MODE == 'cable_stress' and _PAPER_HF:
             sigma12=0.0, sigma13=0.0, sigma23=0.0)
     emit("[LOAD] cable_stress: sigma11=%.4g Pa x 3 cables (A=%.4g m2 -> F=%.4g N/cable)"
          % (CABLE_PRESTRESS, CABLE_AREA, CABLE_PRESTRESS * CABLE_AREA))
+    #   [2026-10-20] 클램프도 초기응력. d_c = 클램프/꼭짓점 케이블 응력비.
+    if not NO_CLAMP:
+        for _nm in ('Cable_CL', 'Cable_CR'):
+            my_model.Stress(
+                name='PreTension_' + _nm,
+                region=a.instances['Inst_' + _nm].sets['All_Elem'],
+                distributionType=UNIFORM,
+                sigma11=CLAMP_PRESTRESS,
+                sigma22=0.0, sigma33=0.0,
+                sigma12=0.0, sigma13=0.0, sigma23=0.0)
+        emit("[LOAD] clamp_stress: sigma11=%.4g Pa (= d_c %.3f x cable %.4g Pa)"
+             % (CLAMP_PRESTRESS, d_c, CABLE_PRESTRESS))
 
 # 시작하면서 전체 면 z 변위 고정
 #   [paper-match] 논문은 정적 스텝에서 **세 변만** u3=0 이다. HF 논문 모드에서는
@@ -1795,17 +1809,8 @@ if PULL_TOP:
     emit("   [BC] 케이블 방향 (u1=v*cos, u2=-v*sin): Top cos=%.6f sin=%.6f / Right cos=%.6f sin=%.6f / Left cos=%.6f sin=%.6f"
          % (top_cos, top_sin, cos_val, sin_val, -cos_val, sin_val))
 
-if not NO_CLAMP:
-    # 좌측 클램프: (-1, +1) 방향
-    my_model.boundaryConditions['Disp_Control_CL'].setValuesInStep(stepName='Step-ClampTension', 
-        u1=-(CLAMP_PULL/sqrt2),
-        u2=(CLAMP_PULL/sqrt2)
-    )
-    # 우측 클램프: (+1, +1) 방향
-    my_model.boundaryConditions['Disp_Control_CR'].setValuesInStep(stepName='Step-ClampTension', 
-        u1=(CLAMP_PULL/sqrt2),
-        u2=(CLAMP_PULL/sqrt2)
-    )
+#   [2026-10-20] 클램프 프리텐션은 초기응력(CLAMP_PRESTRESS)이므로 Step-ClampTension 에서
+#     변위 당김을 걸지 않는다. Disp_Control_CL/CR 은 Initial 의 0 에 그대로 둔다.
 
 # Buckle Perturbation
 my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(stepName='Step-Buckle', 
@@ -1982,12 +1987,7 @@ if fidelity == 'LF':
             u1=GLOBAL_FINAL * top_cos * TOP_PULL_SCALE,
             u2=-GLOBAL_FINAL * top_sin * TOP_PULL_SCALE
         )
-    for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
-        my_model.boundaryConditions[name].setValuesInStep(
-            stepName='Step-HighTension',
-            u1=sign * CLAMP_FINAL / sqrt2,
-            u2=CLAMP_FINAL / sqrt2
-        )
+    #   [2026-10-20] 클램프는 초기응력이므로 HighTension 에서 변위를 추가하지 않는다.
 
     my_model.fieldOutputRequests['F-Output-1'].setValues(
         variables=('S', 'E', 'U', 'COORD', 'EVOL'), 
@@ -2311,12 +2311,7 @@ elif fidelity == 'HF':
             u2=-_DISP_FINAL * top_sin * TOP_PULL_SCALE
         )
 
-    for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
-        my_model.boundaryConditions[name].setValuesInStep(
-            stepName='Step-Postbuckle',
-            u1=sign * CLAMP_FINAL / sqrt2,
-            u2=CLAMP_FINAL / sqrt2
-        )
+    #   [2026-10-20] 클램프는 초기응력이므로 Postbuckle 에서 변위를 추가하지 않는다.
     
 
     my_model.fieldOutputRequests['F-Output-1'].setValues(
