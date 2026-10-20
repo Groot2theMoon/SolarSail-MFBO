@@ -77,7 +77,7 @@ USE_GRID_MESH = True
 _ALL_ELEM = 'All_Elem' if USE_GRID_MESH else 'All'
 
 SEED_DIV = 200.0 
-THICKNESS = 5.0e-6
+THICKNESS = 2.5e-6
 
 CLAMP_EXCL_R = 0.21   # m — 클램프 패치 노드를 경계 u3 구속에서 뺀다.
 #   CLAMP_EXCL_R > 0 인 이유: 클램프 패치 노드는 Coupling 으로 RP(u3=0)에 묶여 있어, 같은
