@@ -247,7 +247,8 @@ IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t �
 #     0.01 -> 완주. 감쇠가 지배 변수임이 단일 변수 실험으로 확정됐다. 첫 레벨로 제출하고
 #     실패하면 다음 레벨로 승급한다(각 레벨의 선택 결과를 로그에 남긴다).
 STABILIZE_LADDER = ((PAPER_STABILIZE,) if (PAPER_MATCH and not PAPER_INCLUDE_CLAMPS)
-                    else (1.0,))   # 클램프 모델: 0.005는 1e-5 증분으로 눌림. 1.0 = 97.7t 기준선
+                    else ((1.0,) if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS)
+                          else (0.01,)))
 #   실제 스텝에 들어가는 값 (2026-10-20: 기존 하드코딩 0.0002 를 대체).
 #     paper-only  : 2e-4 (논문값)
 #     physical    : 1.0  (클램프 컷백 회피, 97.7t 기준선)
