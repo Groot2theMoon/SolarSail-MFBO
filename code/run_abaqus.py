@@ -90,11 +90,11 @@ RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-2
                              #   그때는 _EIGENSOLVER 와 제출 순서를 함께 손봐야 한다.
 #   [§19.104] NO_CLAMP 상수를 이 블록으로 올렸다(값/의미 불변 - 종전에는 클램프 RP 조립부에 있었고,
 #     모드표 결정보다 **뒤**라 여기서 볼 수 없었다). True = 클램프 생략 baseline(run_abaqus_cable 대조).
-NO_CLAMP = True
+NO_CLAMP = False
 #   [§19.105] PULL_TOP: True = 윗 꼭짓점(Top)도 케이블 방향 지정변위로 당긴다(Galhofo 2022 3-tendon 정합).
 #     False(기본) = 종전 그대로 Top 완전 고정 - 기존 런 재현성이 우선이다(BC/스텝 호출 바이트 동일).
 #     NO_CLAMP 와 **독립**이다: 네 조합(PULL_TOP x NO_CLAMP) 모두 유효하고, 클램프 유무와 서로 간섭하지 않는다.
-PULL_TOP = False
+PULL_TOP = True
 #   [§19.109] TOP_PULL_SCALE: 세 당김의 힘 평형 보정 계수 - **Top 지정변위에만** 곱한다.
 #     케이블 힘 F = E*A*u/L 이므로 대칭 3-tendon 의 평형은 F_top = 2*sin(theta)*F_bot,
 #     즉 u_top = 2*sin(theta)*(LEN_TOP/LEN_BOT)*u_bot (theta = angle_deg = 28.6 deg).

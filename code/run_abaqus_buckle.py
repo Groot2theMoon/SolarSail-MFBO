@@ -141,7 +141,7 @@ DISP_MAX = 1.0e-3   # m
 #   GlobalTension 쪽에 있어야 한다. base_state_probe 는 이 스텝을 본다(클램프 기여 진단).
 BASE_STATE_STEP = 'Step-GlobalTension'
 
-N_EIG_BUCKLE = 10   # 추출 요청 고유값 수
+N_EIG_BUCKLE = 4   # 추출 요청 고유값 수
 BUCKLE_VECTORS = 25   # subspace 기저 벡터 수
 BUCKLE_MAXITER = 5000
 BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
@@ -171,7 +171,7 @@ CLEAN_PERTURBATION = True
 #   [§19.111] RELEASE_EDGE_U3: 자유변의 면외 구속을 '하드 u3=0' 에서 '무른 to-ground 스프링' 으로 바꾼다.
 #   True = 자유변 BC_Edges_Only_Z 를 제거하고 '무른 면외 스프링'으로 대체 (경계 아티팩트 검증용).
 #   False = 종전 그대로(u3=0). 덱/로그 바이트 동일 유지.
-RELEASE_EDGE_U3 = False
+RELEASE_EDGE_U3 = True
 #   스프링 강성 = ALPHA * (σt)_ref,  σt = 7 kPa * 5 µm = 0.035 N/m (막 장력/단위폭 = 스프링 [N/m])
 EDGE_SPRING_ALPHA = 1.0e-3     # 1e-3(거의 자유) ~ 1(자연 강성) 스윕용
 EDGE_SPRING_K = EDGE_SPRING_ALPHA * 0.035
