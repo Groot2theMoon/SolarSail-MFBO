@@ -116,6 +116,48 @@ def buckle_pert_tag():
     return '_plv%05d' % int(round(p * 1.0e5))
 
 
+def _table_nodes(path):
+    """MODE k 블록마다 노드 줄 수를 센다 (표가 현재 메쉬와 같은 라벨 집합인지 판정)."""
+    counts, cur = {}, None
+    with io.open(path, encoding='utf-8', errors='replace') as f:
+        for line in f:
+            s = line.strip()
+            if s.startswith('MODE '):
+                cur = s.split()[1]
+                counts[cur] = 0
+            elif cur and s and not s.startswith('#'):
+                counts[cur] += 1
+    return counts
+
+
+def expected_membrane_nodes():
+    """PAPER_MATCH + PAPER_MESH_ORDER=2 -> 30,501 (S8R5/STRI65); 그 외 1차 10,201."""
+    txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
+    _paper = re.search(r'^PAPER_MATCH\s*=\s*True\b', txt, re.M) is not None
+    _o2 = re.search(r'^PAPER_MESH_ORDER\s*=\s*2\b', txt, re.M) is not None
+    return 30501 if (_paper and _o2) else 10201
+
+
+def check_table_nodes(path, what):
+    exp = expected_membrane_nodes()
+    counts = _table_nodes(path)
+    bad = dict((k, v) for k, v in counts.items() if v != exp)
+    if not counts or bad:
+        raise SystemExit(
+            "[make_seed] %s 의 노드 수가 기대 %d 와 다릅니다: %s\n"
+            "  -> 1차 표를 2차 메쉬에 쓰려 했거나, buckle 잡이 실패해 **이전 표**를 읽었습니다.\n"
+            "  -> buckle/<job>.msg·.dat 의 원인을 먼저 고치고 --force 로 다시 실행하세요.\n"
+            "  table=%s" % (what, exp, bad or 'MODE 없음', path))
+
+
+def fresh(path, t0):
+    """이번 실행에서 갱신된 파일인가 (Windows mtime 해상도 여유 1초)."""
+    try:
+        return os.path.exists(path) and os.path.getmtime(path) >= (t0 - 1.0)
+    except OSError:
+        return False
+
+
 def expected_odb(x_c, disp, d_c, case, excl=0.21):
     """buckle 잡 이름 규약으로 ODB 경로를 만든다(없으면 glob 폴백)."""
     dc = A.value_tag(d_c) if case == 'clamp_only' else '0'     # [§19.76] 반올림 없음
@@ -212,16 +254,30 @@ def main(argv=None):
         if os.path.exists(odb) and not a.force:
             print("      buckle 산출물 있음 - 잡 생략 (%s)" % os.path.basename(odb))
         else:
+            _job_t0 = time.time()
             with CasePatch(_sc, a.dry_run):
                 rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g 0' % (a.x_c, disp),
                            a.dry_run, cwd=HERE)
                 if rc:
                     return rc
             odb, _job = expected_odb(a.x_c, disp, 0.0, _sc, a.excl)
+            if not a.dry_run and not fresh(odb, _job_t0):
+                raise SystemExit(
+                    "[make_seed] buckle ODB 가 **이번 실행에서 갱신되지 않았습니다** — CAE/해석이 실패했습니다.\n"
+                    "  이전 ODB 를 읽어 모드표를 만들면 안 됩니다. buckle/*.msg·.dat 의 원인을 확인하세요.\n"
+                    "  odb=%s" % odb)
+        _t0 = time.time()
         rc, _ = sh('abaqus python aba_mode_from_odb.py "%s" Step-Buckle "%s" %d'
                    % (odb, seed_tbl, BUCKLE_MODES), a.dry_run, cwd=HERE)
         if not a.dry_run:
             _need(seed_tbl, 'seed 가족 모드표')
+            if not fresh(seed_tbl, _t0):
+                raise SystemExit(
+                    "[make_seed] seed 모드표가 **이번 실행에서 갱신되지 않았습니다** — buckle 잡이 실패해\n"
+                    "  이전 표가 그대로 남아 있습니다. 이 표를 쓰면 1차/낡은 모드가 HF 에 주입됩니다.\n"
+                    "  buckle/*.msg·.dat 의 원인을 먼저 고치고 --force 로 다시 실행하세요.\n"
+                    "  table=%s" % seed_tbl)
+            check_table_nodes(seed_tbl, 'seed 가족 모드표')
     else:
         print("\n[1/3] seed 가족 표 있음 - 건너뜀 (%s)" % os.path.basename(seed_tbl))
 
@@ -232,12 +288,19 @@ def main(argv=None):
         if os.path.exists(odb) and not a.force:
             print("      buckle 산출물 있음 - 잡 생략 (%s)" % os.path.basename(odb))
         else:
+            _job_t0 = time.time()
             with CasePatch('clamp_only', a.dry_run):
                 rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g %g %g'
                            % (a.x_c, disp, pull_seed, a.excl), a.dry_run, cwd=HERE)
                 if rc:
                     return rc
             odb, _job = expected_odb(a.x_c, disp, a.seed_clamp_dc, 'clamp_only', a.excl)
+            if not a.dry_run and not fresh(odb, _job_t0):
+                raise SystemExit(
+                    "[make_seed] clamp buckle ODB 가 **이번 실행에서 갱신되지 않았습니다** — CAE/해석이 실패했습니다.\n"
+                    "  이전 ODB 를 읽어 모드표를 만들면 안 됩니다. buckle/*.msg·.dat 의 원인을 확인하세요.\n"
+                    "  odb=%s" % odb)
+        _t0 = time.time()
         rc, _ = sh('abaqus python aba_mode_from_odb.py "%s" Step-Buckle "%s" %d'
                    % (odb, clamp_tbl, CLAMP_MODES), a.dry_run, cwd=HERE)
         if not a.dry_run:
@@ -245,6 +308,13 @@ def main(argv=None):
                   hint=('자식 출력에 "프레임 1개 / 양수 λ 모드가 없다" 가 보이면 시드 클램프 당김이 '
                         '너무 큽니다. 기본 --seed-clamp-dc 0.0(=§19.52 성공 설정)을 쓰세요. 현재: %.4g'
                         % a.seed_clamp_dc))
+            if not fresh(clamp_tbl, _t0):
+                raise SystemExit(
+                    "[make_seed] clamp 모드표가 **이번 실행에서 갱신되지 않았습니다** — buckle 잡이 실패해\n"
+                    "  이전 표가 그대로 남아 있습니다. 이 표를 쓰면 1차/낡은 모드가 HF 에 주입됩니다.\n"
+                    "  buckle/*.msg·.dat 의 원인을 먼저 고치고 --force 로 다시 실행하세요.\n"
+                    "  table=%s" % clamp_tbl)
+            check_table_nodes(clamp_tbl, 'clamp 가족 모드표')
     else:
         print("      clamp 표 있음 - 건너뜀 (%s)" % os.path.basename(clamp_tbl))
 
@@ -282,6 +352,11 @@ def main(argv=None):
     ok, why, info = A.seed_gate(a.x_c, a.d_c, out_tbl, BUCKLE_SCRIPT)
     tbl = A.load_mode_table(out_tbl, (1, 2, 3, 4))
     nodes = sorted(set(len(v) for v in tbl.values()))
+    _exp_nodes = expected_membrane_nodes()
+    if nodes != [_exp_nodes]:
+        raise SystemExit(
+            "[make_seed] 합성표의 노드 수 %s 가 기대 [%d] 와 다릅니다 -> 이 표를 HF 에 쓰면 안 됩니다: %s"
+            % (nodes, _exp_nodes, out_tbl))
     peaks = [round(max(abs(x) for x in v.values()), 6) for _k, v in sorted(tbl.items())]
     meta = ('# 시드표 검증 (make_seed.py %s)\n'
             'x_c=%g d_c=%g disp=%.6g clamp_pull=%.6g excl=%.3g\n'
