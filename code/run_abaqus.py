@@ -1733,8 +1733,9 @@ if LOAD_MODE == 'cable_stress' and _PAPER_HF:
     emit("[LOAD] cable_stress: sigma11=%.4g Pa x 3 cables (A=%.4g m2 -> F=%.4g N/cable)"
          % (CABLE_PRESTRESS, CABLE_AREA, CABLE_PRESTRESS * CABLE_AREA))
     #   [2026-10-20] 클램프도 초기응력. d_c = 클램프/꼭짓점 케이블 응력비.
+    #     인스턴스 이름은 connect_cable('cable_CL', ...) -> 'Inst_cable_CL' (소문자 c).
     if not NO_CLAMP:
-        for _nm in ('Cable_CL', 'Cable_CR'):
+        for _nm in ('cable_CL', 'cable_CR'):
             my_model.Stress(
                 name='PreTension_' + _nm,
                 region=a.instances['Inst_' + _nm].sets['All_Elem'],
