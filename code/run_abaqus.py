@@ -93,6 +93,12 @@ PAPER_EDGE_BC_FROM_INITIAL = bool(PAPER_MATCH)   # 3변 u3=0 을 Initial 에서 
 #     True  = 논문 프리텐션·BC·1차 메쉬는 유지하되 **클램프 + 꼭짓점 케이블을 모두 포함**
 #             (실제 포스트버클링 모델. 클램프 프리텐션 = 초기응력 d_c*CABLE_PRESTRESS.)
 PAPER_INCLUDE_CLAMPS = True
+#   [2026-10-20] 전막 u3=0 -> Postbuckle 해제 (예전 disp 경로의 수치 장치).
+#     True  = GlobalTension 동안 전막 u3=0 으로 평평한 프리텐션을 만들고,
+#             Postbuckle 에서 BC_Stabilize_Z 를 해제해 주름을 발생시킨다.
+#             (논문의 BC 는 아니다. 클램프 모델 수렴용 대안.)
+#     False = 논문 그대로: 3변만 u3=0 (BC_Edges_Only_Z), 주름은 GlobalTension 에서 발생.
+PAPER_HOLD_U3_GLOBAL = False
 #   [paper-match] 모드표 = **seed + clamp_only 합성표** (사용자 결정 2026-10-20).
 #     True  = seeds/modes_xc<xc>.txt (2+2 합성) 를 쓰고 seed_gate 지문 검사를 적용한다.
 #     False = 종전 NO_CLAMP 순수 seed 가족 표(modes_seed.txt) — clamp 모드 배제.
@@ -1750,7 +1756,7 @@ if LOAD_MODE == 'cable_stress' and _PAPER_HF:
 # 시작하면서 전체 면 z 변위 고정
 #   [paper-match] 논문은 정적 스텝에서 **세 변만** u3=0 이다. HF 논문 모드에서는
 #     전막 고정을 만들지 않고, 아래 BC_Edges_Only_Z 를 Initial 에서 만든다.
-if not _PAPER_HF:
+if (not _PAPER_HF) or PAPER_HOLD_U3_GLOBAL:
     my_model.DisplacementBC(
         name='BC_Stabilize_Z', 
         createStepName='Initial', 
