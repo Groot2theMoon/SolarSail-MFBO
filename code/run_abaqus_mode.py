@@ -274,7 +274,7 @@ def print_job_diag(job_name):
 #   False = 종전 corner2 경로(아래 2꼭짓점, 1.8e-5 m, 0.01 m, 5e-4, 1차 S4/S3).
 #   !! 이 스크립트는 **케이블을 유지**한다(논문의 cable-free 좌굴모델과 잔여 차이, README 참조).
 PAPER_MATCH = True
-PAPER_MESH_ORDER = 2
+PAPER_MESH_ORDER = 1  # 기본 1차. 2차는 base state 불안정으로 모드 추출 실패(2026-10-20)
 MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
 
 MODEL_NAME = 'SailModel_Triangle'

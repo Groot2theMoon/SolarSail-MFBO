@@ -82,7 +82,7 @@ import numpy as np
 #        make_seed.py 로 modes_seed.txt 를 2차 격자에서 다시 만든 뒤 HF 를 돌린다.
 #      표가 1차 라벨이면 seed_family_gate 가 HF 제출 전에 중단한다.
 PAPER_MATCH = True
-PAPER_MESH_ORDER = 2             # 1 = 종전 S4/S3, 2 = 논문 기준 S8R5/STRI65
+PAPER_MESH_ORDER = 1             # 기본 1차 S4/S3. 2차(S8R5/STRI65)는 실험용 — 모드 추출 base state 불안정
 MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
 LOAD_MODE = 'cable_stress' if PAPER_MATCH else 'disp'   # 'disp' | 'cable_stress'
 CABLE_PRESTRESS = 2.69e7         # Pa — 논문 5PCS Fig. 11, 3케이블 동일

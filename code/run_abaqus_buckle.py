@@ -66,7 +66,7 @@ import numpy as np
 #   False = 종전 2-tendon 경로(corner2, 1.8e-5 m, 0.01 m, 5e-4, 1차 S4/S3).
 #   !! PAPER_MATCH=True 는 시드표 재생성이 필요하다 — make_seed.py 를 먼저 실행한다.
 PAPER_MATCH = True
-PAPER_MESH_ORDER = 2
+PAPER_MESH_ORDER = 1  # 기본 1차. 2차는 base state 불안정으로 모드 추출 실패(2026-10-20)
 MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
 #   [2026-10-20 실측] 논문 정적 스텝의 코너 0.0005 m 는 이 모델에서 **base state 가 불안정**하다:
 #     SYSTEM MATRIX 592 negative eigenvalues / DIFFERENTIAL MATRIX 166,009 negative diagonals
