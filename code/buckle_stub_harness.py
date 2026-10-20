@@ -46,6 +46,8 @@ CASE_CONSTANTS = {
     #  [§19.60 정리] 현행 씨드 재료 2케이스만.
     'seed':       {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
     'clamp_only': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
+    #  [paper-match] 논문 케이블-프리 좌굴모델. PAPER_MATCH=True 가 나머지 상수를 이미 정한다.
+    'paper':      {'PRETENSION_MODE': "'paper3'", 'CORNER_ANGLE_DEG': '28.6'},
 }
 
 # ---------------------------------------------------------------------------

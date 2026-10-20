@@ -87,12 +87,42 @@ def buckle_disp():
     return float(m.group(1)) if m else 1.8e-5
 
 
+def buckle_mesh_tag():
+    """run_abaqus_buckle.py 의 PAPER_MATCH/PAPER_MESH_ORDER 를 읽어 메쉬 태그를 맞춘다.
+
+    2차 격자(PAPER_MESH_ORDER=2)면 잡 이름이 'grid2' 다 — make_seed 가 1차 이름으로
+    ODB 를 찾으면 항상 빈손이 되어 잡을 불필요하게 다시 돌린다(또는 stale 을 집는다).
+    """
+    txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
+    _paper = re.search(r'^PAPER_MATCH\s*=\s*True\b', txt, re.M) is not None
+    _o2 = re.search(r'^PAPER_MESH_ORDER\s*=\s*2\b', txt, re.M) is not None
+    return 'grid2' if (_paper and _o2) else 'grid'
+
+
+def seed_case():
+    """논문 정합 프리셋이면 cable-free 'paper' 케이스에서 seed 모드를 뽑는다.
+
+    paper 케이스 = 케이블/클램프 없이 꼭짓점 RP 를 직접 구동하는 Galhofo 좌굴모델.
+    """
+    txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
+    return 'paper' if re.search(r'^PAPER_MATCH\s*=\s*True\b', txt, re.M) else 'seed'
+
+
+def buckle_pert_tag():
+    """run_abaqus_buckle.py 의 PERTURBATION -> 잡 이름의 _plvNNNNN 태그."""
+    txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
+    m = re.search(r'^PERTURBATION\s*=\s*([0-9.eE+-]+)', txt, re.M)
+    p = float(m.group(1)) if m else 0.01
+    return '_plv%05d' % int(round(p * 1.0e5))
+
+
 def expected_odb(x_c, disp, d_c, case, excl=0.21):
     """buckle 잡 이름 규약으로 ODB 경로를 만든다(없으면 glob 폴백)."""
     dc = A.value_tag(d_c) if case == 'clamp_only' else '0'     # [§19.76] 반올림 없음
     ex = '' if excl == 0.0 else '_ex%03d' % int(round(excl * 1000.0))
-    job = ('Buckle_xc%s_d%03dum_dc%s_f%03d_s4_grid_%s_normal%s_plv01000'
-           % (A.value_tag(x_c), int(round(disp * 1.0e6)), dc, 100, case, ex))
+    job = ('Buckle_xc%s_d%03dum_dc%s_f%03d_s4_%s_%s_normal%s%s'
+           % (A.value_tag(x_c), int(round(disp * 1.0e6)), dc, 100, buckle_mesh_tag(), case, ex,
+              buckle_pert_tag()))
     p = os.path.join(RUN_DIR, job + '.odb')
     if os.path.exists(p):
         return p, job
@@ -175,18 +205,19 @@ def main(argv=None):
     print("[make_seed] 합성  표 = %s" % out_tbl)
 
     # ---- 1) seed 가족 (x_c 무관, 1회) ----
+    _sc = seed_case()
     if a.force or a.refresh_seed_family or not os.path.exists(seed_tbl):
-        print("\n[1/3] seed 가족 (꼭짓점 케이블만) - x_c 무관")
-        odb, _job = expected_odb(a.x_c, disp, 0.0, 'seed', a.excl)
+        print("\n[1/3] seed 가족 (%s 케이스) - x_c 무관" % _sc)
+        odb, _job = expected_odb(a.x_c, disp, 0.0, _sc, a.excl)
         if os.path.exists(odb) and not a.force:
             print("      buckle 산출물 있음 - 잡 생략 (%s)" % os.path.basename(odb))
         else:
-            with CasePatch('seed', a.dry_run):
+            with CasePatch(_sc, a.dry_run):
                 rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g 0' % (a.x_c, disp),
                            a.dry_run, cwd=HERE)
                 if rc:
                     return rc
-            odb, _job = expected_odb(a.x_c, disp, 0.0, 'seed', a.excl)
+            odb, _job = expected_odb(a.x_c, disp, 0.0, _sc, a.excl)
         rc, _ = sh('abaqus python aba_mode_from_odb.py "%s" Step-Buckle "%s" %d'
                    % (odb, seed_tbl, BUCKLE_MODES), a.dry_run, cwd=HERE)
         if not a.dry_run:

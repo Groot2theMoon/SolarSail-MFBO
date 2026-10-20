@@ -60,8 +60,17 @@ import numpy as np
 #         ⑦ 스위치/진단 / misc
 # ============================================================================
 
+# ---- ⓪ 논문 정합 프리셋 (Galhofo 2022, 5PCS 좌굴 모델) ----
+#   True  = 논문 Fig. 12/표: 3꼭짓점 지정변위(상단 0.001 / 코너 0.0005 = 2:1),
+#           Buckle 스텝은 5개 전부 0.10 m, subspace, 안정화 2e-4, 2차 요소(S8R5+STRI65).
+#   False = 종전 2-tendon 경로(corner2, 1.8e-5 m, 0.01 m, 5e-4, 1차 S4/S3).
+#   !! PAPER_MATCH=True 는 시드표 재생성이 필요하다 — make_seed.py 를 먼저 실행한다.
+PAPER_MATCH = True
+PAPER_MESH_ORDER = 2
+MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
+
 # ---- ① CASE 선택 ----
-CASE = 'clamp_only'
+CASE = 'paper' if PAPER_MATCH else 'clamp_only'
 
 # ---- ② 형상/격자 ----
 BASE = 20.0   # m
@@ -100,13 +109,13 @@ CABLE_AREA = np.pi * (CABLE_RADIUS**2)
 LEN_TOP = 0.280 # m
 LEN_BOT = 0.689 # m
 CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이(HF 와 같아야 한다 — 검사기 HF↔buckle 계약).
-PRETENSION_MODE = 'corner2'
+PRETENSION_MODE = 'paper3' if PAPER_MATCH else 'corner2'
 if PRETENSION_MODE not in ('corner2', 'paper3'):
     raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
-DISP_TOP_OVER_CORNER = 1.4142135623   # Top 케이블 구동량 = 코너 당김 x 이 값(√2)
+DISP_TOP_OVER_CORNER = 2.0 if PAPER_MATCH else 1.4142135623   # 논문 2:1 / 종전 √2
 
 # ---- 프리텐션 (CLI 두 번째 인자로 덮어쓴다) ----
-DISP_GLOBAL = 1.8e-5    # m — mode.py(ClampFree_Buckle) 와 동일한 운용점
+DISP_GLOBAL = 0.0005 if PAPER_MATCH else 1.8e-5    # 논문 코너 0.0005 m / 종전 운용점
 
 # 코너 하중 각도 [deg] — 전 케이스가 'hf'(28.6 = 우리 HF/케이블 방향).
 CORNER_ANGLE_DEG = 28.6
@@ -128,7 +137,7 @@ CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김
 CLAMP_DIR = 'normal'
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
-PERTURBATION = 0.01  # m — 좌굴 스텝의 prescribed 변위(증분 응력 -> K_delta).
+PERTURBATION = 0.10 if PAPER_MATCH else 0.01  # m — 논문 Buckle 스텝 0.10 / 종전 0.01
 
 PATTERN_SIGN = 1.0            # 좌굴 '하중 패턴' 부호: 1.0 = 바깥으로 더 당김
 
@@ -154,7 +163,7 @@ if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
                        % (BUCKLE_SOLVER,))
 EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
 
-MODE_STABILIZATION = 0.0005   # GlobalTension 안정화 계수.
+MODE_STABILIZATION = 2.0e-4 if PAPER_MATCH else 0.0005   # 논문 2e-4 / 종전 5e-4
 
 # ---- ⑥ 모드 판정 ----
 # ---- 판정 임계값 (계획 §4: 3번 런 결과 뒤에 확정한다 — 지금은 잠정값) ----
@@ -255,7 +264,11 @@ _CASE_TABLE = {
     #  clamp_only : 클램프 케이블만(꼭짓점 케이블 0, 코너는 강체패치 RP 로 구동).
     #               base=코너 당김 + 클램프 당김(케이블 전달), LIVE=클램프 PERTURBATION.
     #               = 클램프 가족 모드(클램프 부근 국소, 쌍 축퇴).
+    #  paper      : 논문(Galhofo) 좌굴모델 — **케이블·클램프 없이** 꼭짓점 강체패치 RP 를 직접 구동.
+    #               3점(상단 2:1) + Buckle 스텝 5개 전부 0.10 m. PAPER_MATCH=True 의 기본 케이스.
     'seed':       dict(cables=True,  clamps=False, clamp_load='none', corner_dir='hf',
+                       live_driver='corner'),
+    'paper':      dict(cables=False, clamps=False, clamp_load='none', corner_dir='hf',
                        live_driver='corner'),
     'clamp_only': dict(cables=False, clamps=True,  clamp_load='base', corner_dir='hf',
                        live_driver='clamp', clamp_cable=True),
@@ -284,7 +297,7 @@ def _require_constant(name, have, want):
                            "  -> 상수부를 고치거나 CASE 를 바꾸세요." % (CASE, name, want, have))
 
 
-_require_constant('PRETENSION_MODE', PRETENSION_MODE, 'corner2')
+_require_constant('PRETENSION_MODE', PRETENSION_MODE, 'paper3' if PAPER_MATCH else 'corner2')
 _require_constant('CORNER_ANGLE_DEG', CORNER_ANGLE_DEG, 28.6)
 
 if HAS_CLAMP_CABLES and not HAS_CLAMPS:
@@ -661,9 +674,10 @@ def build_model(disp):
 
     if USE_GRID_MESH:
         p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
-            my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV)
-        print("%s [mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
-              % (TAG, _nn, _n4, _n3, _n4 + _n3))
+            my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+            elem_order=MESH_ORDER)
+        print("%s [mesh] grid(.inp import, orphan): order=%d, 노드 %d / quad %d + tri %d = %d"
+              % (TAG, MESH_ORDER, _nn, _n4, _n3, _n4 + _n3))
         p.Set(elements=p.elements, name='All_Elem')      # 섹션 할당 + 초기응력(요소)
         p.Set(nodes=p.nodes, name='All')                 # 변위 BC 용(절점) — 이름 'All' 유지
         p.SectionAssignment(region=p.sets['All_Elem'], sectionName='Section-Membrane')
@@ -867,7 +881,7 @@ def build_model(disp):
         u3=SET, ur1=SET, ur2=SET, ur3=SET
     )
     disp_a = disp
-    if CASE in ('seed', 'clamp_only'):
+    if CASE in ('seed', 'clamp_only', 'paper'):
         # 변위 구동: 케이블 끝단(seed) 또는 꼭짓점 강체패치 RP(clamp_only).
         my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial',
                                 region=A2, u1=SET, u2=SET)
@@ -902,6 +916,12 @@ def build_model(disp):
         my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
             stepName='Step-GlobalTension',
             u1=0.0, u2=disp_a * DISP_TOP_OVER_CORNER
+        )
+        #   [paper-match] 논문 Buckle 스텝은 **5개 지정변위를 모두 0.10 m** 로 올린다.
+        #     정적 스텝의 2:1 비율을 Buckle 스텝에 그대로 쓰면 안 된다(상단만 0.001 에 남는다).
+        my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
+            stepName='Step-Buckle',
+            u1=0.0, u2=PATTERN_SIGN * PERTURBATION
         )
     if PRETENSION_MODE == 'paper3':
         _top_note = ' / 위 %.4e m' % (disp_a * DISP_TOP_OVER_CORNER)
@@ -1031,7 +1051,9 @@ def build_model(disp):
     else:
         my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
         _edge_u3('Step-Buckle')
-    if HAS_CABLES and LIVE_DRIVER != 'clamp':
+    #   [paper-match] paper 케이스는 케이블이 없지만 코너 RP 를 직접 구동하므로
+    #     Buckle 스텝에서도 0.10 m 를 줘야 한다(HAS_CABLES 로 막으면 0.0005 에 남는다).
+    if LIVE_DRIVER != 'clamp':
         #   corner_lf: 좌굴 스텝 값 = 프로브(PERTURBATION). 모드 형상은 크기에 불변, lambda 만 스케일.
         _ns = PATTERN_SIGN * PERTURBATION
         my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
@@ -1066,13 +1088,13 @@ _dc_tag = (_value_tag(CLAMP_DC_EFF)
            if CASE in ('clamp_only',) else '0')
 #   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
 _live_tag = (('_plv%05d' % int(round(PERTURBATION * 1.0e5)))
-             if CASE in ('seed', 'clamp_only') else '')   # [§19.60] 둘 다 LIVE 프로브가 있다
+             if CASE in ('seed', 'clamp_only', 'paper') else '')   # [§19.60] 셋 다 LIVE 프로브가 있다
 _rot_tag = ''              
 #   [§19.107] PULL_TOP=True 런은 이름이 갈려야 두 변형(2-tendon/3-tendon)이 공존하며 비교된다.
 #     False 는 빈 태그 -> 종전 잡이름/덱과 **바이트 동일**(기존 산출물 재현).
 #     '_3t' = Top 3-tendon. 잡이름 80자 한계에 맞춘 최단 태그(clamp_only 최장 78자).
 _pt_tag = '_3t' if PULL_TOP else ''
-MESH_TAG = 'grid' if USE_GRID_MESH else 'free'   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
+MESH_TAG = (('grid2' if MESH_ORDER == 2 else 'grid') if USE_GRID_MESH else 'free')   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
 JOB_NAME = 'Buckle_xc%s_d%03dum_dc%s_f%03d_%s_%s_%s_%s%s%s%s%s' % (_value_tag(x_c),
                                                        int(round(DISP * 1.0e6)),
                                                        _dc_tag,

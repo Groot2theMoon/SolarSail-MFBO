@@ -269,6 +269,14 @@ def print_job_diag(job_name):
 # =====================================================================
 # 모델 정의 — HF 와 '문자 그대로' 같은 줄 (check_model_consistency.py 가 검사)
 # =====================================================================
+# ---- ⓪ 논문 정합 프리셋 (Galhofo 2022, 5PCS 좌굴 모델) ----
+#   True  = 논문 Fig. 12/표: 3꼭짓점(상단 0.001 / 코너 0.0005), Buckle 0.10 m, 2e-4, 2차 요소.
+#   False = 종전 corner2 경로(아래 2꼭짓점, 1.8e-5 m, 0.01 m, 5e-4, 1차 S4/S3).
+#   !! 이 스크립트는 **케이블을 유지**한다(논문의 cable-free 좌굴모델과 잔여 차이, README 참조).
+PAPER_MATCH = True
+PAPER_MESH_ORDER = 2
+MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
+
 MODEL_NAME = 'SailModel_Triangle'
 INSTANCE_NAME = 'MEMBRANE-1'
 
@@ -304,20 +312,23 @@ sin_val = float(np.sin(angle_rad))
 # CHECKER-DIVERGENCE: DISP_GLOBAL, SIGMA0, PRETENSION_SCALE, stabilizationMagnitude, radius
 #   이 선언이 남아 있는 동안에는 PATCH_RADIUS 를 바꿔도 검사기가 통과시킨다 —
 #   PATCH_RADIUS 를 바꿀 때는 사람이 HF 값(0.2)과 직접 대조할 것.
-PRETENSION_MODE = 'corner2'  # [2026-09-24 오라클 재현] 케이블 런(run_abaqus_cable.py)과 동일한 구동:
+PRETENSION_MODE = 'paper3' if PAPER_MATCH else 'corner2'  # [2026-09-24 오라클 재현] 케이블 런(run_abaqus_cable.py)과 동일한 구동:
                              #   정점(BC_Anchor_Top)은 완전 고정한 채, 아래 두 꼭짓점만 케이블 축으로 당긴다.
                              #   성공 실적: 이 설정에서 CONVERGED=4 (양수 λ 4개).
                              # 'paper3' = 논문 좌굴모델: 꼭짓점 3개를 모두 당김(3중 대칭).
                              #   5·7회차 실측: 양수 2개 / 0개 -> 재현 실험 뒤 bisect 단계에서 하나씩 되돌린다.
-DISP_GLOBAL = 1.8e-5         # 꼭짓점 당김 [m] — 모드 소스의 운용점. HF 와 **다르다(의도된 선언 분기)**.
+DISP_GLOBAL = 1.8e-5         # 꼭짓점 당김 [m] — 모드 소스는 **저프리텐션 유지**.
+#   [paper-match] 논문 좌굴모델의 0.0005 m 를 그대로 쓰지 않는다: 이 모델은 그 운용점에서
+#     base state 가 불안정해 모드 추출이 실패한다(§8 실측). 모드는 임퍼펙션의 **형상 기저**일 뿐이고
+#     진폭은 HF 가 0.10 t 로 따로 주므로, 형상(3꼭짓점·2:1)만 논문과 맞추고 크기는 안정 영역에 둔다.
 # 모드 소스는 저프리텐션에 둔다 — HF 운용점(165e-6)은 base state 가 불안정해 모드 추출이 실패했다(§8).
 #   양수 모드가 나온 회차는 전부 저프리텐션(1e-7 / 5e-5 m)이고 1e-3 m 에서는 0개였다.
 #   1e-7 m 대는 모드가 영에너지로 퇴화하므로 그보다 위에 둔다. 안정 상한은 40e-6/80e-6 각 1회로 좁힌다.
-DISP_TOP_OVER_CORNER = 1.4142135623
+DISP_TOP_OVER_CORNER = 2.0 if PAPER_MATCH else 1.4142135623   # 논문 2:1 / 종전 √2
 SIGMA0 = 700.0                               # 초기 가짜 응력(수렴 보조) [Pa] — 프리텐션의 대체물이 아니다
                                              #   [2026-09-24 오라클 재현] 케이블 런 값 = 700.0 (HF 는 500.0)
-MODE_STABILIZATION = 0.0005                  # GlobalTension 안정화 계수
-PERTURBATION = 0.01                          # 좌굴 스텝 섭동 크기 [m] (케이블 런·HF 와 동일)
+MODE_STABILIZATION = 2.0e-4 if PAPER_MATCH else 0.0005                  # 논문 2e-4 / 종전 5e-4
+PERTURBATION = 0.10 if PAPER_MATCH else 0.01                          # 좌굴 스텝 섭동 크기 [m] — 논문 0.10
 PATTERN_SIGN = 1.0                           # 좌굴 '하중 패턴'의 부호: 1.0 = 바깥으로 더 당김 (오라클과 동일)
                                              # PATTERN_SIGN 은 바꾸지 않는다 — λ 부호를 정하는 것은 패턴이 아니라 base state 크기다(§8).
 N_EIG_BUCKLE = 100                          # [2026-10-11] 4 -> 100 복원 (buckle 동기 — 과거 성공값)
@@ -380,9 +391,10 @@ if USE_GRID_MESH:
     #   (실측 AttributeError 2026-10-06/07). CAE 스크립트로 격자를 넣는 경로는
     #   mdb.models[].PartFromInputFile 뿐이다.
     p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
-        my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV)
-    print("[mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
-          % (_nn, _n4, _n3, _n4 + _n3))
+        my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+        elem_order=MESH_ORDER)
+    print("[mesh] grid(.inp import, orphan): order=%d, 노드 %d / quad %d + tri %d = %d"
+          % (MESH_ORDER, _nn, _n4, _n3, _n4 + _n3))
     #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
     #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
     #   orphan mesh 는 요소/절점 겸용 집합이 없다 -> 두 개를 만든다.
@@ -597,8 +609,10 @@ my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
     u2=-PATTERN_SIGN * PERTURBATION * sin_val
 )
 if PRETENSION_MODE == 'paper3':
+    #   [paper-match] Buckle 스텝은 5개 지정변위가 **모두 같은 크기**다(논문 표: 전부 0.10 m).
+    #     정적 스텝의 2:1 비율(DISP_TOP_OVER_CORNER)을 여기에 곱하면 상단만 0.20 m 가 된다 — 곱하지 않는다.
     my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
-        stepName=MODE_STEP_NAME, u1=0.0, u2=PATTERN_SIGN * PERTURBATION * DISP_TOP_OVER_CORNER
+        stepName=MODE_STEP_NAME, u1=0.0, u2=PATTERN_SIGN * PERTURBATION
     )
 emit("[MODE] 좌굴 하중 패턴 부호 PATTERN_SIGN=%+0.1f (%s) — 크기 %g m"
       % (PATTERN_SIGN, '안쪽(당김을 푸는 방향)' if PATTERN_SIGN < 0 else '바깥 당김', PERTURBATION))

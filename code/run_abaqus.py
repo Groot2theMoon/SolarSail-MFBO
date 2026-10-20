@@ -74,6 +74,21 @@ import numpy as np
 #   ⚠️ 런타임 인자(Fidelity, x_c, d_c)는 상수가 아니다 — 아래 CLI 파싱부가 sys.argv[-3:] 로 읽는다.
 # ============================================================================
 
+# ---- ⓪ 논문 정합 프리셋 (Galhofo 2022, 5PCS) ----
+#   True  = 논문 조건: 3케이블 등응력 프리텐션(초기응력), 3변 u3=0(Initial부터),
+#           포스트버클 안정화 2e-4, 2차 요소(S8R5+STRI65), 지정변위 0(변위구동 끔).
+#   False = 종전 MFBO 기준선: 지정변위 구동, 1차 S4/S3, 안정화 사다리(0.005~0.05).
+#   !! PAPER_MATCH=True 는 **시드표 재생성**이 필요하다:
+#        make_seed.py 로 modes_seed.txt 를 2차 격자에서 다시 만든 뒤 HF 를 돌린다.
+#      표가 1차 라벨이면 seed_family_gate 가 HF 제출 전에 중단한다.
+PAPER_MATCH = True
+PAPER_MESH_ORDER = 2             # 1 = 종전 S4/S3, 2 = 논문 기준 S8R5/STRI65
+MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
+LOAD_MODE = 'cable_stress' if PAPER_MATCH else 'disp'   # 'disp' | 'cable_stress'
+CABLE_PRESTRESS = 2.69e7         # Pa — 논문 5PCS Fig. 11, 3케이블 동일
+PAPER_STABILIZE = 2.0e-4         # 논문 stability factor
+PAPER_EDGE_BC_FROM_INITIAL = bool(PAPER_MATCH)   # 3변 u3=0 을 Initial 에서 (HF 전용)
+
 # ---- ① 실행 모드/스위치 ----
 BASE_PROBE = True                # 각 잡 직후 base_state_probe.py (R-13) 자동 실행
 EIG_RECORD = True                # 좌굴 고유치 이력 기록 (coalescence_check.py record)
@@ -91,6 +106,9 @@ RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-2
 #   [§19.104] NO_CLAMP 상수를 이 블록으로 올렸다(값/의미 불변 - 종전에는 클램프 RP 조립부에 있었고,
 #     모드표 결정보다 **뒤**라 여기서 볼 수 없었다). True = 클램프 생략 baseline(run_abaqus_cable 대조).
 NO_CLAMP = True
+#   [paper-match] 논문 5PCS 는 클램프가 없다. 프리셋과 충돌하면 조용히 다른 모델을 만들지 말고 즉시 중단한다.
+if PAPER_MATCH and not NO_CLAMP:
+    raise RuntimeError('PAPER_MATCH=True 는 NO_CLAMP=True 를 요구합니다(논문 5PCS, 클램프 없음).')
 #   [§19.105] PULL_TOP: True = 윗 꼭짓점(Top)도 케이블 방향 지정변위로 당긴다(Galhofo 2022 3-tendon 정합).
 #     False(기본) = 종전 그대로 Top 완전 고정 - 기존 런 재현성이 우선이다(BC/스텝 호출 바이트 동일).
 #     NO_CLAMP 와 **독립**이다: 네 조합(PULL_TOP x NO_CLAMP) 모두 유효하고, 클램프 유무와 서로 간섭하지 않는다.
@@ -217,7 +235,7 @@ IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t �
 #     실측 근거: 같은 점 (x_c=0.8, d_c=0.75)에서 stabilize=0.003 -> TOO MANY ATTEMPTS(τ=0.622),
 #     0.01 -> 완주. 감쇠가 지배 변수임이 단일 변수 실험으로 확정됐다. 첫 레벨로 제출하고
 #     실패하면 다음 레벨로 승급한다(각 레벨의 선택 결과를 로그에 남긴다).
-STABILIZE_LADDER = (0.005, 0.01, 0.02, 0.05)
+STABILIZE_LADDER = (PAPER_STABILIZE,) if PAPER_MATCH else (0.005, 0.01, 0.02, 0.05)
 #   [2026-10-12 §19.57 **되돌림**] 0.1 로 낮췄다가 되돌린다. 바로 아래 2026-10-06 실측이 반대를 말한다:
 #   0.10 -> 증분 눌림 2215 증분/약 90분 + 초기 결함이 약해 분기가 늦게 갈라져 수렴이 어려움,
 #   1.0 -> 271 증분/11분. 그리고 논문 대조 성공(97.7 t vs 91.1 t = 1.07배)도 **1.0 에서** 나왔다.
@@ -445,6 +463,12 @@ except:
     emit("Error: Invalid arguments. Usage: abaqus cae noGUI=run_abaqus.py -- HF x_c d_c")
     sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
     sys.exit(1)
+
+#   [paper-match] HF 전용 파생 플래그. LF 는 종전 경로를 그대로 쓴다(대리모델 정의 보존).
+#     케이블 초기응력은 HF 에만 넣는다 — LF 는 무결함·변위구동 대리모델이라는 정의를 유지한다.
+_PAPER_HF = bool(PAPER_EDGE_BC_FROM_INITIAL) and (fidelity == 'HF')
+_DISP_PRE = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_HF) else DISP_GLOBAL
+_DISP_FINAL = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_HF) else GLOBAL_FINAL
 
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
@@ -1180,6 +1204,13 @@ def seed_family_gate(table_path, max_modes):
     bad = [t for t in ('modes_clamp', 'combined', 'clamp_sha') if t in summary['header'].lower()]
     if bad:
         return False, ('표 헤더에 클램프/합성 흔적 %s -> 오염(seed 가족이 아니다)' % bad), summary
+    #   [paper-match] 2차 격자(MESH_ORDER=2)는 노드 라벨이 1차와 다르다. 표의 source ODB 이름에
+    #     'grid2' 가 없으면 1차 격자에서 뽑은 표이므로 주입하면 안 된다(조용한 오염 차단).
+    if MESH_ORDER == 2:
+        _src = str(summary.get('source', ''))
+        if 'grid2' not in os.path.basename(_src):
+            return False, ('MESH_ORDER=2 인데 시드표 source 가 grid2 가 아니다: %s '
+                           '-> make_seed.py 로 2차 격자 모드를 다시 뽑아라' % _src), summary
     if len(nums) < max_modes:
         return False, ('모드 부족: %d개(모드 %s) < %d개 필요(상위 %d개를 주입한다)'
                        % (len(nums), nums, max_modes, max_modes)), summary
@@ -1388,9 +1419,10 @@ if USE_GRID_MESH:
     #   (실측 AttributeError 2026-10-06/07). CAE 스크립트로 격자를 넣는 경로는
     #   mdb.models[].PartFromInputFile 뿐이다.
     p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
-        my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV)
-    print("[mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
-          % (_nn, _n4, _n3, _n4 + _n3))
+        my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+        elem_order=MESH_ORDER)
+    print("[mesh] grid(.inp import, orphan): order=%d, 노드 %d / quad %d + tri %d = %d"
+          % (MESH_ORDER, _nn, _n4, _n3, _n4 + _n3))
     #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
     #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
     #   orphan mesh 는 요소/절점 겸용 집합이 없다 -> 두 개를 만든다.
@@ -1416,6 +1448,9 @@ def create_cable_part(name, length):
     elemTypeTruss = ElemType(elemCode=T3D2, elemLibrary=STANDARD)
     p_c.setElementType(regions=(p_c.edges,), elemTypes=(elemTypeTruss,))
     p_c.generateMesh()
+    #   [paper-match] 케이블 초기응력(*INITIAL CONDITIONS, TYPE=STRESS)용 요소셋.
+    #     절점셋을 주면 'not an element set' 으로 죽는다(막의 All_Elem 과 같은 이유).
+    p_c.Set(elements=p_c.elements, name='All_Elem')
     return p_c
 
 p_cable_top = create_cable_part('Cable_Top', LEN_TOP)
@@ -1576,7 +1611,9 @@ my_model.StaticStep(
     nlgeom=ON,
     stabilizationMagnitude=0.0002,      # Galhofo Reference
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
-    initialInc=0.0001, minInc=1e-8, maxNumInc=1000    # P1-2: 1e-15 는 발산 시 증분 폭주
+    initialInc=(0.01 if PAPER_MATCH else 0.0001), minInc=1e-8, maxNumInc=1000
+    #   [paper-match] 초기응력은 스텝 시작에 전부 들어간다(램프 없음) -> 첫 증분이 너무 작으면
+    #     큰 잔차를 작은 증분으로 풀다 컷백이 반복된다. 논문 모드에서는 0.01 로 시작한다.
 )
 
 # Step Clamp Tension : 클램프에 변위 가하기
@@ -1649,13 +1686,33 @@ my_model.Stress(
     sigma12=0.0, sigma13=0.0, sigma23=0.0
 )
 
+#   [paper-match] 케이블 초기응력 = 논문의 프리텐션 하중 (Fig. 11).
+#     T3D2 의 local 1축이 케이블 축이므로 sigma11 이 축응력이다.
+#     케이블 외단은 BC_Anchor/BC_Right/BC_Left + Disp_Control(0) 으로 고정되어 있으므로
+#     이 초기응력은 고정단 반력과 평형을 이루는 실제 프리텐션이 된다.
+#     LF 는 종전 대리모델 정의를 유지하려고 이 블록을 타지 않는다(_PAPER_HF).
+if LOAD_MODE == 'cable_stress' and _PAPER_HF:
+    for _nm in ('Cable_Top', 'Cable_Right', 'Cable_Left'):
+        my_model.Stress(
+            name='PreTension_' + _nm,
+            region=a.instances['Inst_' + _nm].sets['All_Elem'],
+            distributionType=UNIFORM,
+            sigma11=CABLE_PRESTRESS,
+            sigma22=0.0, sigma33=0.0,
+            sigma12=0.0, sigma13=0.0, sigma23=0.0)
+    emit("[LOAD] cable_stress: sigma11=%.4g Pa x 3 cables (A=%.4g m2 -> F=%.4g N/cable)"
+         % (CABLE_PRESTRESS, CABLE_AREA, CABLE_PRESTRESS * CABLE_AREA))
+
 # 시작하면서 전체 면 z 변위 고정
-my_model.DisplacementBC(
-    name='BC_Stabilize_Z', 
-    createStepName='Initial', 
-    region=inst_memb.sets['All'],
-    u3=SET
-)
+#   [paper-match] 논문은 정적 스텝에서 **세 변만** u3=0 이다. HF 논문 모드에서는
+#     전막 고정을 만들지 않고, 아래 BC_Edges_Only_Z 를 Initial 에서 만든다.
+if not _PAPER_HF:
+    my_model.DisplacementBC(
+        name='BC_Stabilize_Z', 
+        createStepName='Initial', 
+        region=inst_memb.sets['All'],
+        u3=SET
+    )
 
 # 구속조건 생성
 #   [§19.105] BC_Anchor 는 케이블 '바깥 끝'(end_c1)의 구속이다. 종전에는 u1~ur3 완전 고정이었다.
@@ -1697,20 +1754,21 @@ if not NO_CLAMP:
     )
 
 # Right 케이블: 우하향 당기기
+#   [paper-match] cable_stress 모드에서는 _DISP_PRE=0 -> BC 가 Initial 의 0 에 머문다.
 my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(stepName='Step-GlobalTension', 
-    u1=DISP_GLOBAL * cos_val,
-    u2=-DISP_GLOBAL * sin_val
+    u1=_DISP_PRE * cos_val,
+    u2=-_DISP_PRE * sin_val
 )
 # Left Cable: 좌하향 당기기
 my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(stepName='Step-GlobalTension', 
-    u1=-DISP_GLOBAL * cos_val,
-    u2=-DISP_GLOBAL * sin_val
+    u1=-_DISP_PRE * cos_val,
+    u2=-_DISP_PRE * sin_val
 )
 if PULL_TOP:
     #   [§19.105] Top Cable: 상향(+y) 당기기 - Right/Left 와 같은 대입식.
     my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(stepName='Step-GlobalTension', 
-        u1=DISP_GLOBAL * top_cos * TOP_PULL_SCALE,
-        u2=-DISP_GLOBAL * top_sin * TOP_PULL_SCALE
+        u1=_DISP_PRE * top_cos * TOP_PULL_SCALE,
+        u2=-_DISP_PRE * top_sin * TOP_PULL_SCALE
     )
     emit("[BC] PULL_TOP=True -> Top 꼭짓점도 케이블 방향 변위(프리텐션 %.6g m / 최종 %.6g m), BC_Anchor 는 u3 만"
          % (DISP_GLOBAL, GLOBAL_FINAL))
@@ -1762,7 +1820,8 @@ if not NO_CLAMP:
     )
 
 # Step Buckle 에서는 전체 z 구속에서 모서리 z 구속으로 교체 Galhofo reference
-my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
+if 'BC_Stabilize_Z' in my_model.boundaryConditions:
+    my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
 
 # all_edges = inst_memb.edges 제거 — orphan mesh 에서는 인스턴스의 기하 edge 가 비어 셋이 무효다(§10a).
 
@@ -1818,7 +1877,8 @@ if RELEASE_EDGE_U3:
 else:
     my_model.DisplacementBC(
         name='BC_Edges_Only_Z',
-        createStepName='Step-Buckle',
+        #   [paper-match] 논문 정적 스텝은 세 변 u3=0 을 처음부터 건다.
+        createStepName=('Initial' if _PAPER_HF else 'Step-Buckle'),
         region=a.sets['All_Edges_NoClamp'],
         u3=0
     )
@@ -2183,7 +2243,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-GlobalTension',  
         nlgeom=ON, 
-        stabilizationMagnitude=0.01,      # Galhofo 참조 2e-4 / [2026-09-29] 0.001 -> 0.003 (살짝만)
+        stabilizationMagnitude=(PAPER_STABILIZE if PAPER_MATCH else 0.01),      # Galhofo 참조 2e-4 / [2026-09-29] 0.001 -> 0.003 (살짝만)
         #   근거: 실측 ALLSD/ALLIE = 0.50%% 인데 allsdtol = 5%% -> 인공감쇠가 약 10배의 여유를 남기고
         #   거의 작동하지 않았다. 즉 "감쇠가 컷백을 만든다"는 과거 반증은 "감쇠를 늘리면 도움이 될 것"을
         #   반증하지 않는다(다른 주장). allsdtol 이 상한을 걸어 자체 제한되므로 위험은 유계다.
@@ -2200,7 +2260,8 @@ elif fidelity == 'HF':
     )
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 
-    my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Postbuckle')
+    if 'BC_Stabilize_Z' in my_model.boundaryConditions:
+        my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Postbuckle')
 
     # Step-Buckle 삭제 시 BC_Edges_Only_Z(prescribed condition)가 함께 삭제되므로
     # Postbuckle 스텝에 모서리 z 구속을 재생성한다 (Galhofo 참조: 3개 모서리 u3=0).
@@ -2208,7 +2269,9 @@ elif fidelity == 'HF':
     #   [§19.111] RELEASE_EDGE_U3=True 면 재생성하지 않는다: EdgeZ_Spring 은 model-level
     #     engineeringFeature 라 스텝 삭제와 무관하게 모델에 남아 있고, 같은 이름으로 다시 만들면
     #     중복 이름 오류다. 3점 RP u3(BC_*_Corner_Z, Initial)도 그대로 살아 있다.
-    if not RELEASE_EDGE_U3:
+    #   [paper-match] _PAPER_HF 면 Initial 에서 만든 BC 가 모든 스텝에 살아 있으므로
+    #     여기서 다시 만들면 중복 이름 오류다.
+    if not RELEASE_EDGE_U3 and not _PAPER_HF:
         my_model.DisplacementBC(
             name='BC_Edges_Only_Z',
             createStepName='Step-Postbuckle',
@@ -2217,19 +2280,21 @@ elif fidelity == 'HF':
         )
 
     # 초기 상태에서 최종 장력(목표 7000 Pa, 미검증)까지 증가
+    #   [paper-match] cable_stress 모드에서는 _DISP_FINAL=0 -> Postbuckle 은 하중 변화가 없는
+    #     통과 스텝이다(주름은 GlobalTension 의 초기응력 평형화에서 이미 발달한다).
     for name, sign in [('Disp_Control_Right', 1), ('Disp_Control_Left', -1)]:
         my_model.boundaryConditions[name].setValuesInStep(
             stepName='Step-Postbuckle',
-            u1=sign * GLOBAL_FINAL * cos_val,
-            u2=-GLOBAL_FINAL * sin_val
+            u1=sign * _DISP_FINAL * cos_val,
+            u2=-_DISP_FINAL * sin_val
         )
 
     if PULL_TOP:
         #   [§19.105] 포스트버클 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 GLOBAL_FINAL.
         my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
             stepName='Step-Postbuckle',
-            u1=GLOBAL_FINAL * top_cos * TOP_PULL_SCALE,
-            u2=-GLOBAL_FINAL * top_sin * TOP_PULL_SCALE
+            u1=_DISP_FINAL * top_cos * TOP_PULL_SCALE,
+            u2=-_DISP_FINAL * top_sin * TOP_PULL_SCALE
         )
 
     for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):

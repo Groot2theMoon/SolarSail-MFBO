@@ -319,8 +319,41 @@ def fill_part(part, base=20.0, height=10.0, seed_div=200.0,
     return len(s4), len(s3), len(nodes)
 
 
-def write_inp(path, base=20.0, height=10.0, seed_div=200.0, part_name='Membrane'):
+def _second_order(nodes, s4, s3):
+    """1차 격자 -> 2차 격자(S8R5/STRI65) connectivity.
+
+    반환: (nodes2, s8, s6). nodes2 = 1차 절점 + 변 중앙 절점(0-based).
+      S8R5  = 4 corner + 4 mid-side (1-2, 2-3, 3-4, 4-1)
+      STRI65 = 3 corner + 3 mid-side (1-2, 2-3, 3-1)
+    공유 변의 중앙 절점은 한 번만 만들고 양쪽 요소가 같은 라벨을 쓴다.
+    """
+    nodes2 = list(nodes)
+    mid = {}
+
+    def m(n1, n2):
+        key = (n1, n2) if n1 < n2 else (n2, n1)
+        if key not in mid:
+            x1, y1 = nodes[n1]
+            x2, y2 = nodes[n2]
+            mid[key] = len(nodes2)
+            nodes2.append(((x1 + x2) * 0.5, (y1 + y2) * 0.5))
+        return mid[key]
+
+    s8 = []
+    for a, b, c, d in s4:
+        s8.append((a, b, c, d, m(a, b), m(b, c), m(c, d), m(d, a)))
+    s6 = []
+    for a, b, c in s3:
+        s6.append((a, b, c, m(a, b), m(b, c), m(c, a)))
+    return nodes2, s8, s6
+
+
+def write_inp(path, base=20.0, height=10.0, seed_div=200.0, part_name='Membrane',
+              elem_order=1):
     """격자를 `.inp` 로 쓴다 — CAE `PartFromInputFile` 로 **orphan mesh part** 를 만들기 위한 것.
+
+    elem_order=1 -> S4 + S3 (기존)
+    elem_order=2 -> S8R5 + STRI65 (논문 Galhofo 기준 요소, 변 중앙 절점 자동 생성)
 
     왜 이 경로인가(2026-10-06/10-07 실측): `Part.addNodes` / `addElements` / `deleteMesh` 는
     **`odb.Part` 전용**이라 `mdb.models[].Part` 에는 없다:
@@ -329,25 +362,32 @@ def write_inp(path, base=20.0, height=10.0, seed_div=200.0, part_name='Membrane'
         mdb.models[<model>].PartFromInputFile(inputFileName=<abs path>)
     `*Part, name=<part_name>` 헤딩이 있어야 `model.parts` 의 키가 그 이름이 된다.
 
-    반환: (노드 수, S4 수, S3 수)
+    반환: (노드 수, quad 요소 수, tri 요소 수)
     """
     nodes, s4, s3 = generate_grid(base, height, seed_div)
+    if int(elem_order) == 2:
+        nodes, s4, s3 = _second_order(nodes, s4, s3)
+        q_type, t_type = 'S8R5', 'STRI65'
+    elif int(elem_order) == 1:
+        q_type, t_type = 'S4', 'S3'
+    else:
+        raise ValueError('elem_order must be 1 or 2 (got %r)' % (elem_order,))
     with io.open(path, 'w', encoding='utf-8') as f:
         f.write("*Heading\n")
-        f.write("** uniform grid: interior quads + edge right triangles"
-                " (Galhofo 10100 topology)\n")
+        f.write("** uniform grid: order=%d (%s + %s), Galhofo 10100 topology\n"
+                % (int(elem_order), q_type, t_type))
         f.write("*Part, name=%s\n" % part_name)
         f.write("*Node\n")
         for i, (x, y) in enumerate(nodes):
             f.write("%d, %.10g, %.10g, 0.0\n" % (i + 1, x, y))
-        f.write("*Element, type=S4\n")
+        f.write("*Element, type=%s\n" % q_type)
         #   CAE 인터프리터가 생성기 인자를 거부하므로 명시적 루프로 조립한다.
         for k, t in enumerate(s4):
             _ids = []
             for _n in t:
                 _ids.append(str(_n + 1))
             f.write("%d, %s\n" % (k + 1, ", ".join(_ids)))
-        f.write("*Element, type=S3\n")
+        f.write("*Element, type=%s\n" % t_type)
         for k, t in enumerate(s3):
             _ids = []
             for _n in t:
@@ -358,7 +398,7 @@ def write_inp(path, base=20.0, height=10.0, seed_div=200.0, part_name='Membrane'
 
 
 def import_grid_part(model, part_name='Membrane', base=20.0, height=10.0, seed_div=200.0,
-                     inp_path=None, verbose=True):
+                     inp_path=None, verbose=True, elem_order=1):
     """`.inp` 를 써서 CAE 모델에 **orphan mesh part** 를 import 하고 그 파트를 돌려준다.
 
     `Part.addNodes` 가 없으므로(위 write_inp 주석) 이 경로가 유일하다. import 된 파트는
@@ -368,7 +408,8 @@ def import_grid_part(model, part_name='Membrane', base=20.0, height=10.0, seed_d
     """
     if inp_path is None:
         inp_path = os.path.join(os.getcwd(), 'grid_%s.inp' % part_name)
-    n, q, t = write_inp(inp_path, base, height, seed_div, part_name=part_name)
+    n, q, t = write_inp(inp_path, base, height, seed_div, part_name=part_name,
+                        elem_order=elem_order)
     if part_name in model.parts:
         del model.parts[part_name]          # 재실행 시 이름 충돌 방지(발견을 모호하지 않게)
     _before = set(model.parts.keys())
@@ -384,17 +425,22 @@ def import_grid_part(model, part_name='Membrane', base=20.0, height=10.0, seed_d
     key = part_name if part_name in _new else _new[0]
     part = model.parts[key]
     if verbose:
-        print("[grid] PartFromInputFile %s -> part %r  (새 키 %s / 전체 %s / 노드 %d, S4 %d, S3 %d)"
-              % (os.path.basename(inp_path), key, _new, sorted(model.parts.keys()), n, q, t))
+        print("[grid] PartFromInputFile %s -> part %r  (새 키 %s / 전체 %s / order=%d, 노드 %d, quad %d, tri %d)"
+              % (os.path.basename(inp_path), key, _new, sorted(model.parts.keys()),
+                 int(elem_order), n, q, t))
     return part, n, q, t
 
 
 if __name__ == '__main__':
     import sys as _sys
+    _order = 1
+    if '--order' in _sys.argv:
+        _order = int(_sys.argv[_sys.argv.index('--order') + 1])
     if '--write' in _sys.argv:
-        _out = 'grid_10100.inp'
-        _n, _q, _t = write_inp(_out)
-        print("[grid] wrote %s  nodes=%d S4=%d S3=%d" % (_out, _n, _q, _t))
+        _out = 'grid_10100_o%d.inp' % _order
+        _n, _q, _t = write_inp(_out, elem_order=_order)
+        print("[grid] wrote %s  order=%d nodes=%d quad=%d tri=%d"
+              % (_out, _order, _n, _q, _t))
     rep, st = grid_report()
     print(rep)
     print("\n[grid] 논문 대조: Galhofo Table A.1 '10100 elements' 의 S3+S4 행은"

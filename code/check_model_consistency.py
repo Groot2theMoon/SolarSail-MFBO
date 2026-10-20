@@ -275,7 +275,8 @@ def main():
     print("--- 하중 케이스 (buckle 단독 상수) ---")
     print("  run_abaqus_buckle.py  CASE = %s   CORNER_ANGLE_DEG = %s" % (_case, _cang))
     _CABLE_CASES = ('seed',)   # [§19.60] 꼭짓점 케이블이 있는 케이스(코너 케이블 계약 대상)
-    _KNOWN_CASES = _CABLE_CASES + ('clamp_only',)   # [§19.60] 현행 2케이스
+    _PAPER_CASES = ('paper',)  # [paper-match] 케이블·클램프 없이 꼭짓점 RP 직접 구동
+    _KNOWN_CASES = _CABLE_CASES + _PAPER_CASES + ('clamp_only',)   # [paper-match] 3케이스
     if _case == '(없음)':
         # [2026-10-07] 여기서 **실패**시킨다. 경고만 찍으면 CASE 줄을 주석 처리한 옛 사본이
         #   PASS 로 통과한다(규칙 18: 문자열 존재 검사는 주석 처리된 쌍둥이에 만족한다).
@@ -287,6 +288,9 @@ def main():
               % (_case, '|'.join(_KNOWN_CASES)))
     elif _case in _CABLE_CASES:
         print("  OK   CASE='%s' — 꼭짓점 케이블 라우트(코너 케이블 계약 대상)." % _case)
+    elif _case in _PAPER_CASES:
+        print("  OK   CASE='%s' — 논문 케이블-프리 좌굴모델(꼭짓점 RP 직접 구동)." % _case)
+        print("       모드 형상은 3점 대칭/2:1 정적 스텝 기준으로 판정한다.")
     else:
         print("  OK   CASE='%s' — 클램프 케이블 라우트(코너 케이블 계약 대상 아님)." % _case)
         print("       판정은 모드 형상(면외 비율 / 압축영역 분포 / x_c 이동)으로 한다.")
