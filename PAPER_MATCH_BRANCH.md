@@ -12,7 +12,7 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 |---|---|---|
 | Membrane elements | STRI65 + S8R5 (2nd order), 10,100 | **S4/S3 (1st order), 10,100 / 10,201 nodes** (default); 2nd-order generator exists but is experimental |
 | Pre-tension load | cable initial stress 2.69e7 Pa (5PCS), cable ends fixed | **3 cables, sigma11 = 2.69e7 Pa**, ends fixed, no displacement ramp |
-| Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle 0.10 m **same**; static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base) |
+| Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle 0.10 m **same**; static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base); HF post-buckling: **no vertex displacement** (initial stress only) |
 | BC | three edges u3 = 0 | **three edges u3 = 0 from Initial** (HF) |
 | Stabilization | 2e-4 | paper: **2e-4**; physical clamp model: **1.0** (clamp cutbacks) |
 | Clamps | none (5PCS) | paper reproduction: `NO_CLAMP = True`; physical model: `PAPER_INCLUDE_CLAMPS = True` (clamps + vertex cables; clamp prestress = `d_c × 2.69e7 Pa`) |
@@ -122,6 +122,18 @@ but it is **not** the mode-table source any more.
 `NO_CLAMP = not PAPER_INCLUDE_CLAMPS`. The paper-only model uses the 2e-4 stabilization;
 the physical model uses **1.0**. Both cable families are initial-stress; the clamp displacement pull is
 removed (`CLAMP_PULL = CLAMP_FINAL = 0`). The composite mode table is the right basis for the physical model.
+
+### Paper-faithful post-buckling: initial stress only (2026-10-20)
+
+In the `cable_stress` path `_DISP_FINAL = 0`, so the **HF** `Step-Postbuckle` applies
+**no vertex displacement**. (The LF keeps its 1 mm `Step-HighTension` for the fast model.)
+The wrinkles form in `Step-GlobalTension` under
+
+- vertex cable initial stress **2.69e7 Pa**, ends fixed;
+- clamp cable initial stress **`d_c × 2.69e7 Pa`**, ends fixed.
+
+That is the Galhofo Fig. 11/17 path, with the clamps added as the physical design. The old MFBO
+baseline (`LOAD_MODE='disp'`) keeps the 1 mm `GLOBAL_FINAL`; it is not the paper path.
 
 ## Required run order (Windows, Abaqus)
 

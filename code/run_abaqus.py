@@ -248,6 +248,13 @@ IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t �
 #     실패하면 다음 레벨로 승급한다(각 레벨의 선택 결과를 로그에 남긴다).
 STABILIZE_LADDER = ((PAPER_STABILIZE,) if (PAPER_MATCH and not PAPER_INCLUDE_CLAMPS)
                     else (1.0,))   # 클램프 모델: 0.005는 1e-5 증분으로 눌림. 1.0 = 97.7t 기준선
+#   실제 스텝에 들어가는 값 (2026-10-20: 기존 하드코딩 0.0002 를 대체).
+#     paper-only  : 2e-4 (논문값)
+#     physical    : 1.0  (클램프 컷백 회피, 97.7t 기준선)
+#     old disp    : GlobalTension 2e-4 / Postbuckle 0.01 (종전 그대로)
+STABILIZE_GLOBAL = 1.0 if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS) else 0.0002
+STABILIZE_POST = (1.0 if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS)
+                  else (PAPER_STABILIZE if PAPER_MATCH else 0.01))
 #   [2026-10-12 §19.57 **되돌림**] 0.1 로 낮췄다가 되돌린다. 바로 아래 2026-10-06 실측이 반대를 말한다:
 #   0.10 -> 증분 눌림 2215 증분/약 90분 + 초기 결함이 약해 분기가 늦게 갈라져 수렴이 어려움,
 #   1.0 -> 271 증분/11분. 그리고 논문 대조 성공(97.7 t vs 91.1 t = 1.07배)도 **1.0 에서** 나왔다.
@@ -1632,7 +1639,7 @@ my_model.StaticStep(
     name='Step-GlobalTension',
     previous='Initial', 
     nlgeom=ON,
-    stabilizationMagnitude=0.0002,      # Galhofo Reference
+    stabilizationMagnitude=STABILIZE_GLOBAL,  # paper 2e-4 / physical 1.0
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
     initialInc=(0.01 if PAPER_MATCH else 0.0001), minInc=1e-8, maxNumInc=1000
     #   [paper-match] 초기응력은 스텝 시작에 전부 들어간다(램프 없음) -> 첫 증분이 너무 작으면
@@ -1981,23 +1988,26 @@ if fidelity == 'LF':
         maxNumInc=100
     )
 
-    my_model.boundaryConditions['BC_Stabilize_Z'].setValuesInStep(
-        stepName='Step-HighTension', 
-        u3=0.0        
-    )
+    if 'BC_Stabilize_Z' in my_model.boundaryConditions:
+        my_model.boundaryConditions['BC_Stabilize_Z'].setValuesInStep(
+            stepName='Step-HighTension',
+            u3=0.0
+        )
 
+    #   [2026-10-20] cable_stress 경로는 _DISP_FINAL=0 -> 꼭짓점 변위 없음(초기응력만).
+    #     종전 MFBO 기준선(disp)만 GLOBAL_FINAL 1 mm 를 유지한다.
     for name, sign in [('Disp_Control_Right', 1), ('Disp_Control_Left', -1)]:
         my_model.boundaryConditions[name].setValuesInStep(
             stepName='Step-HighTension',
-            u1=sign * GLOBAL_FINAL * cos_val,
-            u2=-GLOBAL_FINAL * sin_val
+            u1=sign * _DISP_FINAL * cos_val,
+            u2=-_DISP_FINAL * sin_val
         )
     if PULL_TOP:
-        #   [§19.105] 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 GLOBAL_FINAL.
+        #   [§19.105] 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 _DISP_FINAL.
         my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
             stepName='Step-HighTension',
-            u1=GLOBAL_FINAL * top_cos * TOP_PULL_SCALE,
-            u2=-GLOBAL_FINAL * top_sin * TOP_PULL_SCALE
+            u1=_DISP_FINAL * top_cos * TOP_PULL_SCALE,
+            u2=-_DISP_FINAL * top_sin * TOP_PULL_SCALE
         )
     #   [2026-10-20] cable_stress 경로는 클램프 초기응력 -> HighTension 변위 없음.
     #     종전 MFBO 기준선(disp)만 CLAMP_FINAL 변위를 유지한다.
@@ -2276,7 +2286,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-GlobalTension',  
         nlgeom=ON, 
-        stabilizationMagnitude=(PAPER_STABILIZE if PAPER_MATCH else 0.01),      # Galhofo 참조 2e-4 / [2026-09-29] 0.001 -> 0.003 (살짝만)
+        stabilizationMagnitude=STABILIZE_POST,      # paper 2e-4 / physical 1.0 / old disp 0.01
         #   근거: 실측 ALLSD/ALLIE = 0.50%% 인데 allsdtol = 5%% -> 인공감쇠가 약 10배의 여유를 남기고
         #   거의 작동하지 않았다. 즉 "감쇠가 컷백을 만든다"는 과거 반증은 "감쇠를 늘리면 도움이 될 것"을
         #   반증하지 않는다(다른 주장). allsdtol 이 상한을 걸어 자체 제한되므로 위험은 유계다.
