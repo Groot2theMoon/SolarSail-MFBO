@@ -620,11 +620,31 @@ def create_rigid_patch(a, inst_memb, name, coord, radius):
     rp_region = a.Set(name=name+'_RP_Set', referencePoints=(rp_key,))
 
     # 노드 찾기
-    nodes = inst_memb.nodes.getByBoundingSphere(center=coord, radius=radius)
-    if not nodes:
-        nodes = (inst_memb.nodes.getClosest(coordinates=coord),)
+    if name == 'Left' and 'Right_Nodes' in a.sets:
+        #   [sym] 좌우 대칭 강제: Left 패치를 Right 패치의 거울로 만든다.
+        #   getByBoundingSphere(radius) 는 반경 경계의 부동소수 때문에 좌/우 노드 수가
+        #   달라질 수 있다(실측: 모드가 오른쪽 꼭짓점에만 국소화). 격자 자체는 대칭이므로
+        #   한쪽을 거울로 복사하면 정확히 대칭이 된다.
+        _right_nodes = a.sets['Right_Nodes'].nodes
+        _mirror = []
+        for _nd in _right_nodes:
+            _c = _nd.coordinates
+            _mirror.append(inst_memb.nodes.getClosest(
+                coordinates=(BASE - _c[0], _c[1], _c[2])))
+        nodes = tuple(_mirror)
+    else:
+        nodes = inst_memb.nodes.getByBoundingSphere(center=coord, radius=radius)
+        if not nodes:
+            nodes = (inst_memb.nodes.getClosest(coordinates=coord),)
 
     patch_set = a.Set(name=name+'_Nodes', nodes=nodes)
+
+    if name == 'Left' and 'Right_Nodes' in a.sets:
+        _rc = aba_grid_mesh.patch_coords_from_set(a.sets['Right_Nodes'])
+        _lc = aba_grid_mesh.patch_coords_from_set(a.sets['Left_Nodes'])
+        if _rc and _lc:
+            _ok, _msg = aba_grid_mesh.patch_nodes_mirror_ok(_lc, _rc)
+            print('%s [sym] Right/Left patch mirror: %s' % (TAG, _msg))
 
     # Coupling (RP <-> Membrane Nodes)
     my_model.Coupling(
