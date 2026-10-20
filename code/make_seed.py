@@ -100,12 +100,12 @@ def buckle_mesh_tag():
 
 
 def seed_case():
-    """논문 정합 프리셋이면 cable-free 'paper' 케이스에서 seed 모드를 뽑는다.
+    """모드 추출은 **seed + clamp_only 합성** (사용자 결정 2026-10-20).
 
-    paper 케이스 = 케이블/클램프 없이 꼭짓점 RP 를 직접 구동하는 Galhofo 좌굴모델.
+    cable-free 'paper' 케이스는 run_abaqus_buckle.py 에 수동 실행용으로 남겨 둔다
+    (모드표의 1가족으로 쓰지 않는다 — 사용자는 두 가족 합성을 선택했다).
     """
-    txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
-    return 'paper' if re.search(r'^PAPER_MATCH\s*=\s*True\b', txt, re.M) else 'seed'
+    return 'seed'
 
 
 def buckle_pert_tag():

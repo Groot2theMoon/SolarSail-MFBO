@@ -43,11 +43,12 @@ CUT_MARKER = 'print("=" * 78)'          # 실행 블록의 시작(소스에 두 
 # ⚠️ 값은 **파이썬 리터럴 그대로** 쓴다(문자열은 따옴표 포함) — 치환이 값을 그대로 끼워 넣는다.
 #    실측: 따옴표를 빼면 `PRETENSION_MODE = corner2` 가 되어 NameError 로 죽는다.
 CASE_CONSTANTS = {
-    #  [§19.60 정리] 현행 씨드 재료 2케이스만.
-    'seed':       {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    'clamp_only': {'PRETENSION_MODE': "'corner2'", 'CORNER_ANGLE_DEG': '28.6'},
-    #  [paper-match] 논문 케이블-프리 좌굴모델. PAPER_MATCH=True 가 나머지 상수를 이미 정한다.
-    'paper':      {'PRETENSION_MODE': "'paper3'", 'CORNER_ANGLE_DEG': '28.6'},
+    #  PRETENSION_MODE 는 스크립트의 PAPER_MATCH 프리셋이 결정한다(여기서 덮지 않는다 —
+    #  paper 프리셋에서 corner2 로 덮으면 _require_constant 가 즉시 예외를 낸다).
+    'seed':       {'CORNER_ANGLE_DEG': '28.6'},
+    'clamp_only': {'CORNER_ANGLE_DEG': '28.6'},
+    #  [paper-match] 논문 케이블-프리 좌굴모델. 수동 비교용.
+    'paper':      {'CORNER_ANGLE_DEG': '28.6'},
 }
 
 # ---------------------------------------------------------------------------

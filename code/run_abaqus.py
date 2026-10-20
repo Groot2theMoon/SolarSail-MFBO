@@ -88,6 +88,11 @@ LOAD_MODE = 'cable_stress' if PAPER_MATCH else 'disp'   # 'disp' | 'cable_stress
 CABLE_PRESTRESS = 2.69e7         # Pa — 논문 5PCS Fig. 11, 3케이블 동일
 PAPER_STABILIZE = 2.0e-4         # 논문 stability factor
 PAPER_EDGE_BC_FROM_INITIAL = bool(PAPER_MATCH)   # 3변 u3=0 을 Initial 에서 (HF 전용)
+#   [paper-match] 모드표 = **seed + clamp_only 합성표** (사용자 결정 2026-10-20).
+#     True  = seeds/modes_xc<xc>.txt (2+2 합성) 를 쓰고 seed_gate 지문 검사를 적용한다.
+#     False = 종전 NO_CLAMP 순수 seed 가족 표(modes_seed.txt) — clamp 모드 배제.
+#     합성표를 쓰면 clamp 가족 모드가 임퍼펙션에 섞인다(설계 의도). 모드 추출은 make_seed.py.
+USE_COMPOSITE_MODE_TABLE = True
 
 # ---- ① 실행 모드/스위치 ----
 BASE_PROBE = True                # 각 잡 직후 base_state_probe.py (R-13) 자동 실행
@@ -1223,17 +1228,19 @@ def seed_family_gate(table_path, max_modes):
 SEEDS_DIR = os.path.join(_HERE, SEED_DIR_NAME)   # [§19.73] cae noGUI 는 execfile 이라 __file__ 이 없다
 SEED_FAMILY_TABLE = os.path.join(SEEDS_DIR, SEED_FAMILY_NAME)   # [§19.104] 순수 seed 가족 표
 _MODE_TABLE_ENV = os.environ.get('SOLARSAIL_MODE_TABLE')
-if NO_CLAMP:
-    # 합성표(2+2)도 env 오버라이드도 쓰지 않는다 - 클램프 모드가 섞이면 그대로 오염이다(§19.104).
+if NO_CLAMP and not USE_COMPOSITE_MODE_TABLE:
+    # 순수 seed 가족 표(클램프 모드 배제) — 종전 §19.104 경로.
     MODE_TABLE = SEED_FAMILY_TABLE
 else:
+    # [paper-match] 기본: seed + clamp_only **합성표**. 클램프가 없는 HF 라도 모드 형상 기저에는
+    #   두 가족을 함께 쓴다(사용자 결정 2026-10-20). 지문 게이트(seed_gate)가 설계점/소스 드리프트를 막는다.
     MODE_TABLE = seed_table_path(SEEDS_DIR, x_c, d_c, env=_MODE_TABLE_ENV)
 
 
 if IMPERFECTION_MODE == 'odb_table':
     #   [§19.104] 클램프 없는 baseline -> 순수 seed 가족 표. 여기서 검증/로그를 끝낸다:
     #     표가 없거나 모드가 부족하면 **크게 찍고 중단**한다(조용히 합성표로 되돌아가면 오염이 재발).
-    if NO_CLAMP:
+    if NO_CLAMP and not USE_COMPOSITE_MODE_TABLE:
         _sf_ok, _sf_why, _sf = seed_family_gate(MODE_TABLE, IMPERFECTION_MAX_MODES)
         emit("[SEED] NO_CLAMP=True -> 순수 seed 가족 사용(clamp 모드 제외) / "
              "table=%s / modes=%s / source=%s / x_c=%g d_c=%g"
@@ -1281,7 +1288,7 @@ if IMPERFECTION_MODE == 'odb_table':
     #   [§19.104] 이 게이트는 **합성표 전용**이다(합성표 헤더의 x_c/fingerprint 를 본다). 클램프
     #     없는 baseline 의 순수 seed 가족 표에는 그 헤더가 없으므로 여기서는 검증하지 않고,
     #     위 seed_family_gate 가 대신한다(검증 없는 통과가 아니라 대상이 다르다).
-    if NO_CLAMP:
+    if NO_CLAMP and not USE_COMPOSITE_MODE_TABLE:
         emit("[SEED] 합성 지문 게이트 생략 (NO_CLAMP=True 순수 seed 가족 표, §19.104)")
     else:
         _buckle_script = os.path.join(_HERE, BUCKLE_SCRIPT_NAME)

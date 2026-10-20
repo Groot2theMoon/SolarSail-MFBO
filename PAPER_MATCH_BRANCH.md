@@ -16,7 +16,7 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 | BC | three edges u3 = 0 | **three edges u3 = 0 from Initial** (HF) |
 | Stabilization | 2e-4 | **2e-4 fixed** (no 0.005~0.05 ladder) |
 | Clamps | none (5PCS) | `NO_CLAMP = True` enforced |
-| Imperfection | first 4 modes, 0.10 t | same (`IMPERFECTION_AMPL_T = 0.1`) |
+| Imperfection | first 4 modes, 0.10 t | same; mode table = **seed + clamp_only composite** (2+2) |
 
 ## Constants (edit only these)
 
@@ -26,6 +26,7 @@ PAPER_MATCH = True
 PAPER_MESH_ORDER = 2        # 1 = old S4/S3, 2 = paper S8R5/STRI65
 CABLE_PRESTRESS = 2.69e7    # Pa; calibrate to 7000 Pa at CENTRE
 PAPER_STABILIZE = 2.0e-4
+USE_COMPOSITE_MODE_TABLE = True   # seed + clamp_only 합성표
 ```
 
 `code/run_abaqus_buckle.py`:
@@ -46,18 +47,36 @@ PAPER_MESH_ORDER = 2
 
 Set `PAPER_MATCH = False` in all three to return to the old MFBO baseline.
 
+## Mode table (user decision 2026-10-20)
+
+The imperfection table is the **composite of the `seed` family and the `clamp_only` family** (2+2 modes),
+not the pure seed-family table. In `run_abaqus.py`:
+
+```
+USE_COMPOSITE_MODE_TABLE = True   # False = old pure seed family (modes_seed.txt)
+```
+
+`make_seed.py` runs both cases and combines them with `combine_mode_tables.py`:
+
+- `seed` case: cable model, 3-vertex `paper3` static (0.001 / 0.0005 m), buckle 0.10 m.
+- `clamp_only` case: clamp model, clamp pull `DISP * CLAMP_DC`, buckle clamp perturbation 0.10 m.
+
+The `paper` case (cable-free, clamp-free) remains available for manual `run_abaqus_buckle.py` runs,
+but it is **not** one of the two mode-table families.
+
 ## Required run order (Windows, Abaqus)
 
-The seed table is **node-label based**. A 1st-order table cannot be used with the 2nd-order mesh.
-`run_abaqus.py` aborts before submitting if the table's source ODB name does not contain `grid2`.
+The table is node-label based. A 1st-order table cannot be used with the 2nd-order mesh.
+The composite table's fingerprint includes `MESH_ORDER`, so `run_abaqus.py` aborts before submitting
+if the table was built on a different mesh or base state.
 
 ```bat
 cd code
 
-:: 1) regenerate the seed family from the cable-free paper case (2nd order)
+:: 1) regenerate seed + clamp_only families and combine (2nd order)
 python make_seed.py --x_c 0.5 --d_c 1.0 --force
 
-:: 2) confirm the table came from the 2nd-order paper run
+:: 2) confirm the seed family came from a 2nd-order run
 findstr /C:"grid2" seeds\modes_seed.txt
 
 :: 3) HF run
@@ -80,7 +99,8 @@ If `CENTRE(mid)` is not 7000 Pa, scale:
 - `buckle_stub_harness.py paper 0.5`: BC trace is
   Initial (top fixed, corners 0, edges u3=0) → Static (top 0.001, corners 0.0005) →
   Buckle (top 0.10, corners 0.10). Lambda/convergence are NOT verified by the harness.
-- `make_seed.py --x_c 0.5 --d_c 1.0 --dry-run`: selects `CASE='paper'`, job tag `s4_grid2_paper`, `_plv10000`.
+- `make_seed.py --x_c 0.5 --d_c 1.0 --dry-run`: selects `CASE='seed'` + `CASE='clamp_only'`,
+  job tags `s4_grid2_seed` / `s4_grid2_clamp_only`, `_plv10000`, then combines 2+2.
 
 ## Known risks (not yet tested in Abaqus)
 
