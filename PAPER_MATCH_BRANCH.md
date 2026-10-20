@@ -114,20 +114,28 @@ but it is **not** the mode-table source any more.
 
 `PAPER_INCLUDE_CLAMPS` splits the two models:
 
-| Model | `PAPER_INCLUDE_CLAMPS` | Clamps | Vertex cables | Use |
-|---|---|---|---|---|
-| Paper 5PCS | `False` | no | 2.69e7 Pa initial stress | Galhofo comparison |
-| Physical | `True` | yes, **initial stress** `CLAMP_PRESTRESS = d_c * CABLE_PRESTRESS` | 2.69e7 Pa initial stress | MFBO / post-buckling |
+| Model | `PAPER_INCLUDE_CLAMPS` | `PAPER_HOLD_U3_GLOBAL` | Clamps | Vertex cables | Use |
+|---|---|---|---|---|---|
+| Paper 5PCS | `False` | `False` | no | 2.69e7 Pa initial stress | Galhofo comparison |
+| Physical | `True` | **`True`** | yes, **initial stress** `CLAMP_PRESTRESS = d_c * CABLE_PRESTRESS` | 2.69e7 Pa initial stress | MFBO / post-buckling |
 
-`NO_CLAMP = not PAPER_INCLUDE_CLAMPS`. The paper-only model uses the 2e-4 stabilization;
-the physical model uses **1.0**. Both cable families are initial-stress; the clamp displacement pull is
-removed (`CLAMP_PULL = CLAMP_FINAL = 0`). The composite mode table is the right basis for the physical model.
+`NO_CLAMP = not PAPER_INCLUDE_CLAMPS`; `PAPER_HOLD_U3_GLOBAL = bool(PAPER_INCLUDE_CLAMPS)`.
+Paper-only: 2e-4, three-edge BC, wrinkles form in `Step-GlobalTension`.
+Physical: 1.0, full-membrane u3=0 in `Step-GlobalTension` -> `Step-Postbuckle` releases
+`BC_Stabilize_Z`, wrinkles form in the postbuckle.
+Both cable families are initial-stress; the clamp displacement pull is removed
+(`CLAMP_PULL = CLAMP_FINAL = 0`). The composite mode table is the right basis for the physical model.
 
 ### Paper-faithful post-buckling: initial stress only (2026-10-20)
 
-In the `cable_stress` path `_DISP_FINAL = 0`, so the **HF** `Step-Postbuckle` applies
-**no vertex displacement**. (The LF keeps its 1 mm `Step-HighTension` for the fast model.)
-The wrinkles form in `Step-GlobalTension` under
+In the `cable_stress` path `_DISP_FINAL = 0`, so the **HF** applies **no vertex displacement**.
+(The LF keeps its 1 mm `Step-HighTension` for the fast model.)
+The load is the cable initial stress only. The BC path depends on `PAPER_HOLD_U3_GLOBAL`:
+
+- `True` (physical default): `Step-GlobalTension` holds the full membrane u3=0 (flat pre-tension),
+  `Step-Postbuckle` releases `BC_Stabilize_Z`; the wrinkles form in the postbuckle.
+- `False` (paper-only): only the three edges are u3=0; the wrinkles form in `Step-GlobalTension`.
+
 
 - vertex cable initial stress **2.69e7 Pa**, ends fixed;
 - clamp cable initial stress **`d_c × 2.69e7 Pa`**, ends fixed.
