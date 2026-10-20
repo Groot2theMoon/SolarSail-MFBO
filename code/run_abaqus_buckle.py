@@ -73,8 +73,8 @@ MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
 #     -> subspace "THE EIGENVALUES CANNOT BE FOUND" (0 modes). 1e-3 m 에서도 0개였던 §8 실측과 같은 영역.
 #   모드는 임퍼펙션의 **형상 기저**일 뿐이고 진폭은 HF 가 0.1 t 로 따로 주므로,
 #   모드 추출은 안정 운용점(1.8e-5 m)에서 하고 2:1 형상만 논문과 맞춘다.
-PAPER_STATIC_DISP = 0.0005    # 논문 Fig. 12 정적 스텝 코너값 (참조용, 모드 추출에 쓰지 않음)
-MODE_PRESTRESS = 1.8e-5       # 실제 모드 추출 base state (안정 영역)
+PAPER_STATIC_DISP = 0.0005    # 논문 Fig. 12 정적 스텝 코너값 (D4: 모드 추출에 사용)
+MODE_PRESTRESS = 0.0005       # D4: 논문 정적변위. 1차 요소에서 재시도
 
 # ---- ① CASE 선택 ----
 CASE = 'paper' if PAPER_MATCH else 'clamp_only'
