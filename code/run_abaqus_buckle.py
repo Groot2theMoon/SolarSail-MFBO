@@ -68,6 +68,13 @@ import numpy as np
 PAPER_MATCH = True
 PAPER_MESH_ORDER = 2
 MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
+#   [2026-10-20 실측] 논문 정적 스텝의 코너 0.0005 m 는 이 모델에서 **base state 가 불안정**하다:
+#     SYSTEM MATRIX 592 negative eigenvalues / DIFFERENTIAL MATRIX 166,009 negative diagonals
+#     -> subspace "THE EIGENVALUES CANNOT BE FOUND" (0 modes). 1e-3 m 에서도 0개였던 §8 실측과 같은 영역.
+#   모드는 임퍼펙션의 **형상 기저**일 뿐이고 진폭은 HF 가 0.1 t 로 따로 주므로,
+#   모드 추출은 안정 운용점(1.8e-5 m)에서 하고 2:1 형상만 논문과 맞춘다.
+PAPER_STATIC_DISP = 0.0005    # 논문 Fig. 12 정적 스텝 코너값 (참조용, 모드 추출에 쓰지 않음)
+MODE_PRESTRESS = 1.8e-5       # 실제 모드 추출 base state (안정 영역)
 
 # ---- ① CASE 선택 ----
 CASE = 'paper' if PAPER_MATCH else 'clamp_only'
@@ -115,7 +122,7 @@ if PRETENSION_MODE not in ('corner2', 'paper3'):
 DISP_TOP_OVER_CORNER = 2.0 if PAPER_MATCH else 1.4142135623   # 논문 2:1 / 종전 √2
 
 # ---- 프리텐션 (CLI 두 번째 인자로 덮어쓴다) ----
-DISP_GLOBAL = 0.0005 if PAPER_MATCH else 1.8e-5    # 논문 코너 0.0005 m / 종전 운용점
+DISP_GLOBAL = MODE_PRESTRESS    # 모드 추출 base state. 논문 0.0005 m 는 위 주석대로 불안정.
 
 # 코너 하중 각도 [deg] — 전 케이스가 'hf'(28.6 = 우리 HF/케이블 방향).
 CORNER_ANGLE_DEG = 28.6
@@ -931,6 +938,10 @@ def build_model(disp):
         _top_note = ' (Top 완전고정)'
     print("%s 프리텐션 = %s : 아래 %.4e m%s"
           % (TAG, PRETENSION_MODE, disp_a, _top_note))
+    if PAPER_MATCH:
+        print("%s [paper-match] 논문 정적 변위 %.4g m 는 모드 추출에 쓰지 않는다(base state 불안정). "
+              "MODE_PRESTRESS=%.4g m, 2:1 형상만 논문과 동일"
+              % (TAG, PAPER_STATIC_DISP, MODE_PRESTRESS))
     if PULL_TOP:
         #   [§19.107] 실제 적용값을 1줄로 남긴다. 제어는 상수 하나뿐이므로 출처 표기는 없다.
         #     False 경로에는 이 줄이 없다(종전 로그/덱과 동일하게 유지).

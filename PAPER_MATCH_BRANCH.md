@@ -12,7 +12,7 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 |---|---|---|
 | Membrane elements | STRI65 + S8R5 (2nd order), 10,100 | **S8R5 9,900 + STRI65 200**, 30,501 nodes |
 | Pre-tension load | cable initial stress 2.69e7 Pa (5PCS), cable ends fixed | **3 cables, sigma11 = 2.69e7 Pa**, ends fixed, no displacement ramp |
-| Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | **same** (`run_abaqus_buckle.py`, `CASE='paper'`) |
+| Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle 0.10 m **same**; static **shape** 2:1 but magnitude **1.8e-5 m** for mode extraction |
 | BC | three edges u3 = 0 | **three edges u3 = 0 from Initial** (HF) |
 | Stabilization | 2e-4 | **2e-4 fixed** (no 0.005~0.05 ladder) |
 | Clamps | none (5PCS) | `NO_CLAMP = True` enforced |
@@ -33,7 +33,9 @@ USE_COMPOSITE_MODE_TABLE = True   # seed + clamp_only 합성표
 ```python
 PAPER_MATCH = True
 PAPER_MESH_ORDER = 2
-# derived: CASE='paper', paper3, DISP_GLOBAL=0.0005, DISP_TOP_OVER_CORNER=2.0,
+MODE_PRESTRESS = 1.8e-5     # actual mode-extraction base state
+PAPER_STATIC_DISP = 0.0005  # paper reference only (unstable here)
+# derived: CASE='paper', paper3, DISP_TOP_OVER_CORNER=2.0,
 #          PERTURBATION=0.10, MODE_STABILIZATION=2e-4
 ```
 
@@ -44,6 +46,16 @@ PAPER_MESH_ORDER = 2
 # mode source keeps DISP_GLOBAL = 1.8e-5 (low pre-stress) on purpose;
 # modes are only the imperfection shape basis.
 ```
+
+### Why the static step uses 1.8e-5 m, not 0.0005 m
+
+The paper's 0.0005 m corner displacement puts this model's base state above its bifurcation load.
+Measured on this branch (S8R5/STRI65, 202,050 equations): 592 negative eigenvalues in the system matrix,
+166,009 negative diagonal entries, and the subspace iteration ends with
+`THE EIGENVALUES CANNOT BE FOUND ... INSTABILITIES IN THE BASE STATE` (0 modes).
+The same failure was already recorded at 1e-3 m. Modes are only the imperfection shape basis;
+HF sets the amplitude at 0.10 t, so the mode-extraction prestress does not need to be the paper's.
+The 2:1 shape and the 0.10 m buckle step are kept.
 
 Set `PAPER_MATCH = False` in all three to return to the old MFBO baseline.
 

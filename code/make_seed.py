@@ -81,9 +81,12 @@ def _need(path, what, hint=''):
 
 
 def buckle_disp():
-    """run_abaqus_buckle.py 의 DISP_GLOBAL 을 읽는다(값을 두 곳에 적지 않는다)."""
+    """run_abaqus_buckle.py 의 DISP_GLOBAL(또는 MODE_PRESTRESS)을 읽는다."""
     txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
     m = re.search(r'^DISP_GLOBAL\s*=\s*([0-9.eE+-]+)', txt, re.M)
+    if m:
+        return float(m.group(1))
+    m = re.search(r'^MODE_PRESTRESS\s*=\s*([0-9.eE+-]+)', txt, re.M)
     return float(m.group(1)) if m else 1.8e-5
 
 
