@@ -15,7 +15,7 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 | Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle 0.10 m **same**; static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base) |
 | BC | three edges u3 = 0 | **three edges u3 = 0 from Initial** (HF) |
 | Stabilization | 2e-4 | **2e-4 fixed** (no 0.005~0.05 ladder) |
-| Clamps | none (5PCS) | `NO_CLAMP = True` enforced |
+| Clamps | none (5PCS) | paper reproduction: `NO_CLAMP = True`; physical model: `PAPER_INCLUDE_CLAMPS = True` (clamps + vertex cables) |
 | Imperfection | first 4 modes, 0.10 t | same; mode table = **seed + clamp_only composite** (2+2) |
 
 ## Constants (edit only these)
@@ -109,6 +109,19 @@ USE_COMPOSITE_MODE_TABLE = True   # False = pure paper family (modes_seed.txt)
 
 The cable `seed` case remains available for manual `run_abaqus_buckle.py` runs,
 but it is **not** the mode-table source any more.
+
+### Paper reproduction vs physical model (2026-10-20)
+
+`PAPER_INCLUDE_CLAMPS` splits the two models:
+
+| Model | `PAPER_INCLUDE_CLAMPS` | Clamps | Vertex cables | Use |
+|---|---|---|---|---|
+| Paper 5PCS | `False` | no | 2.69e7 Pa initial stress | Galhofo comparison |
+| Physical | `True` | yes, `CLAMP_PULL = DISP_GLOBAL * d_c` | 2.69e7 Pa initial stress | MFBO / post-buckling |
+
+`NO_CLAMP = not PAPER_INCLUDE_CLAMPS`. The paper-only model uses the 2e-4 stabilization;
+the physical model uses the old `(0.005, 0.01, 0.02, 0.05)` ladder because the clamps cause cutbacks.
+The composite mode table (paper + clamp_only) is the right basis for the physical model.
 
 ## Required run order (Windows, Abaqus)
 

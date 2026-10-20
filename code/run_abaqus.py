@@ -88,6 +88,11 @@ LOAD_MODE = 'cable_stress' if PAPER_MATCH else 'disp'   # 'disp' | 'cable_stress
 CABLE_PRESTRESS = 2.69e7         # Pa — 논문 5PCS Fig. 11, 3케이블 동일
 PAPER_STABILIZE = 2.0e-4         # 논문 stability factor
 PAPER_EDGE_BC_FROM_INITIAL = bool(PAPER_MATCH)   # 3변 u3=0 을 Initial 에서 (HF 전용)
+#   [2026-10-20] 논문 재현과 실제 설계를 분리한다.
+#     False = 논문 5PCS 그대로 (클램프 없음, NO_CLAMP=True)
+#     True  = 논문 프리텐션·BC·1차 메쉬는 유지하되 **클램프 + 꼭짓점 케이블을 모두 포함**
+#             (실제 포스트버클링 모델. CLAMP_PULL=DISP_GLOBAL*d_c 는 그대로 살아 있다.)
+PAPER_INCLUDE_CLAMPS = True
 #   [paper-match] 모드표 = **seed + clamp_only 합성표** (사용자 결정 2026-10-20).
 #     True  = seeds/modes_xc<xc>.txt (2+2 합성) 를 쓰고 seed_gate 지문 검사를 적용한다.
 #     False = 종전 NO_CLAMP 순수 seed 가족 표(modes_seed.txt) — clamp 모드 배제.
@@ -110,10 +115,11 @@ RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-2
                              #   그때는 _EIGENSOLVER 와 제출 순서를 함께 손봐야 한다.
 #   [§19.104] NO_CLAMP 상수를 이 블록으로 올렸다(값/의미 불변 - 종전에는 클램프 RP 조립부에 있었고,
 #     모드표 결정보다 **뒤**라 여기서 볼 수 없었다). True = 클램프 생략 baseline(run_abaqus_cable 대조).
-NO_CLAMP = True
-#   [paper-match] 논문 5PCS 는 클램프가 없다. 프리셋과 충돌하면 조용히 다른 모델을 만들지 말고 즉시 중단한다.
-if PAPER_MATCH and not NO_CLAMP:
-    raise RuntimeError('PAPER_MATCH=True 는 NO_CLAMP=True 를 요구합니다(논문 5PCS, 클램프 없음).')
+NO_CLAMP = not PAPER_INCLUDE_CLAMPS
+#   [paper-match] 논문 5PCS 재현은 클램프가 없다. 실제 설계는 PAPER_INCLUDE_CLAMPS=True 로 켠다.
+if PAPER_MATCH and not NO_CLAMP and not PAPER_INCLUDE_CLAMPS:
+    raise RuntimeError('PAPER_MATCH=True 의 논문 재현은 NO_CLAMP=True 를 요구합니다. '
+                       '실제 클램프 모델은 PAPER_INCLUDE_CLAMPS=True 로 켜십시오.')
 #   [§19.105] PULL_TOP: True = 윗 꼭짓점(Top)도 케이블 방향 지정변위로 당긴다(Galhofo 2022 3-tendon 정합).
 #     False(기본) = 종전 그대로 Top 완전 고정 - 기존 런 재현성이 우선이다(BC/스텝 호출 바이트 동일).
 #     NO_CLAMP 와 **독립**이다: 네 조합(PULL_TOP x NO_CLAMP) 모두 유효하고, 클램프 유무와 서로 간섭하지 않는다.
@@ -240,7 +246,8 @@ IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t �
 #     실측 근거: 같은 점 (x_c=0.8, d_c=0.75)에서 stabilize=0.003 -> TOO MANY ATTEMPTS(τ=0.622),
 #     0.01 -> 완주. 감쇠가 지배 변수임이 단일 변수 실험으로 확정됐다. 첫 레벨로 제출하고
 #     실패하면 다음 레벨로 승급한다(각 레벨의 선택 결과를 로그에 남긴다).
-STABILIZE_LADDER = (PAPER_STABILIZE,) if PAPER_MATCH else (0.005, 0.01, 0.02, 0.05)
+STABILIZE_LADDER = ((PAPER_STABILIZE,) if (PAPER_MATCH and not PAPER_INCLUDE_CLAMPS)
+                    else (0.005, 0.01, 0.02, 0.05))
 #   [2026-10-12 §19.57 **되돌림**] 0.1 로 낮췄다가 되돌린다. 바로 아래 2026-10-06 실측이 반대를 말한다:
 #   0.10 -> 증분 눌림 2215 증분/약 90분 + 초기 결함이 약해 분기가 늦게 갈라져 수렴이 어려움,
 #   1.0 -> 271 증분/11분. 그리고 논문 대조 성공(97.7 t vs 91.1 t = 1.07배)도 **1.0 에서** 나왔다.
