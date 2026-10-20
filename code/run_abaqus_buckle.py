@@ -625,13 +625,18 @@ def create_rigid_patch(a, inst_memb, name, coord, radius):
         #   getByBoundingSphere(radius) 는 반경 경계의 부동소수 때문에 좌/우 노드 수가
         #   달라질 수 있다(실측: 모드가 오른쪽 꼭짓점에만 국소화). 격자 자체는 대칭이므로
         #   한쪽을 거울로 복사하면 정확히 대칭이 된다.
-        _right_nodes = a.sets['Right_Nodes'].nodes
-        _mirror = []
-        for _nd in _right_nodes:
+        #   Set(nodes=...) 는 tuple[MeshNode] 를 거부하므로 sequenceFromLabels 로
+        #   MeshNodeArray 를 만들어 넘긴다(실측: Feature creation failed).
+        _labels = []
+        for _nd in a.sets['Right_Nodes'].nodes:
             _c = _nd.coordinates
-            _mirror.append(inst_memb.nodes.getClosest(
-                coordinates=(BASE - _c[0], _c[1], _c[2])))
-        nodes = tuple(_mirror)
+            _mn = inst_memb.nodes.getClosest(
+                coordinates=(BASE - _c[0], _c[1], _c[2]))
+            if isinstance(_mn, (tuple, list)):   # 버전에 따라 (node, distance) 반환
+                _mn = _mn[0]
+            _labels.append(int(_mn.label))
+        _labels = list(dict.fromkeys(_labels))      # 중복 제거(순서 유지)
+        nodes = inst_memb.nodes.sequenceFromLabels(_labels)
     else:
         nodes = inst_memb.nodes.getByBoundingSphere(center=coord, radius=radius)
         if not nodes:
