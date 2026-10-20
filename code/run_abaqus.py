@@ -1362,10 +1362,17 @@ V_CR = clamp_coord_R(x_c)
 
 # ---- 런타임 파생 하중: SETTINGS ④ 의 값 x CLI d_c (정의는 여기 — d_c 가 필요하다) ----
 #   [2026-10-20] 클램프 프리텐션 = 초기응력. d_c = 클램프/꼭짓점 케이블 **응력비**.
-CLAMP_PRESTRESS = CABLE_PRESTRESS * d_c
-CLAMP_PULL = 0.0                 # 변위 당김 없음 (기존 기록 호환)
-CLAMP_FINAL = 0.0                # 변위 당김 없음 (기존 기록 호환)
-CLAMP_PERT = PERTURBATION        # 자기좌굴 프로브용(설계하중 아님, d_c 무관)
+#     단, 종전 MFBO 기준선(LOAD_MODE='disp')은 변위 당김을 그대로 유지한다.
+if LOAD_MODE == 'cable_stress':
+    CLAMP_PRESTRESS = CABLE_PRESTRESS * d_c
+    CLAMP_PULL = 0.0             # 변위 당김 없음
+    CLAMP_FINAL = 0.0            # 변위 당김 없음
+    CLAMP_PERT = PERTURBATION    # 자기좌굴 프로브용(설계하중 아님, d_c 무관)
+else:
+    CLAMP_PRESTRESS = None       # 이 경로는 초기응력을 쓰지 않는다
+    CLAMP_PULL = DISP_GLOBAL * d_c
+    CLAMP_FINAL = GLOBAL_FINAL * d_c
+    CLAMP_PERT = PERTURBATION * d_c
 
 
 # 모델 초기화 및 재질
@@ -1809,8 +1816,13 @@ if PULL_TOP:
     emit("   [BC] 케이블 방향 (u1=v*cos, u2=-v*sin): Top cos=%.6f sin=%.6f / Right cos=%.6f sin=%.6f / Left cos=%.6f sin=%.6f"
          % (top_cos, top_sin, cos_val, sin_val, -cos_val, sin_val))
 
-#   [2026-10-20] 클램프 프리텐션은 초기응력(CLAMP_PRESTRESS)이므로 Step-ClampTension 에서
-#     변위 당김을 걸지 않는다. Disp_Control_CL/CR 은 Initial 의 0 에 그대로 둔다.
+#   [2026-10-20] cable_stress 경로는 클램프 프리텐션을 초기응력으로 준다 -> 변위 당김 없음.
+#     종전 MFBO 기준선(LOAD_MODE='disp')만 아래 변위 당김을 유지한다.
+if not NO_CLAMP and LOAD_MODE == 'disp':
+    my_model.boundaryConditions['Disp_Control_CL'].setValuesInStep(
+        stepName='Step-ClampTension', u1=-(CLAMP_PULL/sqrt2), u2=(CLAMP_PULL/sqrt2))
+    my_model.boundaryConditions['Disp_Control_CR'].setValuesInStep(
+        stepName='Step-ClampTension', u1=(CLAMP_PULL/sqrt2), u2=(CLAMP_PULL/sqrt2))
 
 # Buckle Perturbation
 my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(stepName='Step-Buckle', 
@@ -1987,7 +1999,14 @@ if fidelity == 'LF':
             u1=GLOBAL_FINAL * top_cos * TOP_PULL_SCALE,
             u2=-GLOBAL_FINAL * top_sin * TOP_PULL_SCALE
         )
-    #   [2026-10-20] 클램프는 초기응력이므로 HighTension 에서 변위를 추가하지 않는다.
+    #   [2026-10-20] cable_stress 경로는 클램프 초기응력 -> HighTension 변위 없음.
+    #     종전 MFBO 기준선(disp)만 CLAMP_FINAL 변위를 유지한다.
+    if LOAD_MODE == 'disp':
+        for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
+            my_model.boundaryConditions[name].setValuesInStep(
+                stepName='Step-HighTension',
+                u1=sign * CLAMP_FINAL / sqrt2,
+                u2=CLAMP_FINAL / sqrt2)
 
     my_model.fieldOutputRequests['F-Output-1'].setValues(
         variables=('S', 'E', 'U', 'COORD', 'EVOL'), 
@@ -2311,7 +2330,14 @@ elif fidelity == 'HF':
             u2=-_DISP_FINAL * top_sin * TOP_PULL_SCALE
         )
 
-    #   [2026-10-20] 클램프는 초기응력이므로 Postbuckle 에서 변위를 추가하지 않는다.
+    #   [2026-10-20] cable_stress 경로는 클램프 초기응력 -> Postbuckle 변위 없음.
+    #     종전 MFBO 기준선(disp)만 CLAMP_FINAL 변위를 유지한다.
+    if LOAD_MODE == 'disp':
+        for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
+            my_model.boundaryConditions[name].setValuesInStep(
+                stepName='Step-Postbuckle',
+                u1=sign * CLAMP_FINAL / sqrt2,
+                u2=CLAMP_FINAL / sqrt2)
     
 
     my_model.fieldOutputRequests['F-Output-1'].setValues(
