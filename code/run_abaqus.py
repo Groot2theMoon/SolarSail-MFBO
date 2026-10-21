@@ -1754,9 +1754,9 @@ if LOAD_MODE == 'cable_stress' and _PAPER_HF:
 
 # 시작하면서 전체 면 z 변위 고정
 #   [paper-match] 논문은 정적 스텝에서 **세 변만** u3=0 이다.
-#     - 종전 disp / physical(PAPER_HOLD_U3_GLOBAL=True): 전막 u3=0 (BC_Stabilize_Z)
-#     - paper-only(PAPER_HOLD_U3_GLOBAL=False): 전막 고정 없이 BC_Edges_Only_Z 만
-if (LOAD_MODE == 'disp') or PAPER_HOLD_U3_GLOBAL:
+#     - 종전 disp / physical HF(PAPER_HOLD_U3_GLOBAL=True): 전막 u3=0 (BC_Stabilize_Z)
+#     - LF(NO_CLAMP) / paper-only: 전막 고정 없이 BC_Edges_Only_Z 만
+if (LOAD_MODE == 'disp') or (_PAPER_HF and PAPER_HOLD_U3_GLOBAL):
     my_model.DisplacementBC(
         name='BC_Stabilize_Z', 
         createStepName='Initial', 
