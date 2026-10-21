@@ -6,20 +6,26 @@ Usage:
     abaqus cae noGUI=run_abaqus.py -- [Fidelity] [x_c] [d_c]
 
 Arguments:
-    - Fidelity (str): 'LF' (Low-Fidelity, Linear/Static) or 'HF' (High-Fidelity, Post-buckling)
+    - Fidelity (str): 'LF' (Low-Fidelity: paper 경로는 초기응력 프리스트레스 정적해석,
+                     구 기준선은 변위구동 정적해석) 또는 'HF' (High-Fidelity, Post-buckling)
     - x_c (float): Clamp Cable의 부착 위치 파라미터 (0.0 ~ 1.0)
                     0에 가까울수록 위쪽 꼭짓점, 1에 가까울수록 변의 아래 끝점에 위치.
-    - d_c (float): Clamp Cable을 당기는 변위 비율 (Displacement Ratio).
-                    각 step에서 꼭짓점 변위량에 대한 배율로 작용.
+    - d_c (float): paper 경로 = 클램프/꼭짓점 케이블 **초기응력 비율**
+                    (CLAMP_PRESTRESS = d_c * CABLE_PRESTRESS).
+                    구 disp 경로 = 클램프 케이블의 변위 비율.
 
 Flow (Simulation Logic):
     1. 형상(Geometry) & 물성(Material) & 메쉬(Mesh) 생성 (공통)
     2. 초기 장력(Global Tension) 단계 정의
     3. Fidelity에 따른 분기:
        [LF 모드]  (클램프 있음 + 완전 형상)
-         - 'Step-GlobalTension' -> 'Step-ClampTension' -> 'Step-HighTension' 순차 진행.
-         - 주름(Wrinkle) 거동을 무시하고 선형적(혹은 단순 기하 비선형) 강성을 빠르게 계산.
+         - paper 경로(PAPER_MATCH=True): 'Step-GlobalTension' 하나로 끝난다.
+           케이블/클램프 초기응력 + 전막/3변 u3=0 인 **프리스트레스 상태**가 LF 최종 상태다.
+           (ClampTension/HighTension 빈 스텝 없음. HF 의 Postbuckle base 와 같은 상태.)
+         - 구 MFBO 기준선(PAPER_MATCH=False): 'Step-GlobalTension' -> 'Step-ClampTension'
+           -> 'Step-HighTension' (1 mm 변위구동). 이 경로는 보존된다.
          - 임퍼펙션(*IMPERFECTION) 없음 -> 좌굴(Buckle) 잡도 돌리지 않는다(모드 불필요).
+         - eval 은 LF ODB 에서 lf1/lf2/lf3 + ZK(Zhang & Kiendl) 지표를 낸다.
        [HF 모드]  (클램프 있음 + 임퍼펙션 주입 = 2-모델 레시피, 2026-09-22)
          - 1차: 모드 소스는 '클램프 없는' 별도 모델에서 **선형 좌굴해석(*BUCKLE)** 으로 모드를
                 뽑는다(run_abaqus_mode.py). 클램프가 있는 base state 는 선형 좌굴 스펙트럼을
@@ -36,6 +42,8 @@ Flow (Simulation Logic):
     4. Post-Processing:
        - 'eval_abaqus.py'를 subprocess로 호출하여 ODB에서 필요한 값(추력, 면적 등)만 추출.
        - 추출된 값을 stdout으로 출력하여 상위 프로세스(MFBO)에 전달.
+       - LF/HF(짝 LF ODB 가 있을 때) 공통: `ZK:` 한 줄(별도 계약) + zk_metrics.txt.
+         RESULTS 3/4필드는 불변.
 
 solar-sail 해석 방법론은 대부분 Galhofo2022 논문을 레퍼런스로 하였음.
 (물성치, 크기, 각도, step의 종류와 순서 등등)
@@ -348,6 +356,7 @@ from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: 
                               verify_inp_element_types,
                               EDGE_SPRING_ELEM_TYPES,
                               point_tag, lf_odb_name, lf_job_name,
+                              lf_sidecar_write, lf_odb_is_current,
                               seed_table_path, seed_gate, BUCKLE_SCRIPT_NAME,
                               SEED_DIR_NAME, job_completed_from_logs, value_tag)
 # aba_grid_mesh: boundary_node_labels / clamp_exclude_labels / make_set (면외 z 구속 노드셋). §9
@@ -489,11 +498,22 @@ except:
     sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
     sys.exit(1)
 
-#   [paper-match] HF 전용 파생 플래그. LF 는 종전 경로를 그대로 쓴다(대리모델 정의 보존).
-#     케이블 초기응력은 HF 에만 넣는다 — LF 는 무결함·변위구동 대리모델이라는 정의를 유지한다.
-_PAPER_HF = bool(PAPER_EDGE_BC_FROM_INITIAL) and (fidelity == 'HF')
-_DISP_PRE = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_HF) else DISP_GLOBAL
-_DISP_FINAL = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_HF) else GLOBAL_FINAL
+#   [paper-match] 논문 하중/BC 경로는 **LF/HF 공통**이다 (2026-10-21).
+#     `_PAPER_PATH` = 케이블/클램프 초기응력 + 3변/패치 u3=0 + 변위구동 끔.
+#     `fidelity` 는 해석 종류(LF=정적 프리스트레스, HF=포스트버클)만 제어한다.
+#     `_PAPER_HF` 는 HF 전용 분기(예: Postbuckle 에서 BC 재생성 회피)에만 남긴다.
+_PAPER_PATH = bool(PAPER_EDGE_BC_FROM_INITIAL)
+_PAPER_HF = _PAPER_PATH and (fidelity == 'HF')
+_DISP_PRE = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_PATH) else DISP_GLOBAL
+_DISP_FINAL = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_PATH) else GLOBAL_FINAL
+#   [paper-match] LF ODB stale guard: 모델 정의가 바뀌면 기존 LF ODB 를 재사용하지 않는다.
+#     sidecar(.model.txt)의 tag 를 현재 경로와 대조한다(aba_imperfection 참조).
+#     tag 에 clamp/u3 sub-mode 를 포함해 PAPER_INCLUDE_CLAMPS/PAPER_HOLD_U3_GLOBAL 전환도 잡는다.
+#     기본값은 aba_imperfection.LF_MODEL_TAG 와 같아야 한다(mfbo.py 가 그 값을 쓴다).
+_LF_MODEL_TAG = (('globaltension-v1-c%d-u%d'
+                  % (int(PAPER_INCLUDE_CLAMPS), int(PAPER_HOLD_U3_GLOBAL)))
+                 if (LOAD_MODE == 'cable_stress' and _PAPER_PATH)
+                 else 'disp-v1')
 
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
@@ -671,6 +691,58 @@ def _archive_dn(x_c, d_c, dn_lines):
                 _kv.get('dn_n_elem', 'nan')))
     except Exception as _e:
         emit('[DN] 실패(무시, 런은 계속): %s' % _e)
+
+
+def _archive_zk(x_c, d_c, zk_lines):
+    """[paper-match] eval_abaqus.py 가 낸 `ZK:` 줄을 점별 results txt 에 `zk_` 접두로 append.
+
+    계약 보존:
+      - `RESULTS:` 3/4필드는 읽지도 쓰지도 않는다.
+      - `all_results.csv` 는 열지 않는다(헤더 1회 규칙 - 열 추가 금지).
+    호출 위치: _archive_result('w') 뒤 (그 함수가 txt 를 다시 쓰므로).
+    """
+    try:
+        _ptxt = os.path.join(_HERE, 'results',
+                             'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c)))
+        if not os.path.exists(_ptxt):
+            emit('[ZK] !!! 점별 txt 없음(%s) - zk_ 아카이빙 생략' % os.path.basename(_ptxt))
+            return
+        _kv = {}
+        _fail = None
+        for _ln in (zk_lines or []):
+            _s = str(_ln).strip()
+            if not _s.startswith('ZK:'):
+                continue
+            _body = _s[3:].strip()
+            if _body.startswith('FAIL'):
+                _fail = _body
+                continue
+            for _tok in _body.split():
+                if '=' in _tok:
+                    _k, _v = _tok.split('=', 1)
+                    if _k == 'state_wrinkled_frac':
+                        _k = 'zk_state_wrinkled_frac'
+                    elif not _k.startswith('zk_'):
+                        _k = 'zk_' + _k
+                    _kv[_k] = _v
+
+        with io.open(_ptxt, 'a', encoding='utf-8') as _f:
+            if _fail is not None and not _kv:
+                #   계산 불가: 0 으로 뭉개지 않는다(nan + 사유). CSV 는 그대로.
+                _f.write('zk_state_wrinkled_frac=nan\n')
+                _f.write('zk_note=%s\n' % _fail.replace(' ', '_'))
+                emit('[ZK] !!! ZK 계산 실패 -> zk_state_wrinkled_frac=nan (%s)' % _fail)
+                return
+            if not _kv:
+                emit('[ZK] !!! 줄 없음 (eval_abaqus.py 출력에 ZK: 이 없다) - zk_ 아카이빙 생략')
+                return
+            for _k in sorted(_kv):
+                _f.write('%s=%s\n' % (_k, _kv[_k]))
+        emit('[ZK] %d개 key를 %s 에 append | state_wrinkled_frac=%s dir=%s'
+             % (len(_kv), os.path.basename(_ptxt),
+                _kv.get('zk_state_wrinkled_frac', 'nan'), _kv.get('zk_dir_deg', 'nan')))
+    except Exception as _e:
+        emit('[ZK] 실패(무시, 런은 계속): %s' % _e)
 
 
 def _r13_ct_keys():
@@ -1722,12 +1794,9 @@ my_model.Stress(
     sigma12=0.0, sigma13=0.0, sigma23=0.0
 )
 
-#   [paper-match] 케이블 초기응력 = 논문의 프리텐션 하중 (Fig. 11).
-#     T3D2 의 local 1축이 케이블 축이므로 sigma11 이 축응력이다.
-#     케이블 외단은 BC_Anchor/BC_Right/BC_Left + Disp_Control(0) 으로 고정되어 있으므로
-#     이 초기응력은 고정단 반력과 평형을 이루는 실제 프리텐션이 된다.
-#     LF 는 종전 대리모델 정의를 유지하려고 이 블록을 타지 않는다(_PAPER_HF).
-if LOAD_MODE == 'cable_stress' and _PAPER_HF:
+#   [paper-match] LF/HF 공통: 케이블 초기응력 + 클램프 초기응력(d_c*CABLE_PRESTRESS).
+#     HF 는 이 상태를 Postbuckle 의 base 로 쓰고, LF 는 이 상태를 **최종 프리스트레스**로 쓴다.
+if LOAD_MODE == 'cable_stress' and _PAPER_PATH:
     for _nm in ('Cable_Top', 'Cable_Right', 'Cable_Left'):
         my_model.Stress(
             name='PreTension_' + _nm,
@@ -1756,7 +1825,7 @@ if LOAD_MODE == 'cable_stress' and _PAPER_HF:
 #   [paper-match] 논문은 정적 스텝에서 **세 변만** u3=0 이다.
 #     - 종전 disp / physical HF(PAPER_HOLD_U3_GLOBAL=True): 전막 u3=0 (BC_Stabilize_Z)
 #     - LF(NO_CLAMP) / paper-only: 전막 고정 없이 BC_Edges_Only_Z 만
-if (LOAD_MODE == 'disp') or (_PAPER_HF and PAPER_HOLD_U3_GLOBAL):
+if (LOAD_MODE == 'disp') or (_PAPER_PATH and PAPER_HOLD_U3_GLOBAL):
     my_model.DisplacementBC(
         name='BC_Stabilize_Z', 
         createStepName='Initial', 
@@ -1866,7 +1935,11 @@ if not NO_CLAMP:
     )
 
 # Step Buckle 에서는 전체 z 구속에서 모서리 z 구속으로 교체 Galhofo reference
-if ('BC_Stabilize_Z' in my_model.boundaryConditions
+#   [paper-match] LF 는 Step-Buckle 을 삭제하므로 deactivate 할 필요가 없다.
+#     (BC_Stabilize_Z 는 LF 프리스트레스 상태 내내 active 여야 한다.)
+#     HF 만 Step-Buckle -> Step-Postbuckle 전환에서 deactivate 한다.
+if (fidelity == 'HF'
+        and 'BC_Stabilize_Z' in my_model.boundaryConditions
         and 'Step-Buckle' in my_model.steps):
     my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
 
@@ -1925,7 +1998,7 @@ else:
     my_model.DisplacementBC(
         name='BC_Edges_Only_Z',
         #   [paper-match] 논문 정적 스텝은 세 변 u3=0 을 처음부터 건다.
-        createStepName=('Initial' if _PAPER_HF else 'Step-Buckle'),
+        createStepName=('Initial' if _PAPER_PATH else 'Step-Buckle'),
         region=a.sets['All_Edges_NoClamp'],
         u3=0
     )
@@ -1989,55 +2062,81 @@ if fidelity == 'LF':
     if 'Step-Buckle' in my_model.steps:
         del my_model.steps['Step-Buckle']
 
-    my_model.StaticStep(
-        name='Step-HighTension',
-        previous='Step-ClampTension',
-        nlgeom=ON,
-        initialInc=0.01, 
-        maxNumInc=100
-    )
-
-    if 'BC_Stabilize_Z' in my_model.boundaryConditions:
-        my_model.boundaryConditions['BC_Stabilize_Z'].setValuesInStep(
-            stepName='Step-HighTension',
-            u3=0.0
+    if LOAD_MODE == 'cable_stress':
+        #   [paper-match] LF/HF 물리 정합: 초기응력 프리스트레스 상태가 **최종 상태**다.
+        #     GlobalTension 뒤에 빈 ClampTension/HighTension 스텝을 두지 않는다.
+        #     HF 도 Postbuckle 직전에 ClampTension 을 삭제하고 GlobalTension 에서 시작한다.
+        #     -> LF ODB 의 마지막(그리고 유일한) 해석 스텝 = Step-GlobalTension.
+        if 'Step-ClampTension' in my_model.steps:
+            del my_model.steps['Step-ClampTension']
+        emit("[LF] paper 경로: Step-GlobalTension 이 최종 프리스트레스 스텝 "
+             "(ClampTension/HighTension 없음)")
+    else:
+        #   ---- 구 MFBO 기준선(LOAD_MODE='disp') 경로: 바이트/거동 보존 ----
+        my_model.StaticStep(
+            name='Step-HighTension',
+            previous='Step-ClampTension',
+            nlgeom=ON,
+            initialInc=0.01,
+            maxNumInc=100
         )
 
-    #   [2026-10-20] cable_stress 경로는 _DISP_FINAL=0 -> 꼭짓점 변위 없음(초기응력만).
-    #     종전 MFBO 기준선(disp)만 GLOBAL_FINAL 1 mm 를 유지한다.
-    for name, sign in [('Disp_Control_Right', 1), ('Disp_Control_Left', -1)]:
-        my_model.boundaryConditions[name].setValuesInStep(
-            stepName='Step-HighTension',
-            u1=sign * _DISP_FINAL * cos_val,
-            u2=-_DISP_FINAL * sin_val
-        )
-    if PULL_TOP:
-        #   [§19.105] 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 _DISP_FINAL.
-        my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
-            stepName='Step-HighTension',
-            u1=_DISP_FINAL * top_cos * TOP_PULL_SCALE,
-            u2=-_DISP_FINAL * top_sin * TOP_PULL_SCALE
-        )
-    #   [2026-10-20] cable_stress 경로는 클램프 초기응력 -> HighTension 변위 없음.
-    #     종전 MFBO 기준선(disp)만 CLAMP_FINAL 변위를 유지한다.
-    if LOAD_MODE == 'disp':
+        if 'BC_Stabilize_Z' in my_model.boundaryConditions:
+            my_model.boundaryConditions['BC_Stabilize_Z'].setValuesInStep(
+                stepName='Step-HighTension',
+                u3=0.0
+            )
+
+        #   [2026-10-20] 구 disp 경로만 GLOBAL_FINAL 1 mm 를 유지한다.
+        for name, sign in [('Disp_Control_Right', 1), ('Disp_Control_Left', -1)]:
+            my_model.boundaryConditions[name].setValuesInStep(
+                stepName='Step-HighTension',
+                u1=sign * _DISP_FINAL * cos_val,
+                u2=-_DISP_FINAL * sin_val
+            )
+        if PULL_TOP:
+            #   [§19.105] 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 _DISP_FINAL.
+            my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
+                stepName='Step-HighTension',
+                u1=_DISP_FINAL * top_cos * TOP_PULL_SCALE,
+                u2=-_DISP_FINAL * top_sin * TOP_PULL_SCALE
+            )
         for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
             my_model.boundaryConditions[name].setValuesInStep(
                 stepName='Step-HighTension',
                 u1=sign * CLAMP_FINAL / sqrt2,
                 u2=CLAMP_FINAL / sqrt2)
 
+    #   [paper-match] 'E' = Green-Lagrange strain (nlgeom=ON). eval_abaqus 의 ZK
+    #     (Zhang & Kiendl: E1/E2/n1) 가 이 필드에서 변형률을 읽는다. 빼면 ZK:FAIL.
     my_model.fieldOutputRequests['F-Output-1'].setValues(
-        variables=('S', 'E', 'U', 'COORD', 'EVOL'), 
+        variables=('S', 'E', 'U', 'COORD', 'EVOL'),
         frequency=10   # R-10: odb 크기 절감
     )
 
-    #   [§19.66] 같은 설계점의 LF 는 재사용한다(잡 재제출 ~3분 절약). 이름에 (x_c, d_c) 가
-    #     들어가므로 다른 점의 산출물을 읽을 위험이 없다.
-    if os.path.exists(LF_ODB):
-        emit("[LF] 재사용: %s (설계점 %s) - 잡 재제출 생략" % (LF_ODB, point_tag(x_c, d_c)))
+    #   [§19.66] 같은 설계점의 LF 는 재사용한다(잡 재제출 ~3분 절약).
+    #   [paper-match] 단, 모델 정의가 바뀐 뒤의 **stale LF ODB** 는 재사용하지 않는다.
+    #     sidecar(.model.txt)의 tag 가 현재 경로와 일치할 때만 재사용한다.
+    if os.path.exists(LF_ODB) and lf_odb_is_current(LF_ODB, tag=_LF_MODEL_TAG):
+        emit("[LF] 재사용: %s (설계점 %s, sidecar tag=%s) - 잡 재제출 생략"
+             % (LF_ODB, point_tag(x_c, d_c), _LF_MODEL_TAG))
     else:
+        if os.path.exists(LF_ODB):
+            emit("[LF] !!! stale LF ODB (sidecar 없음/불일치) -> 재제출: %s" % LF_ODB)
         run_job_safely(LF_JOB)
+        try:
+            lf_sidecar_write(LF_ODB, tag=_LF_MODEL_TAG, extra={
+                'x_c': x_c, 'd_c': d_c, 'load_mode': LOAD_MODE,
+                'paper_path': int(_PAPER_PATH), 'paper_hold_u3': int(PAPER_HOLD_U3_GLOBAL),
+                'paper_include_clamps': int(PAPER_INCLUDE_CLAMPS),
+                'mesh_order': MESH_ORDER, 'thickness': THICKNESS,
+                'cable_prestress': CABLE_PRESTRESS,
+                'clamp_prestress': CLAMP_PRESTRESS,
+                'lf_steps': ','.join([s for s in my_model.steps.keys() if s != 'Initial']),
+            })
+            emit("[LF] sidecar 기록: %s.model.txt (tag=%s)" % (LF_ODB, _LF_MODEL_TAG))
+        except Exception as _sc_err:
+            emit("[LF] !!! sidecar 기록 실패(무시): %s" % _sc_err)
 
     cmd = 'abaqus python "%s" %s LF' % (os.path.join(_HERE, "eval_abaqus.py"), LF_ODB)
 
@@ -2051,6 +2150,9 @@ elif fidelity == 'HF':
     if not _have_lf:
         emit("[eval] 짝 LF 없음(%s) -> HF 단독 평가(HFONLY). lf 지표는 nan 이 된다."
              % os.path.basename(LF_ODB))
+    elif not lf_odb_is_current(LF_ODB, tag=_LF_MODEL_TAG):
+        emit("[eval] !!! 짝 LF ODB sidecar 불일치(stale 가능) - lf/ZK 가 현재 모델 것이 아닐 수 있다. "
+             "LF 먼저 재실행을 권장한다: %s" % os.path.basename(LF_ODB))
 
     # 좌굴모드와 포스트버클 해석이 '같은 초기응력 상태'에서 계산되도록
     # 초기응력 재생성(500 -> 100 Pa)을 좌굴 잡 제출 '앞'으로 이동.
@@ -2206,7 +2308,12 @@ elif fidelity == 'HF':
                                               os.path.join('..', os.path.basename(BUCKLE_ODB)))
                     _ct_src = '폴백(다른 디렉터리의 좌굴 ODB)'
             if os.path.exists(_probe2) and _ct_odb:
-                emit("[R-13:CT] --- Step-ClampTension 말단 판독(꼭짓점 + 클램프 당김 후 = 실제 프리텐션) ---")
+                #   [paper-match] paper LF ODB 에는 Step-ClampTension 이 없다. 그 경로의
+                #     프리스트레스 상태는 Step-GlobalTension 이므로 그 스텝을 읽는다.
+                _r13_step = ('Step-GlobalTension'
+                             if (LOAD_MODE == 'cable_stress' and _PAPER_PATH)
+                             else 'Step-ClampTension')
+                emit("[R-13:CT] --- 프리스트레스 말단 판독 (step=%s) ---" % _r13_step)
                 emit("[R-13:CT] ODB 선택: %s  [%s]" % (_ct_odb, _ct_src))
                 emit("[R-13:CT] !!! 이 런의 HF ODB(%s)는 아직 없다(포스트버클 제출 전) -> 위 파일로 "
                      "**대체 판독**했다. 이 숫자를 '이 런의 HF 값'으로 읽지 마라." % HF_ODB)
@@ -2234,12 +2341,12 @@ elif fidelity == 'HF':
                     emit("[R-13:CT] mtime 확인 실패(무시): %s" % _mt2_err)
                 #   사후(authoritative) 재판독 안내. **스텝을 실제로 보유한 파일**로 안내한다 -
                 #     HF_Postbuckle.odb 를 안내하면 '스텝 없음' 경고만 돌아온다(위 **주의** 참조).
-                emit("[R-13:CT] 사후 재판독: abaqus python \"%s\" \"%s\" Step-ClampTension"
-                     % (_probe2, _ct_odb))
-                emit("[R-13:CT] (한계) HF_Postbuckle.odb 에서는 이 스텝을 읽을 수 없다 - HF 런이 "
-                     "포스트버클 직전에 Step-ClampTension 을 삭제한다. HF 프리텐션을 확정하려면 "
-                     "그 스텝을 유지하도록 배선을 바꿔야 한다(이번 §19.97 은 진단 전용).")
-                _pcmd2 = 'abaqus python "%s" "%s" Step-ClampTension' % (_probe2, _ct_odb)
+                emit("[R-13:CT] 사후 재판독: abaqus python \"%s\" \"%s\" %s"
+                     % (_probe2, _ct_odb, _r13_step))
+                emit("[R-13:CT] (한계) HF_Postbuckle.odb 에서는 이 프리스트레스 스텝을 읽을 수 없다 - "
+                     "HF 런이 포스트버클 직전에 ClampTension 을 삭제하고 GlobalTension 에서 시작한다. "
+                     "프리스트레스 확정은 위 ODB(짝 LF/좌굴)로 한다(이 진단은 전용).")
+                _pcmd2 = 'abaqus python "%s" "%s" %s' % (_probe2, _ct_odb, _r13_step)
                 _pr2 = subprocess.run(_pcmd2, shell=True, capture_output=True, text=True)
                 _pr2_all = ((_pr2.stdout or "") + (_pr2.stderr or "")).splitlines()
                 _n_kept2 = 0
@@ -2436,11 +2543,13 @@ elif fidelity == 'HF':
                                                 HF_ODB)
 
 try:
-    try:
-        if os.path.exists('extraction.txt'):
-            os.remove('extraction.txt')
-    except Exception:
-        pass
+    #   [paper-match] ZK 도 stale 파일을 남기지 않는다(extraction.txt 와 같은 처리).
+    for _stale in ('extraction.txt', 'zk_metrics.txt'):
+        try:
+            if os.path.exists(_stale):
+                os.remove(_stale)
+        except Exception:
+            pass
     p = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     rc = p.returncode
     _eval_bad = (rc != 0)
@@ -2448,12 +2557,19 @@ try:
     #     잡아 성공한 HF 런을 실패로 뒤집기 때문에, DN 줄은 **먼저** 걷어내고 continue 한다.
     #     (RESULTS: 4필드 계약과 무관한 진단 줄이다.)
     _dn_lines = []
+    _zk_lines = []
     for _ln in ((p.stdout or "") + (p.stderr or "")).splitlines():
         _ls = _ln.strip()
         if not _ls:
             continue
         if _ls.startswith("DN:"):
             _dn_lines.append(_ls)
+            continue
+        if _ls.startswith("ZK:"):
+            #   [paper-match] ZK 도 DN 과 같은 이유로 FAIL 검사보다 먼저 걷어낸다.
+            #     'ZK:FAIL reason=...' 의 FAIL 이 정상 LF/HF 런을 실패로 뒤집으면 안 된다.
+            _zk_lines.append(_ls)
+            emit("   [ZK] %s" % _ls)
             continue
         if _ls.startswith("RESULTS:FAIL") or "Target step not found" in _ls or "FAIL" in _ls:
             _eval_bad = True
@@ -2476,7 +2592,8 @@ try:
         emit("RESULTS:" + _rc)
         _extra = {}
         try:
-            for _fn in ('stabilize_used.txt', 'flip_bias.txt'):
+            for _fn in (('stabilize_used.txt', 'flip_bias.txt')
+                        if fidelity == 'HF' else ()):
                 if os.path.exists(_fn):
                     with open(_fn, 'r', encoding='utf-8', errors='replace') as _sf:
                         for _ln in _sf:
@@ -2486,10 +2603,14 @@ try:
         except Exception:
             pass
         _extra.update(_r13_ct_keys())
-        _archive_result(x_c, d_c, 'HF', _rc, _extra)
+        _archive_result(x_c, d_c, fidelity, _rc, _extra)
         # [19.106] DN: 줄 -> 점별 txt 에 dn_ 접두 append (_archive_result 의 'w' 뒤).
         #     RESULTS 4필드와 all_results.csv 열 스키마는 그대로다.
         _archive_dn(x_c, d_c, _dn_lines)
+        # [paper-match] ZK: 줄 -> 점별 txt 에 zk_ 접두 append (CSV 열은 그대로).
+        #   HFONLY 처럼 짝 LF 가 없으면 ZK 줄 자체가 없다(경고 생략).
+        if _zk_lines or fidelity == 'LF':
+            _archive_zk(x_c, d_c, _zk_lines)
         # 성공한 HF 런에서만: HF ODB 설계점 태깅 + slope_stats 아카이빙(예외 안전).
         #     _archive_result 가 점별 txt 를 'w' 로 다시 쓰므로 **그 뒤에** append 해야 한다.
         _archive_slope(x_c, d_c)

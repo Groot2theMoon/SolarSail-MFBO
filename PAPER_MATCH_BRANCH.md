@@ -12,8 +12,8 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 |---|---|---|
 | Membrane elements | STRI65 + S8R5 (2nd order), 10,100 | **S4/S3 (1st order), 10,100 / 10,201 nodes** (default); 2nd-order generator exists but is experimental |
 | Pre-tension load | cable initial stress 2.69e7 Pa (5PCS), cable ends fixed | **3 cables, sigma11 = 2.69e7 Pa**, ends fixed, no displacement ramp |
-| Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle 0.10 m **same**; static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base); HF post-buckling: **no vertex displacement** (initial stress only) |
-| BC | three edges u3 = 0 | **three edges u3 = 0 from Initial** (HF) |
+| Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle 0.10 m **same**; static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base); **LF and HF post-buckling: no vertex displacement** (initial stress only) |
+| BC | three edges u3 = 0 | **three edges u3 = 0 from Initial** (LF/HF paper path) |
 | Stabilization | 2e-4 | paper: **2e-4**; physical clamp model: **1.0** (clamp cutbacks) |
 | Clamps | none (5PCS) | paper reproduction: `NO_CLAMP = True`; physical model: `PAPER_INCLUDE_CLAMPS = True` (clamps + vertex cables; clamp prestress = `d_c × 2.69e7 Pa`) |
 | Imperfection | first 4 modes, 0.10 t | same; mode table = **seed + clamp_only composite** (2+2) |
@@ -128,9 +128,11 @@ Both cable families are initial-stress; the clamp displacement pull is removed
 
 ### Paper-faithful post-buckling: initial stress only (2026-10-20)
 
-In the `cable_stress` path `_DISP_FINAL = 0`, so the **HF** applies **no vertex displacement**.
-(The LF keeps its 1 mm `Step-HighTension` for the fast model.)
-The load is the cable initial stress only. The BC path depends on `PAPER_HOLD_U3_GLOBAL`:
+In the `cable_stress` path `_DISP_PRE = _DISP_FINAL = 0`, so **LF and HF** apply **no vertex
+displacement**. The LF uses the same initial-stress prestress path and keeps the full-membrane
+`u3=0` (paper path); its final state is `Step-GlobalTension`. The HF releases `BC_Stabilize_Z`
+in `Step-Postbuckle`. The load is the cable/clamp initial stress only. The BC path depends on
+`PAPER_HOLD_U3_GLOBAL`:
 
 - `True` (physical default): `Step-GlobalTension` holds the full membrane u3=0 (flat pre-tension),
   `Step-Postbuckle` releases `BC_Stabilize_Z`; the wrinkles form in the postbuckle.
@@ -143,6 +145,53 @@ The load is the cable initial stress only. The BC path depends on `PAPER_HOLD_U3
 That is the Galhofo Fig. 11/17 path, with the clamps added as the physical design. The old MFBO
 baseline (`LOAD_MODE='disp'`) keeps the 1 mm `GLOBAL_FINAL`; it is not the paper path.
 
+## LF prestress and metrics (2026-10-21)
+
+| Fidelity | Final step for metrics | Loads / BC | Output |
+|---|---|---|---|
+| LF (paper, `PAPER_INCLUDE_CLAMPS=True`) | `Step-GlobalTension` | cable 2.69e7 Pa + clamp `d_c*2.69e7 Pa`; full-membrane `u3=0`; no displacement | `RESULTS:lf1,lf2,lf3` + `ZK:` |
+| LF (old baseline) | `Step-HighTension` | displacement-driven; preserved when `PAPER_MATCH=False` | `RESULTS:lf1,lf2,lf3` (+ `ZK:` diagnostic) |
+| HF | `Step-Postbuckle` (last frame) | same prestress; `BC_Stabilize_Z` released | `RESULTS:lf1,lf2,lf3,hf`, `DN:`, and `ZK:` from the paired LF ODB |
+
+### ZK (Zhang & Kiendl) definition
+
+`ZK:` is a **separate line**; it never changes the `RESULTS` contract.
+
+- `E` is the Green-Lagrange strain (`nlgeom=ON`) at the last frame of the LF state.
+  Components are averaged over integration/section points per element before the principal
+  values (membrane strain).
+- Principal strains `E1 >= E2` in the shell local frame; `E1/E2` are rotation-invariant.
+- State (area-weighted by `EVOL`): `taut` if `E2 > 0`; `wrinkled` if `E1 > 0 and E2 <= 0`;
+  `slack` if `E1 <= 0`.
+- `state_wrinkled_frac` = wrinkled area / total area.
+- `zk_intensity_mean` / `zk_intensity_p95` = area-weighted mean / weighted p95 of `|E2|`
+  over the wrinkled area (dimensionless strain).
+- `zk_dir_deg` = area-weighted axial mean of the major principal strain direction `n1`
+  in the **global x-y** plane, measured from +x, mod 180 deg. The element local 1-axis
+  (S3: node1 -> node2; S4: average of the 1-2 and 4-3 edges) is used to rotate the
+  shell-local `E` components. `nan` if there is no wrinkled area or the axial distribution
+  is degenerate (`R < 1e-3`); the spread is in `zk_metrics.txt`.
+- If `E` is missing: `ZK:FAIL reason=E_field_missing`; the LF/HF result is still emitted.
+- Caveat: on a flat `u3=0` membrane, uniaxial tension gives `E2 < 0` by Poisson contraction,
+  so the strain criterion can flag `wrinkled` without true in-plane compression. `lf1`
+  (`S2 < 0`) is the complementary stress-based indicator.
+
+`zk_metrics.txt` (in `code/aba` when run by `run_abaqus.py`) contains `status`, `step`, and
+the diagnostics (`zk_state_taut_frac`, `zk_state_slack_frac`, `zk_dir_spread_deg`,
+`zk_n_elem`, `zk_n_wrinkled`, `zk_area_total`, `weights`, `note`). Successful LF/HF runs
+also append `zk_` keys to `results/results_xc..._dc....txt` (the CSV schema is unchanged).
+
+### hf / DN / u_z,ave definitions (unchanged)
+
+- `hf`: `get_hf` integrates the SRP thrust over the last `Step-Postbuckle` frame and returns
+  the **relative** loss `loss / (area_ref * IDEAL_THRUST_COEFF)`, where `area_ref` is the
+  **undeformed** area at `frameValue=0` (not the deformed area). Normals are flipped to +z;
+  `flip_bias.txt` records the backward-area percentage and the no-flip value.
+- `DN:dn_deg`: area-weighted equivalent normal deviation from +z at the last `Step-Postbuckle`
+  frame; `dn_psi_deg` is its azimuth.
+- `u_z,ave`: `base_state_probe.py` on the `Step-Postbuckle` last frame,
+  `(|u3,max| + |u3,min|)/2` (paper definition).
+
 ## Required run order (Windows, Abaqus)
 
 The table is node-label based. The default mesh is 1st order (10,201 membrane nodes).
@@ -152,6 +201,10 @@ if the table was built on a different mesh or base state.
 ```bat
 cd code
 
+:: 0) one-time after switching to this branch: drop old displacement-driven LF ODBs
+::    (the sidecar guard also detects them, but deleting is cleaner)
+del /q aba\LF_Analysis*.odb
+
 :: 1) regenerate seed + clamp_only families and combine (1st order)
 python make_seed.py --x_c 0.5 --d_c 1.0 --force
 
@@ -159,12 +212,16 @@ python make_seed.py --x_c 0.5 --d_c 1.0 --force
 findstr /C:"s4_grid_paper" seeds\modes_seed.txt
 findstr /C:"nodes_per_mode=[10201]" seeds\modes_xc0p5.meta.txt
 
-:: 3) HF run
-abaqus cae noGUI=run_abaqus.py -- HF 0.5 1.0
+:: 3) LF run (same prestress path; Step-GlobalTension is the final state)
+abaqus cae noGUI=run_abaqus.py -- LF 0.5 0.5
+type aba\zk_metrics.txt
 
-:: 4) probe the pre-tension and post-buckle states
-abaqus python base_state_probe.py HF_Postbuckle.odb Step-GlobalTension 1.0 1.0
-abaqus python base_state_probe.py HF_Postbuckle.odb Step-Postbuckle 1.0 1.0
+:: 4) HF run
+abaqus cae noGUI=run_abaqus.py -- HF 0.5 0.5
+
+:: 5) probe the pre-tension and post-buckle states
+abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-GlobalTension 1.0 1.0
+abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-Postbuckle 1.0 1.0
 ```
 
 If `CENTRE(mid)` is not 7000 Pa, scale:
@@ -172,21 +229,32 @@ If `CENTRE(mid)` is not 7000 Pa, scale:
 
 ## Verification done locally (no Abaqus)
 
-- `py_compile` on all modified scripts: OK.
-- `check_model_consistency.py`: PASS (HF↔buckle 30, HF↔mode source 27).
+> 2026-10-21 변경분(LF paper path, ZK, sidecar)은 이 세션에 bash 가 없어 실행하지 못했다.
+> 사용자 PC에서 먼저 실행한다:
+> `python -m py_compile run_abaqus.py eval_abaqus.py aba_imperfection.py mfbo.py eval_lf_stub.py`,
+> `python check_model_consistency.py`,
+> `python eval_lf_stub.py`, `python buckle_stub_harness.py paper 0.5`,
+> `python make_seed.py --x_c 0.5 --d_c 1.0 --dry-run`.
+
+- `py_compile` on all modified scripts: OK (이전 기준선).
+- `check_model_consistency.py`: PASS (HF↔buckle 30, HF↔mode source 27) — 이전 기준선.
 - `aba_grid_mesh.py --write --order 2` (optional 2nd-order generator): 30,501 nodes / 9,900 S8R5 + 200 STRI65;
   all checked mid-side nodes are exact edge midpoints; shared edges used twice, boundary edges once.
 - `buckle_stub_harness.py paper 0.5` (1st order): BC trace is
   Initial (top fixed, corners 0, edges u3=0) → Static (top 0.0002, corners 0.0001) →
   Buckle (top 0.10, corners 0.10). Lambda/convergence are NOT verified by the harness.
+- `eval_lf_stub.py` (new; run `python3 eval_lf_stub.py`): checks that a fake ODB selects
+  `Step-GlobalTension` when `Step-HighTension` is absent and `Step-HighTension` when present;
+  checks lf1/lf2/lf3, ZK, `RESULTS:...`, `extraction.txt`, and
+  `ZK:FAIL reason=E_field_missing` with a valid RESULTS line.
 - `make_seed.py --x_c 0.5 --d_c 1.0 --dry-run`: selects `CASE='paper'` + `CASE='clamp_only'`,
   job tags `s4_grid_paper` / `s4_grid_clamp_only`, `_plv10000`, then combines 2+2.
 
 ## Known risks (not yet tested in Abaqus)
 
 1. **Cable initial stress API**: `model.Stress(region=instance.sets['All_Elem'])` relies on part-set
-   propagation to dependent instances. If Abaqus rejects it, fall back to
-   `*INITIAL CONDITIONS, TYPE=STRESS, ELSET=...` in the keyword block.
+   propagation to dependent instances. This is now used by **both LF and HF** (paper path).
+   If Abaqus rejects it, fall back to `*INITIAL CONDITIONS, TYPE=STRESS, ELSET=...` in the keyword block.
 2. **2nd-order orphan mesh import** (experimental, not used by default): `PartFromInputFile` with
    S8R5/STRI65 is verified at the `.inp` level only. The default is 1st order.
 3. **Paper buckle base state**: 0.0005/0.001 m is unstable on the 2nd-order path (`0 modes`);
@@ -198,9 +266,20 @@ If `CENTRE(mid)` is not 7000 Pa, scale:
    extend to `(2e-4, 5e-4, 1e-3)` if needed, and record which level completed.
 5. **LF is also 1st order** on this branch (same model).
 6. **Thickness is still 5 µm** (paper 2.5 µm). Amplitude comparisons must be thickness-normalised.
+7. **Stale LF ODB**: LF ODB names do not encode the model version. The LF reuse is guarded by
+   a `.model.txt` sidecar (`tag=globaltension-v1-c1-u1` for the physical default; the tag
+   includes the clamp/u3 sub-mode). Delete old `aba/LF_Analysis*.odb` once before switching
+   to this branch; otherwise they are detected as stale and resubmitted (the `mfbo.py`
+   prerequisite also checks the sidecar). Note: `mfbo.py` expects the physical-default tag;
+   with `PAPER_MATCH=False` or a different clamp/u3 sub-mode it will resubmit LF
+   (safe, but slower).
+8. **ZK Poisson caveat**: the strain-based state can flag uniaxial tension as `wrinkled`
+   (Poisson contraction, `E2 < 0`). Use `lf1` as the complementary stress-based indicator.
 
 ## Not changed
 
 - `run_abaqus_cable.py` (clamp-free oracle).
-- MFBO driver (`mfbo.py`) and result CSV schema.
+- Result CSV schema (`all_results.csv`) and the `RESULTS`/`extraction.txt` contracts.
+  (The LF archive now records `fidelity=LF`; it was hardcoded `HF` before. The CSV columns are unchanged.)
+- `mfbo.py`: only the LF ODB sidecar freshness check was added; the HF path/CSV schema is unchanged.
 - Paper's 7000 Pa is a *result* at the quadrant centre, not a held load.

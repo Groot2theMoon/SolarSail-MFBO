@@ -16,8 +16,14 @@
 ### 2. Multi-Fidelity 구성
 | Fidelity | Abaqus Method | Output Metric | Cost (Relative) |
 | :--- | :--- | :--- | :--- |
-| **LF (Low)** | Linear / Nonlinear Static | **Compression Area Ratio** (압축 응력 발생 면적비) | 1.0 |
+| **LF (Low)** | Prestressed Static / Nonlinear Static | **Compression Area Ratio** (압축 응력 발생 면적비) + **ZK** | 1.0 |
 | **HF (High)** | Post-Buckling (Static, General) | **Thrust Loss** (실제 형상 기반 추력 감소량) | 10.0 |
+
+> `PAPER_MATCH=True` (this branch): LF is a **prestressed static** analysis
+> (`Step-GlobalTension`, cable 2.69e7 Pa + clamp `d_c*2.69e7 Pa`, full-membrane `u3=0`).
+> It emits `lf1/lf2/lf3` plus a separate `ZK:` line (Zhang & Kiendl strain-based
+> wrinkling metrics) and `zk_metrics.txt`. The old displacement-driven LF is preserved
+> behind `PAPER_MATCH=False`.
 
 > **가설:** "선형 해석(LF)에서 압축 응력이 넓게 분포하는 디자인은, 실제 포스트버클링 해석(HF)에서도 주름(Wrinkle)이 크게 발생하여 추력 성능이 떨어질 것이다."
 
@@ -82,7 +88,8 @@ python mfbo.py
 *   **역할:** Abaqus CAE 모델링 및 해석 실행.
 *   **실행 방식:** `abaqus cae noGUI=run_abaqus.py -- [Mode] [x1] [x2]`
 *   **주요 로직:**
-    *   **LF 모드:** `Step-GlobalTension` -> `Step-ClampTension` -> `Step-HighTension`.
+    *   **LF 모드 (paper 경로):** `Step-GlobalTension` 하나로 끝난다(초기응력 프리스트레스 + `u3=0`).
+        구 기준선(`PAPER_MATCH=False`)은 `Step-GlobalTension` -> `Step-ClampTension` -> `Step-HighTension`.
     *   **HF 모드:** `Step-GlobalTension` -> `Step-ClampTension` -> `Step-Buckle` (모드 추출) / `Step-GlobalTension` -> Imperfection 주입 -> `Step-Postbuckle` (비선형 해석).
 *   **주의:** `*IMPERFECTION` 키워드 삽입 로직(삽입 위치 등)은 Abaqus 버전에 따라 민감할 수 있음.
 
@@ -90,6 +97,8 @@ python mfbo.py
 *   **역할:** run_abaqus.py 로 생성된 ODB 파일을 열어 수치적 성능 지표 계산.
 *   **주요 로직:**
     *   **LF Metrics:** 압축 응력 부피비(`lf1`), wrinkle 에너지 밀도(`lf2`), 응력 이방성(`lf3`).
+    *   **ZK:** 별도 `ZK:` 줄 + `zk_metrics.txt` (Green-Lagrange `E` 기반 taut/wrinkled/slack,
+        `|E2|` intensity, `n1` 방향). `RESULTS` 3/4필드는 불변.
     *   **HF Metric:** SRP 모델을 적용하여 변형된 메쉬의 법선 벡터를 적분, wrinkle에 의한 **Thrust Loss** 계산.
     *   **성능:** `bulkDataBlocks`와 `numpy`를 사용하여 Python 루프 속도 문제 개선.
 

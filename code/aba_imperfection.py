@@ -521,6 +521,55 @@ def lf_job_name(x_c, d_c):
     return 'LF_Analysis%s' % point_tag(x_c, d_c)
 
 
+# ---------------------------------------------------------------------------
+# [paper-match] LF ODB model sidecar (2026-10-21)
+#   LF ODB 이름에는 (x_c, d_c) 만 있고 **모델 정의 버전**은 없다. LF 물리가 바뀌면
+#   기존 ODB 가 조용히 재사용된다(예: 변위구동 LF -> 초기응력 프리스트레스 LF).
+#   성공한 LF 잡 옆에 .model.txt 를 남기고, 재사용 전에 tag 를 대조한다.
+# ---------------------------------------------------------------------------
+LF_SIDECAR_SUFFIX = '.model.txt'
+#   paper physical default: clamps=1, full-membrane u3=1. The tag includes the sub-mode so
+#   switching PAPER_INCLUDE_CLAMPS / PAPER_HOLD_U3_GLOBAL invalidates old LF ODBs.
+#   run_abaqus.py computes the same string from those two flags; keep them in sync.
+LF_MODEL_TAG = 'globaltension-v1-c1-u1'
+
+
+def lf_sidecar_path(odb_path):
+    return odb_path + LF_SIDECAR_SUFFIX
+
+
+def lf_sidecar_write(odb_path, tag=None, extra=None):
+    """LF ODB 옆에 model sidecar 를 쓴다. 실패는 호출자가 처리한다."""
+    kv = {'tag': tag or LF_MODEL_TAG,
+          'written': time.strftime('%Y-%m-%d %H:%M:%S')}
+    kv.update(extra or {})
+    path = lf_sidecar_path(odb_path)
+    with open(path, 'w') as f:
+        for k in sorted(kv):
+            f.write('%s=%s\n' % (k, kv[k]))
+    return path
+
+
+def lf_sidecar_read(odb_path):
+    out = {}
+    try:
+        with open(lf_sidecar_path(odb_path), 'r') as f:
+            for line in f:
+                if '=' in line:
+                    k, v = line.strip().split('=', 1)
+                    out[k] = v
+    except Exception:
+        return {}
+    return out
+
+
+def lf_odb_is_current(odb_path, tag=None):
+    """LF ODB 가 현재 모델 정의(tag)로 만들어진 것인가. sidecar 없으면 False."""
+    if not odb_path or not os.path.exists(odb_path):
+        return False
+    return lf_sidecar_read(odb_path).get('tag') == (tag or LF_MODEL_TAG)
+
+
 def file_token(path):
     """파일 내용 sha1 앞 16자. 없으면 None."""
     try:

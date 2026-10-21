@@ -106,15 +106,20 @@ def get_abaqus(new_x, new_s):
 
     _script = os.path.join(_HERE, "run_abaqus.py")
     command = f'abaqus cae noGUI="{_script}" -- {mode_str} {x1} {x2}'
-    # [P0-C] HF 는 같은 설계점의 LF 결과와 짝지어야 한다. HF 모델에는 Step-HighTension 이 없어
-    #        eval_abaqus.py 의 get_lf(args[-3]) 가 실패한다 -> 먼저 LF 해석을 수행해 둔다.
-    #        (stale 산출물 오염 방지를 위해 기존 파일 삭제 후 실행)
+    # [P0-C] HF 는 같은 설계점의 LF 결과와 짝지어야 한다. eval_abaqus.py 의
+    #        get_lf(args[-3]) 가 짝 LF ODB 를 읽는다 -> 먼저 LF 해석을 수행해 둔다.
+    #        (paper LF 는 Step-GlobalTension, 구 disp LF 는 Step-HighTension 을 읽는다.)
+    #        (stale 산출물 오염 방지를 위해 sidecar tag 를 검사한다.)
     if mode_str == "HF":
         #   [§19.79] §19.74 철회 -> 선행 LF 런 복원(eval 이 LF ODB 의 Step-HighTension 을 읽는다).
         _lf_odb = os.path.join(_RUN, aba_imperfection.lf_odb_name(x1, x2))
-        if os.path.exists(_lf_odb):
+        #   [paper-match] 모델 정의가 바뀐 LF ODB 는 재사용하지 않는다(sidecar tag).
+        #     sidecar 가 없으면(예: 이 기능 이전에 만든 ODB) LF 를 다시 돌린다.
+        if aba_imperfection.lf_odb_is_current(_lf_odb):
             print(f"--- LF reuse: {os.path.basename(_lf_odb)} (skip submit) ---")
         else:
+            if os.path.exists(_lf_odb):
+                print(f"--- LF stale (sidecar 없음/불일치): {os.path.basename(_lf_odb)} -> resubmit ---")
             print(f"--- Running Abaqus [LF prerequisite] x1: {x1:.6f} x2: {x2:.6f} ---")
             subprocess.run(f'abaqus cae noGUI="{_script}" -- LF {x1} {x2}',
                            shell=True, check=False, capture_output=True, text=True, cwd=_RUN,
