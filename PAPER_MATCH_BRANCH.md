@@ -12,7 +12,7 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 |---|---|---|
 | Membrane elements | STRI65 + S8R5 (2nd order), 10,100 | **S4/S3 (1st order), 10,100 / 10,201 nodes** (default); 2nd-order generator exists but is experimental |
 | Pre-tension load | cable initial stress 2.69e7 Pa (5PCS), cable ends fixed | **3 cables, sigma11 = 2.69e7 Pa**, ends fixed, no displacement ramp |
-| Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle 0.10 m **same**; static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base); **LF and HF post-buckling: no vertex displacement** (initial stress only) |
+| Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle **0.01 m** (paper 0.10 m reference; λ×P invariant); static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base); **LF and HF post-buckling: no vertex displacement** (initial stress only) |
 | BC | three edges u3 = 0 | **three edges u3 = 0 from Initial** (LF/HF paper path) |
 | Stabilization | 2e-4 | paper: **2e-4**; physical clamp model: **1.0** (clamp cutbacks) |
 | Clamps | none (5PCS) | paper reproduction: `NO_CLAMP = True`; physical model: `PAPER_INCLUDE_CLAMPS = True` (clamps + vertex cables; clamp prestress = `d_c × 2.69e7 Pa`) |
@@ -36,7 +36,10 @@ PAPER_MESH_ORDER = 1
 MODE_PRESTRESS = 0.0001     # symmetric 10-mode base (2026-10-20)
 PAPER_STATIC_DISP = 0.0005  # paper reference only (unstable here)
 # derived: CASE='paper', paper3, DISP_TOP_OVER_CORNER=2.0,
-#          PERTURBATION=0.10, MODE_STABILIZATION=2e-4
+#          PERTURBATION=0.01, MODE_STABILIZATION=5e-4
+# 2026-10-21 refactor: PULL_TOP/TOP_PULL_*, CLAMP_DIR, BUCKLE_SOLVER/LANCZOS,
+#   CLEAN_PERTURBATION, 자유메쉬 경로 제거. PULL_TOP 전용 하네스는 retired
+#   (3-tendon 소스는 CASE='paper' 하나).
 ```
 
 `code/run_abaqus_mode.py`:
@@ -55,7 +58,8 @@ Measured on the 2nd-order path (S8R5/STRI65, 202,050 equations): 592 negative ei
 `THE EIGENVALUES CANNOT BE FOUND ... INSTABILITIES IN THE BASE STATE` (0 modes).
 The same failure was already recorded at 1e-3 m. Modes are only the imperfection shape basis;
 HF sets the amplitude at 0.10 t, so the mode-extraction prestress does not need to be the paper's.
-The 2:1 shape and the 0.10 m buckle step are kept.
+The 2:1 shape is kept; the branch uses `PERTURBATION=0.01` (the paper's 0.10 m is the reference;
+λ scales as 1/P and the eigenvectors are unchanged).
 
 On the **1st-order** mesh, 0.0005 m completes but the first eigenvalues are negative (post-buckled).
 The chosen base is **0.0001 m** (paper case, symmetric patches): 10 modes in near-degenerate pairs,
@@ -229,26 +233,33 @@ If `CENTRE(mid)` is not 7000 Pa, scale:
 
 ## Verification done locally (no Abaqus)
 
-> 2026-10-21 변경분(LF paper path, ZK, sidecar)은 이 세션에 bash 가 없어 실행하지 못했다.
-> 사용자 PC에서 먼저 실행한다:
-> `python -m py_compile run_abaqus.py eval_abaqus.py aba_imperfection.py mfbo.py eval_lf_stub.py`,
+> 2026-10-21 변경분(LF paper path, ZK, sidecar, buckle refactor)은 이 세션에 bash 가 없어
+> 실행하지 못했다. 사용자 PC에서 먼저 실행한다:
+> `python -m py_compile run_abaqus.py eval_abaqus.py aba_imperfection.py mfbo.py eval_lf_stub.py run_abaqus_buckle.py check_model_consistency.py buckle_stub_harness.py make_seed.py`,
 > `python check_model_consistency.py`,
 > `python eval_lf_stub.py`, `python buckle_stub_harness.py paper 0.5`,
+> `python buckle_stub_harness.py clamp_only 0.5`, `python buckle_stub_harness.py seed 0.5`,
 > `python make_seed.py --x_c 0.5 --d_c 1.0 --dry-run`.
 
 - `py_compile` on all modified scripts: OK (이전 기준선).
-- `check_model_consistency.py`: PASS (HF↔buckle 30, HF↔mode source 27) — 이전 기준선.
+- `check_model_consistency.py`: 2026-10-21 buckle 리팩토링으로 free-mesh SHARED 9항목을
+  제거했다. PASS 여부/개수는 checker 출력을 기준으로 한다(이전 기준선은 HF↔buckle 30 /
+  HF↔mode source 27).
 - `aba_grid_mesh.py --write --order 2` (optional 2nd-order generator): 30,501 nodes / 9,900 S8R5 + 200 STRI65;
   all checked mid-side nodes are exact edge midpoints; shared edges used twice, boundary edges once.
-- `buckle_stub_harness.py paper 0.5` (1st order): BC trace is
+- `buckle_stub_harness.py paper|clamp_only|seed 0.5` (1st order): the paper trace is
   Initial (top fixed, corners 0, edges u3=0) → Static (top 0.0002, corners 0.0001) →
-  Buckle (top 0.10, corners 0.10). Lambda/convergence are NOT verified by the harness.
+  Buckle (top 0.01, corners 0.01). The clamp_only/seed traces are in the harness `[배선]`
+  output. Lambda/convergence are NOT verified by the harness.
+  The retired `buckle_pull_top_stub.py` no longer tests PULL_TOP (feature removed).
 - `eval_lf_stub.py` (new; run `python3 eval_lf_stub.py`): checks that a fake ODB selects
   `Step-GlobalTension` when `Step-HighTension` is absent and `Step-HighTension` when present;
   checks lf1/lf2/lf3, ZK, `RESULTS:...`, `extraction.txt`, and
   `ZK:FAIL reason=E_field_missing` with a valid RESULTS line.
 - `make_seed.py --x_c 0.5 --d_c 1.0 --dry-run`: selects `CASE='paper'` + `CASE='clamp_only'`,
-  job tags `s4_grid_paper` / `s4_grid_clamp_only`, `_plv10000`, then combines 2+2.
+  job tags `s4_grid_paper` / `s4_grid_clamp_only`, `_plv01000`, then combines 2+2.
+  **2026-10-21 buckle refactor changed the model fingerprint/JOB_NAME keys** — regenerate
+  the seed tables with `--force` before the first HF run (old tables will fail `seed_gate`).
 
 ## Known risks (not yet tested in Abaqus)
 
@@ -275,6 +286,18 @@ If `CENTRE(mid)` is not 7000 Pa, scale:
    (safe, but slower).
 8. **ZK Poisson caveat**: the strain-based state can flag uniaxial tension as `wrinkled`
    (Poisson contraction, `E2 < 0`). Use `lf1` as the complementary stress-based indicator.
+9. **Buckle seed tables after the refactor**: `JOB_NAME`/fingerprint keys changed
+   (`BUCKLE_FINGERPRINT_KEYS` now excludes `USE_GRID_MESH`/`CLAMP_DIR`/`BUCKLE_SOLVER`).
+   Regenerate `seeds/modes_*.txt` with `make_seed.py --force` before the first HF run.
+
+## Removed in the 2026-10-21 buckle refactor
+
+- `PULL_TOP`/`TOP_PULL_*` (3-tendon is now `CASE='paper'`/`paper3` only), `CLAMP_DIR`,
+  `BUCKLE_SOLVER`/LANCZOS branch, `CLEAN_PERTURBATION`, free-mesh path,
+  the unreachable nested `if CLAMP_LOAD=='none'` block (inside `if CLAMP_LOAD=='base'`),
+  and the misleading `CLAMP_PERT` log/value.
+- `buckle_pull_top_stub.py` is retired (kept as a deprecation stub; safe to `git rm`).
+  `buckle_stub_harness.py paper|clamp_only|seed` remains the BC-trace harness.
 
 ## Not changed
 

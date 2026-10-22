@@ -50,23 +50,14 @@ SHARED = [
     "mat.Density(table=((1420.0,),))",
     "mat.Elastic(table=((2.5e9, 0.34),))",
     "HomogeneousShellSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)",
-    # ---- 파트/스케치 ----
-    "s.Line(point1=V3[:2], point2=V2[:2])",
-    "s.Line(point1=V2[:2], point2=V1[:2])",
-    "s.Line(point1=V1[:2], point2=V3[:2])",
-    "p.BaseShell(sketch=s)",
     # ---- 메쉬 (모드 노드 일치의 핵심) ----
-    #   균일 격자(aba_grid_mesh.fill_part, orphan mesh) 전환은 되돌렸다:
-    #   'Part' 객체에 addNodes/addElements 가 없다(그 둘은 odb.Part 전용). 격자는
-    #   .inp import 경로로 다시 시도한다. 지금은 자유 메쉬가 기준선이다.
-    "p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)",
-    "p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)",
-    "elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)",
-    "elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)",
+    #   [2026-10-21] 1차 격자(aba_grid_mesh.import_grid_part)만 쓴다. run_abaqus_buckle.py 의
+    #     자유 메쉬 분기를 제거했으므로 그 분기의 문자열(s.Line/p.BaseShell/p.seedPart/
+    #     p.setMeshControls/p.setElementType)은 SHARED 에서 뺐다.
+    #     격자 임포트 호출은 세 스크립트가 같은 helper 를 쓰므로 별도 문자열 검사는 하지 않는다.
     "ELEM_CODE_QUAD = S4",
     "ELEM_CODE_TRI = S3",
     "SEED_DIV = 200.0",
-    "p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))",
     # ---- 클램프/정점 강체 패치 ----
     "radius=0.2",
     "u1=ON, u2=ON, u3=ON, ur1=ON, ur2=ON, ur3=ON",

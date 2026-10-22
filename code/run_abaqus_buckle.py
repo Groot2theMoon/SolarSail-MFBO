@@ -5,10 +5,11 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
 스텝 2개: Step-GlobalTension(DEAD = base state) / Step-Buckle(LIVE = 고유값, PERTURBATION 0.01 m).
 뽑은 모드는 HF 포스트버클링의 초기결함(기하 섭동) 씨드다 — guidance 이고 x_c 정합만 필요하다.
 
-케이스 (CASE, 현행 2개 — 씨드 재료 전용)
+케이스 (CASE, 현행 3개 — 시드 재료 전용)
     seed        DEAD 코너 전량 DISP(케이블 끝단) / LIVE 코너      -> 꼭짓점 가족(전역) 모드
     clamp_only  DEAD 코너(패치 RP)+클램프(케이블) / LIVE 클램프    -> 클램프 가족(국소) 모드
-    두 케이블 세트를 한 모델에 공존시키면 선형모드가 수렴하지 않는다 
+    paper       케이블·클램프 없이 꼭짓점 RP 직접 구동(3점 2:1)   -> 논문(Galhofo) 3-tendon 소스
+    두 케이블 세트를 한 모델에 공존시키면 선형모드가 수렴하지 않는다
     -> 가족을 분리해 각자 자기 base 에서 뽑고, 계열별 상위 2모드를 combine_mode_tables.py 로 합성한다.
 
 사용법  abaqus cae noGUI=run_abaqus_buckle.py -- <x_c> [disp_m] [clamp_pull_m] [clamp_excl_r_m]
@@ -17,12 +18,9 @@ run_abaqus_buckle.py — 좌굴(선형 고유값) 해석 전용. 1회 실행, �
     clamp_pull_m   클램프 당김 [m]. 생략 = disp_m x CLAMP_DC.
     clamp_excl_r_m 클램프 반경 내 노드를 면외 구속에서 제외 [m]. 생략 = CLAMP_EXCL_R(0.21).
 
-[§19.107] Top 꼭짓점도 케이블 방향으로 당기는 3-tendon 모드 소스
-    기본은 Top 완전 고정(2-tendon, 종전과 바이트 동일). 아래 상수 `PULL_TOP` 을 True 로 편집해 실행하면
-    Top 의 u1/u2 를 풀고 프리텐션 변위(DISP, +y)를 준다 -> HF 의 PULL_TOP=True(§19.105) base state 와 정합.
-    제어는 **상수 단일 경로**다(환경변수 없음): True 로 편집 -> 실행 -> False 로 복원.
-    True 런은 잡 이름이 `_3t` 로 갈리므로 두 변형의 산출물이 같은 디렉터리에 공존하고,
-    두 런의 모드가 같은 것인지는 `python3 buckle_compare.py <A> <B> <n_modes>` (MAC) 로 판정한다.
+3-tendon(상단 꼭짓점 구동) 소스는 **CASE='paper' + PRETENSION_MODE='paper3'** 하나다.
+    과거 PULL_TOP 스위치는 2026-10-21 리팩토링에서 제거했다(paper3 와 역할 중복, 기본 False).
+    두 3-tendon 변형 비교가 다시 필요하면 git 이력의 PULL_TOP 배선을 참고한다.
 
 산출물 (code/buckle/)  <job>.odb/.dat/.msg/.sta/.fil/... + <job>.diag.txt. 고유값 표는 .dat 의
     Buckle_xc0p5_d018um_dc0p0556_f100_s4_grid_clamp_only_normal_ex210_plv01000
@@ -51,11 +49,11 @@ import numpy as np
 
 # ===== SETTINGS =====
 #   [§19.108] 실행/모델 설정값은 전부 이 블록에 있다. 값을 고칠 때는 여기만 본다.
-#     종전에는 CASE(147줄) / CLAMP_DC(190줄) / Top 3-tendon 스위치(201줄) 처럼 설정이 본문 중간에
-#     흩어져 있어 수정 지점을 찾기 어려웠다. 값/주석/그룹 내 정의 순서는 그대로 두고 위치만 모았다.
+#     종전에는 CASE / CLAMP_DC / PULL_TOP 스위치처럼 설정이 본문 중간에 흩어져 있었다.
+#     (2026-10-21 리팩토링: PULL_TOP 제거, CLAMP_PERT 제거, LANCZOS 분기 제거, 자유메쉬 제거)
 #   이 아래 파생부는 이 값을 읽어 계산한다 (손대지 않는다):
 #     _CASE_TABLE -> resolve_case -> _ROUTE -> HAS_CABLES/HAS_CLAMPS/... -> _require_constant(...)
-#     CLI 파생: DISP -> CLAMP_PULL -> CLAMP_DC_EFF -> CLAMP_PERT, V_CL/V_CR, DIR_CL/DIR_CR, JOB_NAME
+#     CLI 파생: DISP -> CLAMP_PULL -> CLAMP_DC_EFF, V_CL/V_CR, DIR_CL/DIR_CR, JOB_NAME
 #   그룹: ① CASE ② 형상/격자 ③ 재료 ④ 하중/프리텐션 ⑤ 좌굴 솔버 ⑥ 모드 판정
 #         ⑦ 스위치/진단 / misc
 # ============================================================================
@@ -74,7 +72,7 @@ MESH_ORDER = 1                # 1차 S4/S3. 2차는 base state 불안정으로 �
 #   모드는 임퍼펙션의 **형상 기저**일 뿐이고 진폭은 HF 가 0.1 t 로 따로 주므로,
 #   모드 추출은 안정 운용점(1.0e-4 m)에서 한다. 두 가족 모두 이 값에서 검증됐다
 #   (seed 4모드 / clamp 5~10모드). 1.8e-5 는 seed 에서만 확인된 값이라 쓰지 않는다.
-PAPER_STATIC_DISP = 0.0005    # 논문 Fig. 12 정적 스텝 코너값 (D4: 모드 추출에 사용)
+PAPER_STATIC_DISP = 0.0005    # 논문 Fig. 12 정적 스텝 코너값 (참고용; 모드 추출은 MODE_PRESTRESS)
 MODE_PRESTRESS = 0.0001       # 2026-10-20: 대칭 10모드 확인된 운용점 (λ 쌍 −1.5867e-4 등)
 
 # ---- ① CASE 선택 ----
@@ -87,11 +85,10 @@ ELEM_CODE_QUAD = S4         # 1차 셸(S4/S3). 막 계열(M3D4/M3D3)은 기각 �
 ELEM_CODE_TRI = S3          # 위와 같은 이유로 3절점 1차 셸
 
 # ---- 메쉬 종류 ----
-#   True = aba_grid_mesh 균일 격자 (S4 9900 + S3 200 = 10100 요소, 노드 10201, 미러쌍 누락 0).
-#           논문 Table A.1 토폴로지 일치. 자유 메쉬와 달리 좌우대칭이라 한쪽에만 모드가 생기지 않는다.
-#   False = 자유 메쉬(약 1.82만 요소, 구 경로).
-USE_GRID_MESH = True
-_ALL_ELEM = 'All_Elem' if USE_GRID_MESH else 'All'
+#   [2026-10-21 리팩토링] 자유 메쉬 경로는 제거했다. 균일 격자(aba_grid_mesh.import_grid_part,
+#   S4 9900 + S3 200 = 10100 요소, 노드 10201)만 쓴다 — 논문 Table A.1 토폴로지 일치,
+#   좌우대칭이라 한쪽에만 모드가 생기지 않는다.
+_ALL_ELEM = 'All_Elem'
 
 SEED_DIV = 200.0 
 THICKNESS = 5.0e-6
@@ -99,7 +96,7 @@ THICKNESS = 5.0e-6
 CLAMP_EXCL_R = 0.21   # m — 클램프 패치 노드를 경계 u3 구속에서 뺀다.
 #   CLAMP_EXCL_R > 0 인 이유: 클램프 패치 노드는 Coupling 으로 RP(u3=0)에 묶여 있어, 같은
 #   노드에 BC_Edges_Only_Z(u3=0)이 겹치면 Abaqus 가 이중 구속으로 죽는다(.dat FTL).
-#   격자 메쉬는 경계 노드가 규칙적으로 놓여 패치가 그 노드들을 확실히 잡는다(자유 메쉬는 잠복).
+#   격자 메쉬는 경계 노드가 규칙적으로 놓여 패치가 그 노드들을 확실히 잡는다(과거 자유 메쉬에서는 잠복).
 #   물리 변화는 없다 — 제외 노드는 Coupling(u3=0)으로 그대로 면외 고정이다.
 #   0.0 으로 두면 검사기의 이중구속 검사(check_clamp_edge_overlap)가 실패한다. CLI 4번째 인자로 덮는다.
 
@@ -129,21 +126,9 @@ DISP_GLOBAL = MODE_PRESTRESS    # 모드 추출 base state. 논문 0.0005 m 는 
 # 코너 하중 각도 [deg] — 전 케이스가 'hf'(28.6 = 우리 HF/케이블 방향).
 CORNER_ANGLE_DEG = 28.6
 
-# ---- [§19.109] TOP_PULL_SCALE: 세 당김의 힘 평형 보정 (Top 지정변위에만 곱한다) ----
-#   왜: PULL_TOP=True(3-tendon)에서 세 케이블을 **같은 변위**로 당기면 힘 평형이 안 맞는다.
-#     케이블 힘은 F = E*A*u/L 이므로, 대칭 3-tendon 의 평형 조건은
-#         F_top = 2*sin(theta)*F_bot            (theta = CORNER_ANGLE_DEG = 28.6 deg)
-#         u_top = 2*sin(theta)*(LEN_TOP/LEN_BOT)*u_bot
-#     -> 2*sin(28.6 deg) * 0.280/0.689 = 0.389  (길이를 무시한 0.9574 는 틀린 값이다).
-#   1.0 (기본) = 종전과 동일(평형 보정 없음). BC 호출/덱/로그가 종전과 **바이트 동일**해야 한다.
-#   0.389      = 힘 평형 조건(실험값). Right/Left/클램프 변위는 이 계수를 곱하지 않는다.
-TOP_PULL_SCALE = 1.0
-
 CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c).
-
-# ---- 클램프 당김 방향 (CLAMP_DIR) ----
-#   normal(기본, HF 와 동일 부품 형상): CL=(-1,+1)/√2, CR=(+1,+1)/√2, 크기 CLAMP_PULL=d_c x DISP.
-CLAMP_DIR = 'normal'
+#   클램프 당김 방향은 DIR_CL/DIR_CR 로 고정이다(CL=(-1,+1)/√2, CR=(+1,+1)/√2).
+#   과거 CLAMP_DIR 상수는 job 이름의 'normal' 리터럴만 남기고 제거했다(2026-10-21).
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
 PERTURBATION = 0.01           # m — Buckle 스텝 섭동. 0.10(논문)과 0.01 모두 PASS 했고
@@ -164,15 +149,7 @@ BASE_STATE_STEP = 'Step-GlobalTension'
 N_EIG_BUCKLE = 10   # 추출 요청 고유값 수
 BUCKLE_VECTORS = 25   # subspace 기저 벡터 수
 BUCKLE_MAXITER = 5000
-BUCKLE_SOLVER = 'SUBSPACE'   # 'SUBSPACE' | 'LANCZOS' — 제어 흐름용 문자열
-BUCKLE_BLOCK_SIZE = 8           # LANCZOS 전용
-BUCKLE_MIN_EIGEN = 0.0          # LANCZOS 전용 (음의 고유값도 보고 싶으면 -1e30 등)
-BUCKLE_MAX_EIGEN = None         # LANCZOS 전용 (None 이면 인자를 아예 넘기지 않는다)
-
-if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
-    raise RuntimeError("BUCKLE_SOLVER must be 'SUBSPACE' or 'LANCZOS' (got %r)"
-                       % (BUCKLE_SOLVER,))
-EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
+#   [2026-10-21] LANCZOS 분기는 제거했다(한 번도 실행/검증되지 않음). SUBSPACE 고정.
 
 MODE_STABILIZATION = 5.0e-4   # 2e-4(논문)와 5e-4 모두 PASS. 검증 런이 전부 5e-4 였으므로
                               #   그 값을 고정값으로 쓴다(λ 에는 영향 없음 — 실측).
@@ -198,7 +175,7 @@ U3_FRAC_MIN = 0.10     # 모드의 면외 비율 하한(면내 모드 배제). O
 CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거리 안이면 '압축영역 분포' 로 본다.
 
 # ---- ⑦ 스위치/진단 ----
-CLEAN_PERTURBATION = True
+#   [2026-10-21] CLEAN_PERTURBATION 분기는 제거했다 — 항상 'Initial 에 BC_Edges_Only_Z' 클린 경로다.
 
 #   [§19.111] RELEASE_EDGE_U3: 자유변의 면외 구속을 '하드 u3=0' 에서 '무른 to-ground 스프링' 으로 바꾼다.
 #   True = 자유변 BC_Edges_Only_Z 를 제거하고 '무른 면외 스프링'으로 대체 (경계 아티팩트 검증용).
@@ -208,25 +185,7 @@ RELEASE_EDGE_U3 = False
 EDGE_SPRING_ALPHA = 1.0e-3     # 1e-3(거의 자유) ~ 1(자연 강성) 스윕용
 EDGE_SPRING_K = EDGE_SPRING_ALPHA * 0.035
 
-# ---- [§19.107] PULL_TOP: Top 꼭짓점도 케이블 방향 지정변위를 받는다 (HF §19.105 와 같은 의미) ----
-#   False(기본) = 종전 그대로 Top 완전 고정. BC/스텝 호출이 종전과 **바이트 동일**해야 한다
-#     (.inp 재현성 최우선 - 기존 좌굴 런을 다시 돌려도 같은 덱이 나와야 한다).
-#   True = Top 을 3-tendon 상태로 만든다: BC_Anchor_Top 에서 u1/u2 를 떼고 u3+회전만 남긴 뒤
-#     Right/Left 와 **같은 규칙**(u1 = v*cos, u2 = -v*sin)으로 케이블 방향 변위를 준다.
-#   왜 필요한가: HF 가 PULL_TOP=True(3-tendon)로 도는데 모드 소스가 Top 고정(2-tendon)이면
-#     좌굴모드가 **다른 프리스트레스 상태**의 것이 되어 임퍼펙션 방향이 틀어진다
-#     (§19.104 에서 합성표로 고친 것과 같은 종류의 조용한 오염).
-#   제어는 **이 상수 하나**다(환경변수 오버라이드 없음): 직접 편집 -> 실행 -> False 복원.
-#     run_abaqus.py 의 PULL_TOP 과 같은 방식이다. 두 변형을 비교할 때도 이 줄만 고친다.
-PULL_TOP = False   # True = Top 꼭짓점도 케이블 방향 프리텐션 (Galhofo 3-tendon). 실행 후 반드시 False 복원.
-
-# Top 케이블 방향 코사인.
-#   근거(코드): 아래 build_model 의 `connect_cable(a, 'Cable_Top', p_cable_top, V1, (0.0, 1.0, 0.0))`
-#     -> 케이블 축이 +y 다(= (u1,u2) = (0,+1)). Right/Left 와 **같은 대입식**을 쓰기 위해
-#     (u1 = v*cos, u2 = -v*sin) 규약에 맞춘 값이 COS=0.0, SIN=-1.0 이다(즉 u2 = +v).
-#     HF §19.105 의 top_cos/top_sin 과 같은 값/같은 규약이다.
-TOP_PULL_COS = 0.0
-TOP_PULL_SIN = -1.0
+#   [2026-10-21] PULL_TOP/TOP_PULL_* 는 제거했다. 3-tendon 소스는 CASE='paper'(paper3) 하나다.
 
 # ---- misc (어느 그룹에도 안 들어가는 이름/경로/병렬 설정) ----
 TAG = '[run_abaqus_buckle]'
@@ -308,7 +267,7 @@ def resolve_case(case):
 _ROUTE = resolve_case(CASE)
 HAS_CABLES = _ROUTE['cables']       # 꼭짓점을 케이블(T3D2)+Tie 로 잇고 끝단을 구동하는가
 HAS_CLAMPS = _ROUTE['clamps']       # 클램프 강체패치를 만드는가
-CLAMP_LOAD = _ROUTE['clamp_load']   # 'none' | 'live' (live = 클램프를 집중하중으로 LIVE 에)
+CLAMP_LOAD = _ROUTE['clamp_load']   # 'none' (클램프 없음: seed/paper) | 'base' (clamp_only)
 CORNER_DIR = _ROUTE['corner_dir']   # 모든 현행 케이스가 'hf'(28.6도)
 LIVE_DRIVER = _ROUTE.get('live_driver', 'corner')   # 'corner'(기존 케이스) | 'clamp'(clamp_live)
 HAS_CLAMP_CABLES = bool(_ROUTE.get('clamp_cable', False))
@@ -406,7 +365,6 @@ if _excl_arg is not None:
     if CLAMP_EXCL_R < 0.0:
         raise RuntimeError('CLAMP_EXCL_R=%r < 0' % (CLAMP_EXCL_R,))
 CLAMP_DC_EFF = CLAMP_PULL / DISP if DISP > 0.0 else 0.0
-CLAMP_PERT = PERTURBATION * CLAMP_DC_EFF   # 좌굴 스텝 클램프 섭동 [m]
 
 if not (0.03 <= x_c <= 0.95):
     #  x_c < 0.028 이면 클램프 패치가 정점 패치와 겹치고, x_c ~ 1 이면
@@ -429,8 +387,8 @@ if DISP == 0.0:
     print("%s DISP=0 : 코너 미구동 — 클램프 단독 구동 케이스로 진행한다." % (TAG,))
 print("%s CASE=%s (cables=%s clamps=%s clamp_load=%s corner_dir=%s)"
       % (TAG, CASE, HAS_CABLES, HAS_CLAMPS, CLAMP_LOAD, CORNER_DIR))
-print("%s d_c=%.3g -> CLAMP_PULL=%.4e m (buckle pert %.3e m)"
-      % (TAG, CLAMP_DC, CLAMP_PULL, CLAMP_PERT))
+print("%s d_c=%.3g -> CLAMP_PULL=%.4e m (LIVE pert=%.3e m)"
+      % (TAG, CLAMP_DC, CLAMP_PULL, PATTERN_SIGN * PERTURBATION))
 
 V_CL = clamp_coord_L(x_c)
 V_CR = clamp_coord_R(x_c)
@@ -444,14 +402,14 @@ _s2 = 2.0 ** 0.5
 DIR_CL, DIR_CR = (-1.0 / _s2, +1.0 / _s2), (+1.0 / _s2, +1.0 / _s2)
 
 print("%s x_c=%g -> V_CL=%s V_CR=%s" % (TAG, x_c, V_CL, V_CR))
-print("%s d_c_eff=%.4f (CLAMP_PULL=%.4e, CLAMP_PERT=%.4e)  CLAMP_EXCL_R=%.4f m"
-      % (TAG, CLAMP_DC_EFF, CLAMP_PULL, CLAMP_PERT, CLAMP_EXCL_R))
-print("%s CLAMP_DIR=%s -> DIR_CL=%s DIR_CR=%s  (y성분 합=%+.3e m)"
-      % (TAG, CLAMP_DIR, DIR_CL, DIR_CR, CLAMP_PULL * (DIR_CL[1] + DIR_CR[1])))
+print("%s d_c_eff=%.4f (CLAMP_PULL=%.4e)  CLAMP_EXCL_R=%.4f m"
+      % (TAG, CLAMP_DC_EFF, CLAMP_PULL, CLAMP_EXCL_R))
+print("%s DIR_CL=%s DIR_CR=%s  (y성분 합=%+.3e m)"
+      % (TAG, DIR_CL, DIR_CR, CLAMP_PULL * (DIR_CL[1] + DIR_CR[1])))
 print("%s corner pull DISP=%.4e m (= alpha %.4g x 5e-5 m)  perturbation=%.3e m"
       % (TAG, DISP, DISP / 5.0e-5, PERTURBATION))
-print("%s buckle step: solver=%s numEigen=%d vectors=%d"
-      % (TAG, BUCKLE_SOLVER, N_EIG_BUCKLE, BUCKLE_VECTORS))
+print("%s buckle step: solver=SUBSPACE numEigen=%d vectors=%d"
+      % (TAG, N_EIG_BUCKLE, BUCKLE_VECTORS))
 
 
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
@@ -726,23 +684,14 @@ def build_model(disp):
     mat_cable.Elastic(table=((62.0e9, 0.36),))
     my_model.TrussSection(name='Section-Cable', material='Kevlar', area=CABLE_AREA)
 
-    if USE_GRID_MESH:
-        p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
-            my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV,
-            elem_order=MESH_ORDER)
-        print("%s [mesh] grid(.inp import, orphan): order=%d, 노드 %d / quad %d + tri %d = %d"
-              % (TAG, MESH_ORDER, _nn, _n4, _n3, _n4 + _n3))
-        p.Set(elements=p.elements, name='All_Elem')      # 섹션 할당 + 초기응력(요소)
-        p.Set(nodes=p.nodes, name='All')                 # 변위 BC 용(절점) — 이름 'All' 유지
-        p.SectionAssignment(region=p.sets['All_Elem'], sectionName='Section-Membrane')
-    else:
-        s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)
-        s.Line(point1=V3[:2], point2=V2[:2])
-        s.Line(point1=V2[:2], point2=V1[:2])
-        s.Line(point1=V1[:2], point2=V3[:2])
-        p = my_model.Part(name='Membrane', dimensionality=THREE_D, type=DEFORMABLE_BODY)
-        p.BaseShell(sketch=s)
-        p.SectionAssignment(region=p.Set(faces=p.faces, name='All'), sectionName='Section-Membrane')
+    p, _nn, _n4, _n3 = aba_grid_mesh.import_grid_part(
+        my_model, part_name='Membrane', base=BASE, height=HEIGHT, seed_div=SEED_DIV,
+        elem_order=MESH_ORDER)
+    print("%s [mesh] grid(.inp import, orphan): order=%d, 노드 %d / quad %d + tri %d = %d"
+          % (TAG, MESH_ORDER, _nn, _n4, _n3, _n4 + _n3))
+    p.Set(elements=p.elements, name='All_Elem')      # 섹션 할당 + 초기응력(요소)
+    p.Set(nodes=p.nodes, name='All')                 # 변위 BC 용(절점) — 이름 'All' 유지
+    p.SectionAssignment(region=p.sets['All_Elem'], sectionName='Section-Membrane')
 
     def create_cable_part(name, length):
         """mode.py 와 동일한 케이블 1요소 파트 (T3D2)."""
@@ -766,17 +715,8 @@ def build_model(disp):
     a.DatumCsysByDefault(CARTESIAN)
     inst_memb = a.Instance(name=INSTANCE_NAME, part=p, dependent=ON)
 
-    print("%s [mesh] %s : 파트 요소 %d개 / 인스턴스 노드 %d개"
-          % (TAG, ('grid(격자, orphan)' if USE_GRID_MESH else 'free(자유, seedPart)'),
-             len(p.elements), len(inst_memb.nodes)))
-    if not USE_GRID_MESH:
-        p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
-        p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-        elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
-        elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
-        p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
-        p.generateMesh()
-        a.regenerate()
+    print("%s [mesh] grid(격자, orphan) : 파트 요소 %d개 / 인스턴스 노드 %d개"
+          % (TAG, len(p.elements), len(inst_memb.nodes)))
 
     # 꼭짓점 RP (radius=0.2)
     rp1_obj, rp1_reg = create_rigid_patch(a, inst_memb, 'Top', V1, radius=0.2)
@@ -873,18 +813,12 @@ def build_model(disp):
     # RF = 앵커 반력. 각 앵커가 당김을 얼마나 흡수하는가(하중 경로 분담)를 읽는다.
     #   출력 요청은 해석 결과를 바꾸지 않는다.
 
-    # ---- 좌굴 스텝: 솔버는 코드 상수 하나로 교체 (SUBSPACE <-> LANCZOS) ----
+    # ---- 좌굴 스텝: SUBSPACE 고정 (LANCZOS 분기는 2026-10-21 제거) ----
     _eig = dict(name='Step-Buckle', previous='Step-GlobalTension',
-                numEigen=N_EIG_BUCKLE, eigensolver=EIGENSOLVER_CONST)
-    if BUCKLE_SOLVER == 'SUBSPACE':
-        _eig.update(vectors=BUCKLE_VECTORS, maxIterations=BUCKLE_MAXITER)
-    else:
-        _eig.update(blockSize=BUCKLE_BLOCK_SIZE, maxIterations=BUCKLE_MAXITER,
-                    minEigen=BUCKLE_MIN_EIGEN)
-        if BUCKLE_MAX_EIGEN is not None:
-            _eig.update(maxEigen=BUCKLE_MAX_EIGEN)
-    print("%s eigensolver=%s numEigen=%d : %s"
-          % (TAG, BUCKLE_SOLVER, N_EIG_BUCKLE,
+                numEigen=N_EIG_BUCKLE, eigensolver=SUBSPACE,
+                vectors=BUCKLE_VECTORS, maxIterations=BUCKLE_MAXITER)
+    print("%s eigensolver=SUBSPACE numEigen=%d : %s"
+          % (TAG, N_EIG_BUCKLE,
              ', '.join('%s=%s' % (_k, _eig[_k]) for _k in sorted(_eig)
                        if _k not in ('name', 'previous'))))
     my_model.BuckleStep(**_eig)
@@ -899,31 +833,14 @@ def build_model(disp):
     )
 
     # ---- 구속조건 ----
-    if not CLEAN_PERTURBATION:
-        my_model.DisplacementBC(
-            name='BC_Stabilize_Z',
-            createStepName='Step-GlobalTension',
-            region=inst_memb.sets['All'],
-            u3=SET
-        )
-    # Top 정점: 종전 완전 고정. PULL_TOP=True 면 u1/u2 를 **떼고** u3+회전만 남긴다(면외 고정).
-    #   남기는 u3/회전은 평면성과 강체 면외/회전을 막고, 면내 강체운동은 Top/Right/Left 세 점
-    #   (비공선)의 u1=u2=0(Initial, Disp_Control_*)이 이미 막는다 -> 특이행렬 아님.
-    #   HF §19.105 의 BC_Anchor 강등과 같은 근거/같은 구성이다.
-    if PULL_TOP:
-        my_model.DisplacementBC(
-            name='BC_Anchor_Top',
-            createStepName='Initial',
-            region=A1,
-            u3=SET, ur1=SET, ur2=SET, ur3=SET
-        )
-    else:
-        my_model.DisplacementBC(
-            name='BC_Anchor_Top',
-            createStepName='Initial',
-            region=A1,
-            u1=SET, u2=SET, u3=SET, ur1=SET, ur2=SET, ur3=SET
-        )
+    #   [2026-10-21] CLEAN_PERTURBATION=False 경로는 제거했다 — BC_Edges_Only_Z 는 항상 Initial.
+    # Top 정점: 완전 고정. paper3 는 아래 setValuesInStep 으로 u1/u2 를 덮는다.
+    my_model.DisplacementBC(
+        name='BC_Anchor_Top',
+        createStepName='Initial',
+        region=A1,
+        u1=SET, u2=SET, u3=SET, ur1=SET, ur2=SET, ur3=SET
+    )
 
     # Right/Left 정점: u3+회전만 고정하고, 구동은 A2/A3 에 건다.
     my_model.DisplacementBC(
@@ -951,21 +868,6 @@ def build_model(disp):
             u1=-disp_a * cos_val,
             u2=-disp_a * sin_val
         )
-    if PULL_TOP:
-        #   [§19.107] Top 도 Right/Left 와 **완전히 같은 패턴**. region 은 A1(케이블 끝단 또는
-        #     Top 강체패치 RP — HAS_CABLES 분기에서 이미 정해졌다).
-        #   크기 근거(코드): 이 스크립트의 프리텐션은 `DISP`(기본 DISP_GLOBAL=1.8e-5 m, CLI 두 번째
-        #     인자로 덮인다)이고 케이블 3개가 모두 '꼭짓점 당김' 하나의 스케일을 쓴다
-        #     (LEN_TOP=0.280 / LEN_BOT=0.689 는 길이일 뿐 구동량이 아니다).
-        #     HF 의 DISP_GLOBAL(1.65e-4 m)을 쓰면 안 된다 — 두 운용점은 **의도적으로 분기**한다
-        #     (check_model_consistency.check_operating_point 의 선언된 분기).
-        my_model.DisplacementBC(name='Disp_Control_Top', createStepName='Initial',
-                                region=A1, u1=SET, u2=SET)
-        my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
-            stepName='Step-GlobalTension',
-            u1=disp_a * TOP_PULL_COS * TOP_PULL_SCALE,
-            u2=-disp_a * TOP_PULL_SIN * TOP_PULL_SCALE
-        )
     if PRETENSION_MODE == 'paper3':
         my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
             stepName='Step-GlobalTension',
@@ -979,8 +881,6 @@ def build_model(disp):
         )
     if PRETENSION_MODE == 'paper3':
         _top_note = ' / 위 %.4e m' % (disp_a * DISP_TOP_OVER_CORNER)
-    elif PULL_TOP:
-        _top_note = ' / 위 %.4e m (3-tendon)' % (-disp_a * TOP_PULL_SIN)
     else:
         _top_note = ' (Top 완전고정)'
     print("%s 프리텐션 = %s : 아래 %.4e m%s"
@@ -989,20 +889,6 @@ def build_model(disp):
         print("%s [paper-match] 논문 정적 변위 %.4g m 는 모드 추출에 쓰지 않는다(base state 불안정). "
               "MODE_PRESTRESS=%.4g m, 2:1 형상만 논문과 동일"
               % (TAG, PAPER_STATIC_DISP, MODE_PRESTRESS))
-    if PULL_TOP:
-        #   [§19.107] 실제 적용값을 1줄로 남긴다. 제어는 상수 하나뿐이므로 출처 표기는 없다.
-        #     False 경로에는 이 줄이 없다(종전 로그/덱과 동일하게 유지).
-        print("%s [BC] PULL_TOP=%s (constant) -> Top 꼭짓점도 케이블 방향 변위: 프리텐션 %.4e m "
-              "(u1=%.6f, u2=%.6f), BC_Anchor_Top 은 u3+회전만"
-              % (TAG, PULL_TOP, disp_a,
-                 disp_a * TOP_PULL_COS * TOP_PULL_SCALE,
-                 -disp_a * TOP_PULL_SIN * TOP_PULL_SCALE))
-        if TOP_PULL_SCALE != 1.0:
-            #   [§19.109] 1.0 이 아니면 실제 적용값을 1줄 더 남긴다(1.0 은 종전 로그와 바이트 동일).
-            print("%s [BC] PULL_TOP=True TOP_PULL_SCALE=%.6g -> Top(u1=%.6e,u2=%.6e)"
-                  % (TAG, TOP_PULL_SCALE,
-                     disp_a * TOP_PULL_COS * TOP_PULL_SCALE,
-                     -disp_a * TOP_PULL_SIN * TOP_PULL_SCALE))
     # ---- 하중/구속 배선 ----
     if CLAMP_LOAD == 'base':
         my_model.DisplacementBC(name='BC_Clamp_CL', createStepName='Initial',
@@ -1018,41 +904,18 @@ def build_model(disp):
             #   DEAD = 클램프 당김 전량을 base 에 넣는다(생략 금지 — 클램프 압축이 base 에 들어간다).
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-GlobalTension', u1=_d1 * CLAMP_PULL, u2=_d2 * CLAMP_PULL)
-            #   LIVE = 이 가족이 프로브 대상일 때만; 아니면0 명시.
+            #   LIVE = 이 가족이 프로브 대상일 때만; 아니면 0 명시.
             _p = PATTERN_SIGN * PERTURBATION if LIVE_DRIVER == 'clamp' else 0.0
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-Buckle', u1=_p * _d1, u2=_p * _d2)
         print("%s [%s] base=코너 %.4g m + 클램프 %.4g m(전량) / LIVE=%s 가족 프로브 %.4g m"
-              % (TAG, CASE, DISP, CLAMP_PULL, LIVE_DRIVER, PERTURBATION))
-        #   ('base' = 당김 전량 -- 위 분기에서 이미 배선 / 'none' = 당김 0 -- 여기서 배선).
-        if CLAMP_LOAD == 'none':
-            #   프로브 대상: clamp_cable 이면 케이블 끝단(HF 하중 경로), 아니면 패치 RP.
-            _ptgt_cl = _clamp_target('CL')
-            _ptgt_cr = _clamp_target('CR')
-            my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial',
-                                    region=_ptgt_cl, u1=0.0, u2=0.0)
-            my_model.DisplacementBC(name='Disp_Control_CR', createStepName='Initial',
-                                    region=_ptgt_cr, u1=0.0, u2=0.0)
-            for _nm, _d1, _d2 in (('Disp_Control_CL', DIR_CL[0], DIR_CL[1]),
-                                  ('Disp_Control_CR', DIR_CR[0], DIR_CR[1])):
-                my_model.boundaryConditions[_nm].setValuesInStep(
-                    stepName='Step-GlobalTension', u1=0.0, u2=0.0)
-                my_model.boundaryConditions[_nm].setValuesInStep(
-                    stepName='Step-Buckle',
-                    u1=PATTERN_SIGN * PERTURBATION * _d1,
-                    u2=PATTERN_SIGN * PERTURBATION * _d2)
+              % (TAG, CASE, DISP, CLAMP_PULL, LIVE_DRIVER, PATTERN_SIGN * PERTURBATION))
         #   코너는 좌굴 스텝에서 0 명시 — LIVE = 클램프 단독.
         for _nm in ('Disp_Control_Right', 'Disp_Control_Left'):
             my_model.boundaryConditions[_nm].setValuesInStep(
                 stepName='Step-Buckle', u1=0.0, u2=0.0)
-        if PULL_TOP:
-            #   [§19.107] 이 라우트의 LIVE 는 클램프 가족이다 -> Top 도 코너와 **같은** 0 명시.
-            #     여기서 0 을 빼면 Top 만 DEAD(disp_a)로 남아 base state 가 비대칭이 된다
-            #     (Right/Left 와 다른 처리 = 조용한 오염).
-            my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
-                stepName='Step-Buckle', u1=0.0, u2=0.0)
         print("%s [%s] LIVE=클램프 가족 프로브 %.4g m x DIR (코너 0 명시)"
-              % (TAG, CASE, PERTURBATION))
+              % (TAG, CASE, PATTERN_SIGN * PERTURBATION))
 
     if HAS_CLAMP_CABLES:
         #   케이블 끝단의 면외 구속 — HF 의 BC_CL/BC_CR 과 같은 이름·역할.
@@ -1102,13 +965,9 @@ def build_model(disp):
                 u3=0
             )
 
-    if CLEAN_PERTURBATION:
-        #   자유경계 u3=0 을 Initial에서 건다(패치 반경 내 노드는 이미 제외 — 이중구속 방지).
-        #   => 스텝 간 구속집합이 동일해지고, LIVE 는 prescribed 변위 패턴 하나만 남는다.
-        _edge_u3('Initial')
-    else:
-        my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
-        _edge_u3('Step-Buckle')
+    #   자유경계 u3=0 을 Initial에서 건다(패치 반경 내 노드는 이미 제외 — 이중구속 방지).
+    #   => 스텝 간 구속집합이 동일해지고, LIVE 는 prescribed 변위 패턴 하나만 남는다.
+    _edge_u3('Initial')
     #   [paper-match] paper 케이스는 케이블이 없지만 코너 RP 를 직접 구동하므로
     #     Buckle 스텝에서도 0.10 m 를 줘야 한다(HAS_CABLES 로 막으면 0.0005 에 남는다).
     if LIVE_DRIVER != 'clamp':
@@ -1118,14 +977,6 @@ def build_model(disp):
             stepName='Step-Buckle', u1=_ns * cos_val, u2=-_ns * sin_val)
         my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
             stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
-        if PULL_TOP:
-            #   [§19.107] 좌굴 perturbation 도 세 꼭짓점에 **같은 크기**로 준다. 한 점만 다른
-            #     크기면 base state 가 인위적으로 비대칭이 되어 모드가 그 비대칭을 담는다
-            #     (HF §19.105 와 같은 이유/같은 처리).
-            my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
-                stepName='Step-Buckle',
-                u1=_ns * TOP_PULL_COS * TOP_PULL_SCALE,
-                u2=-_ns * TOP_PULL_SIN * TOP_PULL_SCALE)
     return model_name
 
 ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', M3D4: 'm3d4', M3D3: 'm3d3'}.get(ELEM_CODE_QUAD)
@@ -1144,21 +995,17 @@ def _value_tag(v):
 
 _dc_tag = (_value_tag(CLAMP_DC_EFF)
            if CASE in ('clamp_only',) else '0')
-#   clamp_live 는 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
+#   LIVE 프로브 크기가 이름에 들어간다 — 프로브를 바꾸면 산출물 이름도 갈린다.
 _live_tag = (('_plv%05d' % int(round(PERTURBATION * 1.0e5)))
              if CASE in ('seed', 'clamp_only', 'paper') else '')   # [§19.60] 셋 다 LIVE 프로브가 있다
-_rot_tag = ''              
-#   [§19.107] PULL_TOP=True 런은 이름이 갈려야 두 변형(2-tendon/3-tendon)이 공존하며 비교된다.
-#     False 는 빈 태그 -> 종전 잡이름/덱과 **바이트 동일**(기존 산출물 재현).
-#     '_3t' = Top 3-tendon. 잡이름 80자 한계에 맞춘 최단 태그(clamp_only 최장 78자).
-_pt_tag = '_3t' if PULL_TOP else ''
-MESH_TAG = (('grid2' if MESH_ORDER == 2 else 'grid') if USE_GRID_MESH else 'free')   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
-JOB_NAME = 'Buckle_xc%s_d%03dum_dc%s_f%03d_%s_%s_%s_%s%s%s%s%s' % (_value_tag(x_c),
+MESH_TAG = ('grid2' if MESH_ORDER == 2 else 'grid')   # 메쉬가 바뀌면 산출물 이름도 갈린다(§11)
+#   'normal' = 클램프 방향 태그(아티팩트 이름 호환용 리터럴). DIR_CL/DIR_CR 은 고정이다.
+JOB_NAME = 'Buckle_xc%s_d%03dum_dc%s_f%03d_%s_%s_%s_normal%s%s' % (_value_tag(x_c),
                                                        int(round(DISP * 1.0e6)),
                                                        _dc_tag,
                                                        _f_tag,
-                                                       ELEM_TAG, MESH_TAG, CASE, CLAMP_DIR,
-                                                       _excl_tag, _rot_tag, _live_tag, _pt_tag)
+                                                       ELEM_TAG, MESH_TAG, CASE,
+                                                       _excl_tag, _live_tag)
 if len(JOB_NAME) > 80:
     raise RuntimeError("[잡이름] %d자 > 80자 한계: %s\n   -> 케이스/태그 이름을 줄이세요."
                        % (len(JOB_NAME), JOB_NAME))
@@ -1305,18 +1152,13 @@ try:
     _row = {
         'ts': _dt.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'),
         'case': CASE, 'x_c': x_c, 'DISP': DISP, 'CLAMP_DC': CLAMP_DC,
-        'CLAMP_DIR': CLAMP_DIR,
         'clamp_load': CLAMP_LOAD, 'corner_dir': CORNER_DIR,
-        'PULL_TOP': PULL_TOP,
         'window': [N_EIG_BUCKLE, BUCKLE_VECTORS], 'PERTURBATION': PERTURBATION,
         'ELEM_TAG': ELEM_TAG, 'job': JOB_NAME,
         'sysNeg': _M.get('sysNeg'), 'reduced_to': _M.get('reduced_to'),
         'convMax': (max(_M['conv']) if _M.get('conv') else None),
         'wallclock': _M.get('wall'), 'lambdas': [], 'base_probe_ok': _BASE['probe_ok'],
     }
-    if TOP_PULL_SCALE != 1.0:
-        #   [§19.109] 기본값(1.0) 이 아닐 때만 열을 추가한다 - 종전 ledger 행과 바이트 동일 유지.
-        _row['TOP_PULL_SCALE'] = TOP_PULL_SCALE
     _datf = os.path.join(_RUN, '%s.dat' % JOB_NAME)
     if os.path.exists(_datf) and _HAS_PBL:
         _txt = _io.open(_datf, encoding='utf-8', errors='replace').read()

@@ -448,8 +448,8 @@ def job_completed_from_logs(job_name):
 #   결정 근거: code/notes/plan-hf-seed-pipeline-2026-10-12.md (Q1=a, Q2=a, Q3=b)
 # =====================================================================
 BUCKLE_FINGERPRINT_KEYS = FINGERPRINT_KEYS + (
-    'THICKNESS', 'USE_GRID_MESH', 'MESH_ORDER', 'CLAMP_DC', 'CLAMP_CABLE_LEN', 'CLAMP_EXCL_R',
-    'CLAMP_DIR', 'BUCKLE_SOLVER', 'CORNER_ANGLE_DEG')
+    'THICKNESS', 'MESH_ORDER', 'CLAMP_DC', 'CLAMP_CABLE_LEN', 'CLAMP_EXCL_R',
+    'CORNER_ANGLE_DEG')
 BUCKLE_SCRIPT_NAME = 'run_abaqus_buckle.py'
 SEED_DIR_NAME = 'seeds'
 
