@@ -251,7 +251,7 @@ If `CENTRE(mid)` is not 7000 Pa, scale:
   Initial (top fixed, corners 0, edges u3=0) → Static (top 0.0002, corners 0.0001) →
   Buckle (top 0.01, corners 0.01). The clamp_only/seed traces are in the harness `[배선]`
   output. Lambda/convergence are NOT verified by the harness.
-  The retired `buckle_pull_top_stub.py` no longer tests PULL_TOP (feature removed).
+  The PULL_TOP harness (`buckle_pull_top_stub.py`) was deleted with the feature.
 - `eval_lf_stub.py` (new; run `python3 eval_lf_stub.py`): checks that a fake ODB selects
   `Step-GlobalTension` when `Step-HighTension` is absent and `Step-HighTension` when present;
   checks lf1/lf2/lf3, ZK, `RESULTS:...`, `extraction.txt`, and
@@ -296,8 +296,30 @@ If `CENTRE(mid)` is not 7000 Pa, scale:
   `BUCKLE_SOLVER`/LANCZOS branch, `CLEAN_PERTURBATION`, free-mesh path,
   the unreachable nested `if CLAMP_LOAD=='none'` block (inside `if CLAMP_LOAD=='base'`),
   and the misleading `CLAMP_PERT` log/value.
-- `buckle_pull_top_stub.py` is retired (kept as a deprecation stub; safe to `git rm`).
+- `buckle_pull_top_stub.py` is deleted (see below).
   `buckle_stub_harness.py paper|clamp_only|seed` remains the BC-trace harness.
+
+## Deleted legacy files (2026-10-21)
+
+These files had **no callers** and are superseded, switched off, or completed harnesses.
+Remove them with the buckle refactor:
+
+```bat
+git rm code/run_abaqus_new.py code/solution_space.py code/solution_lf.py code/buckle_pull_top_stub.py code/release_edge_u3_stub.py code/hf_settings_stub.py code/dn_stats_stub.py
+```
+
+| File | Why |
+|---|---|
+| `run_abaqus_new.py` | legacy B-route (natural wrinkles, no buckle modes); `mfbo.py` submits `run_abaqus.py`; the checker now targets `run_abaqus.py` |
+| `solution_space.py` / `solution_lf.py` | early exhaustive-sweep prototypes; superseded by `mfbo.py` + `sweep_*` |
+| `buckle_pull_top_stub.py` | PULL_TOP removed; `paper3` is the 3-tendon source |
+| `release_edge_u3_stub.py` | `RELEASE_EDGE_U3=False`; the switch stays in the model, the harness is retired |
+| `hf_settings_stub.py` | §19.110 settings refactor is complete |
+| `dn_stats_stub.py` | DN archiving wiring is complete (`DN:` / `dn_` keys verified) |
+
+The other unreferenced files in the inventory are **not** deleted here; they need
+case-by-case review because entry points, standalone calculators, and data generators
+can legitimately have no imports.
 
 ## Not changed
 

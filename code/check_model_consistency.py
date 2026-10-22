@@ -28,7 +28,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # [2026-09-28 정정] 검사 대상은 **실제로 제출하는 HF** 다.
-#   예전에는 run_abaqus_new.py 를 봤다 — 그 파일은 legacy(1차 요소 S3/S4)이고 아무도 제출하지 않는다.
+#   예전에는 legacy 스크립트(run_abaqus_new.py)를 봤다 — 그 파일은 2026-10-21 삭제됐다.
 #   그래서 run_abaqus.py 의 모델 정의(요소/메쉬/결합)를 바꿔도 검사기가 PASS 를 냈다(가짜 초록불).
 NEW = os.path.join(HERE, 'run_abaqus.py')
 BUCKLE = os.path.join(HERE, 'run_abaqus_buckle.py')
@@ -195,9 +195,6 @@ def main():
     if not (os.path.exists(NEW) and os.path.exists(BUCKLE) and os.path.exists(MODE)):
         print("!!! 파일을 찾을 수 없습니다: %s / %s / %s" % (NEW, BUCKLE, MODE))
         return 1
-    _legacy = os.path.join(HERE, 'run_abaqus_new.py')
-    if os.path.exists(_legacy):
-        print("  [참고] run_abaqus_new.py 는 legacy(1차 요소 S3/S4) — 검사 대상이 아니다.")
     a = code_only(NEW)
     b = code_only(BUCKLE)
     c = code_only(MODE)
@@ -309,7 +306,7 @@ def main():
     # --- EVOL 필드출력 (면적가중 산출에 필요. 2026-09-22 누락을 실측으로 발견) ---
     print()
     print("--- 필드출력 EVOL (base_state_probe 면적가중) ---")
-    for _label, _txt in (('run_abaqus_new.py', a), ('run_abaqus_buckle.py', b),
+    for _label, _txt in (('run_abaqus.py', a), ('run_abaqus_buckle.py', b),
                          ('run_abaqus_mode.py', c)):
         _has = 'EVOL' in _txt
         print("  %s  %s" % ('OK  ' if _has else '!!! ', _label + ' EVOL=' + str(_has)))

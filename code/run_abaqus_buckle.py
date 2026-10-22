@@ -224,7 +224,7 @@ def _resolve_here():
 
 _HERE = _resolve_here()
 # 작업 디렉터리: 좌굴 산출물 전용.
-#   HF/LF 산출물(run_abaqus_new.py -> code/aba)과 섞으면 두 가지가 조용히 망가진다:
+#   HF/LF 산출물(code/aba)과 섞으면 두 가지가 조용히 망가진다:
 #     (a) *IMPERFECTION, FILE=... 이 stale .fil 을 읽을 수 있다
 #     (b) .dat/.msg/.sta 진단 로그가 어느 해석 것인지 구분되지 않는다
 _RUN = os.path.join(_HERE, RUN_DIR_NAME)
