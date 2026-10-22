@@ -60,14 +60,14 @@ import numpy as np
 #         ⑦ 스위치/진단 / misc
 # ============================================================================
 
-# ---- ⓪ 논문 정합 프리셋 (Galhofo 2022, 5PCS 좌굴 모델) ----
-#   True  = 논문 Fig. 12/표: 3꼭짓점 지정변위(상단 0.001 / 코너 0.0005 = 2:1),
-#           Buckle 스텝은 5개 전부 0.10 m, subspace, 안정화 2e-4, 2차 요소(S8R5+STRI65).
-#   False = 종전 2-tendon 경로(corner2, 1.8e-5 m, 0.01 m, 5e-4, 1차 S4/S3).
-#   !! PAPER_MATCH=True 는 시드표 재생성이 필요하다 — make_seed.py 를 먼저 실행한다.
-PAPER_MATCH = True
-PAPER_MESH_ORDER = 1  # 기본 1차. 2차는 base state 불안정으로 모드 추출 실패(2026-10-20)
-MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
+# ---- ⓪ 모델 프리셋 (조건식 없이 상수로 직접 지정) ----
+#   예전에는 PAPER_MATCH 하나가 아래 6개를 한꺼번에 바꿨다. 그러면 "어느 값이 원인인지" 분리가
+#   안 되고, 클램프 케이스가 paper 프리셋을 물려받아 좌굴모드가 깨지는 문제가 있었다.
+#   지금은 각 상수가 독립이다 — 바꾸려면 그 줄만 고친다. (2026-10-22)
+#   !! 값을 바꾸면 시드표(modes_*.txt)를 재생성해야 한다 — make_seed.py 를 먼저 실행.
+PAPER_MATCH = True            # 로그 표기용. 아래 프리셋 상수들을 제어하지 않는다.
+PAPER_MESH_ORDER = 1          # make_seed.py 가 읽는 이름. MESH_ORDER 와 같은 값으로 둔다.
+MESH_ORDER = 1                # 1차 S4/S3. 2차는 base state 불안정으로 모드 추출 실패(2026-10-20)
 #   [2026-10-20 실측] 논문 정적 스텝의 코너 0.0005 m 는 이 모델에서 **base state 가 불안정**하다:
 #     SYSTEM MATRIX 592 negative eigenvalues / DIFFERENTIAL MATRIX 166,009 negative diagonals
 #     -> subspace "THE EIGENVALUES CANNOT BE FOUND" (0 modes). 1e-3 m 에서도 0개였던 §8 실측과 같은 영역.
@@ -77,7 +77,7 @@ PAPER_STATIC_DISP = 0.0005    # 논문 Fig. 12 정적 스텝 코너값 (D4: 모�
 MODE_PRESTRESS = 0.0001       # 2026-10-20: 대칭 10모드 확인된 운용점 (λ 쌍 −1.5867e-4 등)
 
 # ---- ① CASE 선택 ----
-CASE = 'paper' if PAPER_MATCH else 'clamp_only'
+CASE = 'paper'                # 'paper'(케이블·클램프 없음) | 'seed' | 'clamp_only'
 
 # ---- ② 형상/격자 ----
 BASE = 20.0   # m
@@ -116,10 +116,10 @@ CABLE_AREA = np.pi * (CABLE_RADIUS**2)
 LEN_TOP = 0.280 # m
 LEN_BOT = 0.689 # m
 CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이(HF 와 같아야 한다 — 검사기 HF↔buckle 계약).
-PRETENSION_MODE = 'paper3' if PAPER_MATCH else 'corner2'
+PRETENSION_MODE = 'paper3'    # 'paper3'(논문 3점 2:1) | 'corner2'(종전 √2)
 if PRETENSION_MODE not in ('corner2', 'paper3'):
     raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
-DISP_TOP_OVER_CORNER = 2.0 if PAPER_MATCH else 1.4142135623   # 논문 2:1 / 종전 √2
+DISP_TOP_OVER_CORNER = 2.0    # 상단/코너 지정변위 비. 논문 2:1 / 종전 1.4142135623
 
 # ---- 프리텐션 (CLI 두 번째 인자로 덮어쓴다) ----
 DISP_GLOBAL = MODE_PRESTRESS    # 모드 추출 base state. 논문 0.0005 m 는 위 주석대로 불안정.
@@ -144,7 +144,7 @@ CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김
 CLAMP_DIR = 'normal'
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
-PERTURBATION = 0.10 if PAPER_MATCH else 0.01  # m — 논문 Buckle 스텝 0.10 / 종전 0.01
+PERTURBATION = 0.10           # m — Buckle 스텝 섭동. 논문 0.10 / 종전 0.01
 
 PATTERN_SIGN = 1.0            # 좌굴 '하중 패턴' 부호: 1.0 = 바깥으로 더 당김
 
@@ -170,7 +170,7 @@ if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
                        % (BUCKLE_SOLVER,))
 EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
 
-MODE_STABILIZATION = 2.0e-4 if PAPER_MATCH else 0.0005   # 논문 2e-4 / 종전 5e-4
+MODE_STABILIZATION = 2.0e-4   # 논문 2e-4 / 종전 5e-4
 
 # ---- ⑥ 모드 판정 ----
 # ---- 판정 임계값 (계획 §4: 3번 런 결과 뒤에 확정한다 — 지금은 잠정값) ----
@@ -304,7 +304,8 @@ def _require_constant(name, have, want):
                            "  -> 상수부를 고치거나 CASE 를 바꾸세요." % (CASE, name, want, have))
 
 
-_require_constant('PRETENSION_MODE', PRETENSION_MODE, 'paper3' if PAPER_MATCH else 'corner2')
+#   PRETENSION_MODE 는 정의부에서 'corner2'|'paper3' 도메인 검사를 이미 한다.
+#   (예전에는 PAPER_MATCH 프리셋과의 일치를 강제했으나, 상수를 독립시켜 그 결합을 없앴다.)
 _require_constant('CORNER_ANGLE_DEG', CORNER_ANGLE_DEG, 28.6)
 
 if HAS_CLAMP_CABLES and not HAS_CLAMPS:
