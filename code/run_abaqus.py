@@ -101,11 +101,11 @@ PAPER_EDGE_BC_FROM_INITIAL = bool(PAPER_MATCH)   # 3변 u3=0 을 Initial 에서 
 #     True  = 논문 프리텐션·BC·1차 메쉬는 유지하되 **클램프 + 꼭짓점 케이블을 모두 포함**
 #             (실제 포스트버클링 모델. 클램프 프리텐션 = 초기응력 d_c*CABLE_PRESTRESS.)
 PAPER_INCLUDE_CLAMPS = True
-#   [2026-10-20] 물리 모델(클램프 포함)의 기본 BC 경로.
-#     True  = GlobalTension 동안 전막 u3=0 -> Postbuckle 에서 BC_Stabilize_Z 해제.
-#             평평한 프리텐션 후 주름을 발생시킨다(논문 BC 아님, 수렴용 장치).
-#     False = 논문 그대로 3변만 u3=0, 주름은 GlobalTension 에서 발생.
-PAPER_HOLD_U3_GLOBAL = bool(PAPER_INCLUDE_CLAMPS)
+#   [2026-10-21] u3 정책은 **fidelity 종속**이다:
+#     LF  = Initial 부터 전막 u3=0 (평평한 프리스트레스)
+#     HF  = paper 경로는 3변만 u3=0 (처음부터 자유; 주름은 GlobalTension 에서 발생)
+#           old disp 경로는 기존처럼 GlobalTension hold -> Postbuckle release
+#   PAPER_HOLD_U3_GLOBAL 상수는 제거했다. _HOLD_U3_ALL 이 런타임 fidelity 로 분기한다.
 #   [paper-match] 모드표 = **seed + clamp_only 합성표** (사용자 결정 2026-10-20).
 #     True  = seeds/modes_xc<xc>.txt (2+2 합성) 를 쓰고 seed_gate 지문 검사를 적용한다.
 #     False = 종전 NO_CLAMP 순수 seed 가족 표(modes_seed.txt) — clamp 모드 배제.
@@ -113,7 +113,7 @@ PAPER_HOLD_U3_GLOBAL = bool(PAPER_INCLUDE_CLAMPS)
 USE_COMPOSITE_MODE_TABLE = True
 
 # ---- ① 실행 모드/스위치 ----
-BASE_PROBE = False               # R-13/CT는 수동 진단으로 분리. base_state_probe.py를 검증된 ODB에 직접 실행한다.
+BASE_PROBE = True                # R-13/CT 라이브. MFBO에서는 False로 끌 수 있다.
 EIG_RECORD = True                # 좌굴 고유치 이력 기록 (coalescence_check.py record)
 RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-24). 이유는 측정된 실패 경로다:
                              #   이 잡은 _EIGENSOLVER='LANCZOS' 로 제출되는데(아래), 이 모델의 좌굴 base state 는
@@ -255,27 +255,23 @@ IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. 현재 0.10 t (= 5.0e-7 m). �
 #     LF 는 MFBO 의 "싼 대리 모델"이다 — 그 정의가 시드표/진폭에 의존하면 같은 설계점의 LF 값이
 #     시드에 따라 흔들려 다중충실도 구조가 약해진다. LF 분기에서는 섭동 크기를 0 으로 만들어
 #     메쉬를 완전하게 둔다(주름은 HF 에서만 발달한다는 해석과도 일치).
-#   [§19.85] HF 완주 사다리(사용자 지시: 0.005 - 0.01 - 0.02 - 0.05).
-#     실측 근거: 같은 점 (x_c=0.8, d_c=0.75)에서 stabilize=0.003 -> TOO MANY ATTEMPTS(τ=0.622),
-#     0.01 -> 완주. 감쇠가 지배 변수임이 단일 변수 실험으로 확정됐다. 첫 레벨로 제출하고
-#     실패하면 다음 레벨로 승급한다(각 레벨의 선택 결과를 로그에 남긴다).
-STABILIZE_LADDER = ((PAPER_STABILIZE,) if (PAPER_MATCH and not PAPER_INCLUDE_CLAMPS)
-                    else ((0.0005,) if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS)
-                          else (0.01,)))
-#   실제 스텝에 들어가는 값 (2026-10-20: 기존 하드코딩 0.0002 를 대체).
-#     paper-only  : 2e-4 (논문값)
-#     physical    : 1.0  (클램프 컷백 회피, 97.7t 기준선)
-#     old disp    : GlobalTension 2e-4 / Postbuckle 0.01 (종전 그대로)
-STABILIZE_GLOBAL = 0.0005 if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS) else 0.0002
-STABILIZE_POST = (0.0005 if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS)
-                  else (PAPER_STABILIZE if PAPER_MATCH else 0.01))
-#   [2026-10-12 §19.57 **되돌림**] 0.1 로 낮췄다가 되돌린다. 바로 아래 2026-10-06 실측이 반대를 말한다:
-#   0.10 -> 증분 눌림 2215 증분/약 90분 + 초기 결함이 약해 분기가 늦게 갈라져 수렴이 어려움,
-#   1.0 -> 271 증분/11분. 그리고 논문 대조 성공(97.7 t vs 91.1 t = 1.07배)도 **1.0 에서** 나왔다.
-#   씨드 진폭은 포스트버클링 진폭을 정하지 않는다(진폭은 하중이 정한다) -> 논문 정합에 0.10 t 는 불필요.
-#   [2026-10-06 실측] 0.10 이면 증분이 눌려 2215 증분 / 약 90 분이 걸린다. 1.0 이면 271 증분 / 11 분이다
-#   (HF_x025k). 진폭이 작으면 초기 결함이 약해 분기가 늦게 갈라지고 수렴이 어려워진다.
-#   진폭 민감도를 보려면 이 상수를 0.50 등으로 바꿔 재실행한다.
+#   [2026-10-21] u3-free HF: GlobalTension 에서 주름이 생기므로 사다리는 **내리는 방향**이다.
+#     physical LF 는 기존 GlobalTension 안정화(1.0)를 유지하고, HF 만 2e-4 에서 시작한다.
+#     Postbuckle 은 정착 스텝(paper) 또는 최종 하중(disp)이며 5e-4 에서 시작한다.
+#     (구 0.005-0.05 단일 사다리는 Postbuckle 전용 실험이었다.)
+_PHYSICAL_PAPER = bool(PAPER_MATCH and PAPER_INCLUDE_CLAMPS)
+STABILIZE_GLOBAL_LADDER = ((2.0e-4, 1.0e-3, 1.0e-2) if _PHYSICAL_PAPER
+                           else ((PAPER_STABILIZE,) if PAPER_MATCH else (0.0002,)))
+STABILIZE_POST_LADDER = ((5.0e-4, 2.0e-3, 1.0e-2) if _PHYSICAL_PAPER
+                         else ((PAPER_STABILIZE,) if PAPER_MATCH else (0.01,)))
+#   LF 는 u3=0 고정이라 기존 GlobalTension 감쇠를 그대로 쓴다(회귀 기준선 보존).
+STABILIZE_GLOBAL_LF = (1.0 if _PHYSICAL_PAPER else 0.0002)
+STABILIZE_GLOBAL_HF = STABILIZE_GLOBAL_LADDER[0]
+STABILIZE_GLOBAL = STABILIZE_GLOBAL_LF
+STABILIZE_POST = STABILIZE_POST_LADDER[0]
+#   [2026-10-21] u3-free HF 에서는 임퍼펙션 진폭이 **주름 패턴 자체를 선택**한다.
+#     기본 0.10 t. 0.1 vs 0.5 민감도를 반드시 비교한다(PAPER_MATCH_BRANCH.md).
+#     과거 1.0 t 는 수렴/증분 문제로 폐기했고, 0.10 t 는 평평한 base 의 tie-breaker 였다.
 IMPERFECTION_MODE = 'odb_table'   # 'odb_direct'(기본) | 'odb_table' | 'file'
 #   [2026-10-12] 설계점별 시드표 - 경로 결정과 시드 게이트는 아래 `_available_mode_numbers` def
 #     뒤 "[§19.104] 임퍼펙션 표 선택" 블록으로 **옮겼다**. 이유: 클램프 없는 baseline(NO_CLAMP=True)
@@ -306,8 +302,9 @@ _EIGENSOLVER = "LANCZOS"         # "SUBSPACE" 로 바꾸면 좌굴 추출 재시
 #   파생이라 import 뒤(모드표 선택 블록)에서 계산한다. LF_ODB/LF_JOB 도 (x_c,d_c) 파생이다.
 # 산출물 디렉터리 = code/aba. mfbo.py 의 RUN_DIR_NAME 과 같은 값이어야 한다.
 RUN_DIR_NAME = "aba"
-BUCKLE_ODB = 'Buckle_Analysis.odb'
-HF_ODB = 'HF_Postbuckle.odb'
+BUCKLE_ODB = 'Buckle_Analysis.odb'   # legacy self-buckle name; R-13 does NOT use it (point tag 없음)
+HF_JOB = 'HF_Postbuckle_u3free'
+HF_ODB = HF_JOB + '.odb'
 # ============================================================================
 
 # ---- 스크립트 위치(_HERE) / Abaqus 작업 디렉터리(_RUN) 결정 ----
@@ -504,14 +501,19 @@ except:
 #     `_PAPER_HF` 는 HF 전용 분기(예: Postbuckle 에서 BC 재생성 회피)에만 남긴다.
 _PAPER_PATH = bool(PAPER_EDGE_BC_FROM_INITIAL)
 _PAPER_HF = _PAPER_PATH and (fidelity == 'HF')
+#   [2026-10-21] u3 정책을 fidelity 로 분기한다.
+#     LF  = 항상 전막 u3=0 (깨끗한 프리스트레스 base)
+#     HF  = paper 경로는 처음부터 자유(3변만 u3=0). old disp 는 기존 hold 유지.
+_LF_HOLD_U3_ALL = (LOAD_MODE == 'disp') or bool(_PAPER_PATH)
+_HOLD_U3_ALL = (LOAD_MODE == 'disp') or (_PAPER_PATH and (fidelity == 'LF'))
 _DISP_PRE = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_PATH) else DISP_GLOBAL
 _DISP_FINAL = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_PATH) else GLOBAL_FINAL
 #   [paper-match] LF ODB stale guard: 모델 정의가 바뀌면 기존 LF ODB 를 재사용하지 않는다.
 #     sidecar(.model.txt)의 tag 를 현재 경로와 대조한다(aba_imperfection 참조).
-#     tag 에 clamp/u3 sub-mode 를 포함해 PAPER_INCLUDE_CLAMPS/PAPER_HOLD_U3_GLOBAL 전환도 잡는다.
+#     tag 에 clamp/u3 sub-mode 를 포함해 PAPER_INCLUDE_CLAMPS 과 LF u3 정책 전환도 잡는다.
 #     기본값은 aba_imperfection.LF_MODEL_TAG 와 같아야 한다(mfbo.py 가 그 값을 쓴다).
 _LF_MODEL_TAG = (('globaltension-v1-c%d-u%d'
-                  % (int(PAPER_INCLUDE_CLAMPS), int(PAPER_HOLD_U3_GLOBAL)))
+                  % (int(PAPER_INCLUDE_CLAMPS), int(_LF_HOLD_U3_ALL)))
                  if (LOAD_MODE == 'cable_stress' and _PAPER_PATH)
                  else 'disp-v1')
 
@@ -571,7 +573,7 @@ def _archive_slope(x_c, d_c):
     스위치: SOLARSAIL_NO_SLOPE=1 -> 전체 생략, SOLARSAIL_NO_ODB_COPY=1 -> ODB 복사만 생략.
     로그 접두 [SLOPE]/[ODBCOPY] 는 기존 stdout 필터가 버리지 않는 형식이다.
     """
-    _tag = 'xc%s_dc%s' % (value_tag(x_c), value_tag(d_c))
+    _tag = 'xc%s_dc%s_u3free' % (value_tag(x_c), value_tag(d_c))
     _src = os.path.join(_RUN, HF_ODB)
     _src = _src if os.path.exists(_src) else (HF_ODB if os.path.exists(HF_ODB) else None)
 
@@ -761,7 +763,8 @@ def _r13_ct_keys():
     return _d
 
 
-def run_job_safely(job_name, model_name=None, stabilize=None, hard_fail=True):
+def run_job_safely(job_name, model_name=None, stabilize=None, stabilize_global=None,
+                   hard_fail=True):
     """
     job 실행 중 .odb, .lck 파일 충돌을 방지하고, 완료까지 대기하는 함수
 
@@ -801,11 +804,14 @@ def run_job_safely(job_name, model_name=None, stabilize=None, hard_fail=True):
     _ncp = NUMCPUS
     emit("[run_abaqus] 케이스: x_c=%.4g  d_c=%.4g  클램프=%s  RUN_MODE=%s  NUMCPUS=%d"
          % (x_c, d_c, "OFF" if NO_CLAMP else "ON", RUN_MODE, _ncp))
-    emit("   DISP_GLOBAL=%.6g m  SEED_DIV=%.6g  THICKNESS=%.3g m  stabilize=%s"
+    emit("   DISP_GLOBAL=%.6g m  SEED_DIV=%.6g  THICKNESS=%.3g m  stabilize(post)=%s  stabilize(global)=%s"
          % (DISP_GLOBAL, SEED_DIV, THICKNESS,
-            ('%.4g' % stabilize) if stabilize is not None else 'ladder/기본값'))
-    emit("   GLOBAL_FINAL=%.6g m  PRETENSION_SCALE=%.6g  비율=%.1f"
-         % (GLOBAL_FINAL, PRETENSION_SCALE, GLOBAL_FINAL / (0.0001 * PRETENSION_SCALE)))
+            ('%.4g' % stabilize) if stabilize is not None else 'ladder/기본값',
+            ('%.4g' % stabilize_global) if stabilize_global is not None else 'ladder/기본값'))
+    emit("   DISP_PRE=%.6g m  DISP_FINAL=%.6g m  u3_policy=%s"
+         % (_DISP_PRE, _DISP_FINAL, 'HOLD_ALL' if _HOLD_U3_ALL else 'FREE'))
+    emit("   GLOBAL_FINAL=%.6g m  PRETENSION_SCALE=%.6g  (참고: 실제 DISP_FINAL=%.6g m)"
+         % (GLOBAL_FINAL, PRETENSION_SCALE, _DISP_FINAL))
     job = mdb.Job(name=job_name, model=model_name, numCpus=_ncp, numDomains=_ncp)
     emit("Submitting Job: %s" % job_name)
     job.writeInput(consistencyChecking=OFF)
@@ -875,39 +881,58 @@ def run_job_safely(job_name, model_name=None, stabilize=None, hard_fail=True):
         #     "0.005 시도"는 사실상 전부 0.01 로 돌았다(그래서 (0.8,1.0)이 수동 시험(0.01)과
         #     같은 결과를 냈다). 여기서 덱의 값을 확정한다 — 기록(stabilize_used.txt)과
         #     실제 실행이 일치해야 점 간 비교가 성립한다.
-        if _needs_patch and stabilize is not None:
-            #   [§19.92b] **스텝 범위 한정** 치환. 덱에는 `*Static, stabilize=` 가 여러 곳에 있다
-            #     (다른 스텝들의 자체 감쇠값) — 전역 정규식으로 바꾸면 2건이 잡혀 아무것도 못 바꾼다
-            #     (실측: "치환 실패(2건)" → 네 레벨이 전부 기본 0.01 로 돌았다).
-            #     `Step-Postbuckle` 스텝 헤더 다음의 첫 `*Static, stabilize=` 만 교체한다.
-            #     줄바꿈은 CRLF 이므로 `newline=''` 로 열어 번역(\r 중복)을 막는다.
+        if _needs_patch and (stabilize is not None or stabilize_global is not None):
+            #   [2026-10-21] 두 스텝을 **스텝 범위 한정**으로 바꾼다. 전역 정규식은
+            #     Step-ClampTension 등의 `*Static` 까지 잡으므로 금지.
+            #     GlobalTension 은 이제 주름이 생기는 스텝이라 사다리 대상이다.
             with open(job_name + '.inp', 'r', encoding='utf-8', errors='replace') as _fh2:
                 _ls2 = _fh2.read().splitlines(True)
-            _in_ps, _done2 = False, False
+            _in_gt = _in_ps = False
+            _done_gt = _done_ps = False
             for _i2, _l2 in enumerate(_ls2):
                 _ll = _l2.lstrip().lower()
                 if _ll.startswith('*step'):
+                    _in_gt = ('step-globaltension' in _ll)
                     _in_ps = ('step-postbuckle' in _ll)
                     continue
-                if _in_ps and _ll.startswith('*static') and 'stabilize=' in _ll:
+                if (_in_gt and stabilize_global is not None
+                        and _ll.startswith('*static') and 'stabilize=' in _ll):
+                    _nw, _n2 = re.subn(r'(stabilize=)[0-9.eE+-]+',
+                                       r'\g<1>%g' % stabilize_global, _l2)
+                    if _n2 == 1:
+                        _ls2[_i2] = _nw
+                        _done_gt = True
+                    _in_gt = False
+                    continue
+                if (_in_ps and stabilize is not None
+                        and _ll.startswith('*static') and 'stabilize=' in _ll):
                     _nw, _n2 = re.subn(r'(stabilize=)[0-9.eE+-]+',
                                        r'\g<1>%g' % stabilize, _l2)
                     if _n2 == 1:
                         _ls2[_i2] = _nw
-                        _done2 = True
-                    break
-            if _done2:
+                        _done_ps = True
+                    _in_ps = False
+                    continue
+            if _done_gt or _done_ps:
                 with io.open(job_name + '.inp', 'w', encoding='utf-8', newline='') as _fh2:
                     _fh2.write(''.join(_ls2))
                 with open(job_name + '.inp', 'r', encoding='utf-8', errors='replace') as _vf:
                     _vt = _vf.read()
-                _chk = re.search(
-                    r'\*Step,\s*name=Step-Postbuckle.*?\*Static,\s*stabilize=([0-9.eE+-]+)',
-                    _vt, re.S)
-                emit("[LADDER] 덱 확인: Step-Postbuckle stabilize=%s (요청 %g)"
-                     % (_chk.group(1) if _chk else '?', stabilize))
+                if stabilize_global is not None:
+                    _chk = re.search(
+                        r'\*Step,\s*name=Step-GlobalTension.*?\*Static,\s*stabilize=([0-9.eE+-]+)',
+                        _vt, re.S)
+                    emit("[LADDER] 덱 확인: Step-GlobalTension stabilize=%s (요청 %g)"
+                         % (_chk.group(1) if _chk else '?', stabilize_global))
+                if stabilize is not None:
+                    _chk = re.search(
+                        r'\*Step,\s*name=Step-Postbuckle.*?\*Static,\s*stabilize=([0-9.eE+-]+)',
+                        _vt, re.S)
+                    emit("[LADDER] 덱 확인: Step-Postbuckle stabilize=%s (요청 %g)"
+                         % (_chk.group(1) if _chk else '?', stabilize))
             else:
-                emit("[LADDER] !!! Step-Postbuckle 안에서 stabilize 줄을 찾지 못함")
+                emit("[LADDER] !!! stabilize 줄을 찾지 못함 "
+                     "(GT=%s, PS=%s)" % (_done_gt, _done_ps))
     else:
         emit("[run_abaqus] RUN_MODE='plain' : 패처 없이 원본 덱을 제출한다(진단용).")
     job.submit(consistencyChecking=OFF)
@@ -938,60 +963,82 @@ def run_job_safely(job_name, model_name=None, stabilize=None, hard_fail=True):
     return True
 
 def run_job_with_ladder(job_name, model_name=None):
-    """[§19.85] STABILIZE_LADDER 를 순서대로 시도해 **완주하면 멈춘다**.
+    """[2026-10-21] GlobalTension + Postbuckle **paired** 안정화 사다리.
 
-    왜: 스냅스루 정규화에 필요한 감쇠 수준이 설계점마다 다르다(실측: (0.8,0.75)에서 0.003 실패 /
-    0.01 완주). 완주한 레벨을 `stabilize_used.txt` 로 남겨 결과의 자격을 추적할 수 있게 한다.
+    u3-free HF 는 GlobalTension 에서 주름이 생기므로, 그 스텝의 감쇠를 내리는 방향으로
+    시도한다(2e-4 -> 1e-3 -> 1e-2). Postbuckle 은 정착/최종 하중 스텝으로 5e-4 -> 2e-3 -> 1e-2.
+    각 시도는 두 스텝을 같은 인덱스의 레벨로 패치하고, 완주 후 **두 스텝 모두**
+    ALLSD/ALLIE 를 읽어 5% 초과 여부를 기록한다.
     """
-    for _lv in STABILIZE_LADDER:
-        emit("[LADDER] stabilize=%g 시도 (%s)" % (_lv, job_name))
-        if run_job_safely(job_name, model_name=model_name, stabilize=_lv,
-                          hard_fail=False):
-            emit("[LADDER] stabilize=%g 에서 완주" % _lv)
-            #   [§19.86] 완주 직후 **에너지 비**를 재서 완주가 감쇠로 만든 것인지 판정한다.
-            #     안정화는 스냅스루 정규화 장치라, 비율이 크면 주름을 덮어 손실을 과소평가한다.
-            #     지표: ALLSD(안정화 소산)/ALLIE(내부 에너지) — 관행 기준 max<1% 양호 / <5% 허용
-            #     / >=5% 의심. 점마다 기록해 결과의 자격을 추적한다.
-            _r_last = _r_max = None
-            try:
-                _pe = os.path.join(_HERE, 'probe_energy.py')
-                if os.path.exists(_pe):
-                    _pp = subprocess.run(
-                        'abaqus python "%s" %s Step-Postbuckle' % (_pe, job_name + '.odb'),
-                        shell=True, capture_output=True, text=True)
-                    _mm = re.search(
-                        r'ALLSD/ALLIE\s+last=([0-9.eE+-]+)%\s+max=([0-9.eE+-]+)%',
-                        (_pp.stdout or '') + (_pp.stderr or ''))
-                    if _mm:
-                        _r_last, _r_max = float(_mm.group(1)), float(_mm.group(2))
-                    else:
-                        emit("[LADDER] (에너지 이력 없음 -> probe_energy 출력 참조)")
-            except Exception as _pe_err:
-                emit("[LADDER] 에너지 프로브 실패(무시): %s" % _pe_err)
+    def _probe_step(step_name):
+        _pe = os.path.join(_HERE, 'probe_energy.py')
+        if not os.path.exists(_pe):
+            return None, None
+        try:
+            _pp = subprocess.run(
+                'abaqus python "%s" %s %s' % (_pe, job_name + '.odb', step_name),
+                shell=True, capture_output=True, text=True)
+            _mm = re.search(
+                r'ALLSD/ALLIE\s+last=([0-9.eE+-]+)%\s+max=([0-9.eE+-]+)%',
+                (_pp.stdout or '') + (_pp.stderr or ''))
+            if _mm:
+                return float(_mm.group(1)), float(_mm.group(2))
+            emit("[LADDER] (%s 에너지 이력 없음 -> probe_energy 출력 참조)" % step_name)
+        except Exception as _pe_err:
+            emit("[LADDER] %s 에너지 프로브 실패(무시): %s" % (step_name, _pe_err))
+        return None, None
+
+    for _g_lv, _p_lv in zip(STABILIZE_GLOBAL_LADDER, STABILIZE_POST_LADDER):
+        emit("[LADDER] GlobalTension stabilize=%g / Postbuckle stabilize=%g 시도 (%s)"
+             % (_g_lv, _p_lv, job_name))
+        if run_job_safely(job_name, model_name=model_name, stabilize=_p_lv,
+                          stabilize_global=_g_lv, hard_fail=False):
+            emit("[LADDER] 완주 (GlobalTension=%g, Postbuckle=%g)" % (_g_lv, _p_lv))
+            #   [§19.86] 두 스텝의 ALLSD/ALLIE 를 모두 읽는다. GlobalTension 은 이제
+            #     주름이 생기는 스텝이므로 이 값이 선택의 핵심이다.
+            _r_last, _r_max = _probe_step('Step-Postbuckle')
+            _g_last, _g_max = _probe_step('Step-GlobalTension')
+            _vals = [v for v in (_r_max, _g_max) if v is not None]
+            _all_max = max(_vals) if _vals else None
             _verdict = 'unknown'
-            if _r_max is not None:
-                _verdict = ('OK' if _r_max < 1.0 else
-                            ('ACCEPT' if _r_max < 5.0 else 'SUSPECT'))
-                emit("[LADDER] ALLSD/ALLIE last=%.4g%% max=%.4g%% -> %s"
-                     % (_r_last, _r_max, _verdict))
+            if _all_max is not None:
+                _verdict = ('OK' if _all_max < 1.0 else
+                            ('ACCEPT' if _all_max < 5.0 else 'SUSPECT'))
+                emit("[LADDER] ALLSD/ALLIE PS(last=%.4g%%,max=%.4g%%) "
+                     "GT(last=%.4g%%,max=%.4g%%) -> %s"
+                     % (_r_last if _r_last is not None else float('nan'),
+                        _r_max if _r_max is not None else float('nan'),
+                        _g_last if _g_last is not None else float('nan'),
+                        _g_max if _g_max is not None else float('nan'), _verdict))
                 if _verdict == 'SUSPECT':
-                    emit("!!! WARNING: 안정화 에너지가 5%% 이상 — 이 점의 손실은 과소평가일 수 있다")
+                    emit("!!! WARNING: 안정화 에너지가 5%% 이상 — 이 점의 손실은 "
+                         "감쇠가 만든 과소평가일 수 있다")
             try:
                 with open(os.path.join(os.getcwd(), 'stabilize_used.txt'), 'w',
                           encoding='utf-8') as _f:
-                    _f.write('stabilize=%g\n' % _lv)
+                    _f.write('stabilize=%g\n' % _p_lv)
+                    _f.write('stabilize_used=%g\n' % _p_lv)
+                    _f.write('stabilize_global=%g\n' % _g_lv)
                     _f.write('allds_allie_last_pct=%s\n'
                              % ('%.6g' % _r_last if _r_last is not None else 'unknown'))
                     _f.write('allds_allie_max_pct=%s\n'
                              % ('%.6g' % _r_max if _r_max is not None else 'unknown'))
+                    _f.write('allds_allie_global_last_pct=%s\n'
+                             % ('%.6g' % _g_last if _g_last is not None else 'unknown'))
+                    _f.write('allds_allie_global_max_pct=%s\n'
+                             % ('%.6g' % _g_max if _g_max is not None else 'unknown'))
+                    _f.write('allds_allie_all_max_pct=%s\n'
+                             % ('%.6g' % _all_max if _all_max is not None else 'unknown'))
                     _f.write('energy_verdict=%s\n' % _verdict)
                     _f.write('job=%s\nx_c=%s\nd_c=%s\n'
                              % (job_name, globals().get('x_c', '?'), globals().get('d_c', '?')))
             except Exception:
                 pass
             return True
-        emit("[LADDER] stabilize=%g 실패 -> 다음 레벨로" % _lv)
-    emit("!!! ERROR: 사다리 소진 %s — 이 설계점은 완주 불가" % (STABILIZE_LADDER,))
+        emit("[LADDER] 실패 (GlobalTension=%g, Postbuckle=%g) -> 다음 레벨로"
+             % (_g_lv, _p_lv))
+    emit("!!! ERROR: 사다리 소진 (global=%s, post=%s) — 이 설계점은 완주 불가"
+         % (STABILIZE_GLOBAL_LADDER, STABILIZE_POST_LADDER))
     return False
 
 
@@ -1713,15 +1760,18 @@ if not NO_CLAMP:
 a.regenerate()
 
 # Step Global Tension : 3개 꼭짓점에 변위 가하기
+#   [2026-10-21] HF 는 여기서 주름이 생긴다. initialInc 를 0.001 로 낮추고
+#     maxNumInc 를 10000 으로 늘린다. LF 는 기존 값(0.01/1000, GlobalTension 1.0)을 유지한다.
 my_model.StaticStep(
     name='Step-GlobalTension',
     previous='Initial', 
     nlgeom=ON,
-    stabilizationMagnitude=STABILIZE_GLOBAL,  # paper 2e-4 / physical 1.0
+    stabilizationMagnitude=(STABILIZE_GLOBAL_HF if _IS_HF_RUN else STABILIZE_GLOBAL),
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
-    initialInc=(0.01 if PAPER_MATCH else 0.0001), minInc=1e-8, maxNumInc=1000
+    initialInc=((0.001 if _IS_HF_RUN else 0.01) if PAPER_MATCH else 0.0001),
+    minInc=1e-8, maxNumInc=(10000 if _IS_HF_RUN else 1000)
     #   [paper-match] 초기응력은 스텝 시작에 전부 들어간다(램프 없음) -> 첫 증분이 너무 작으면
-    #     큰 잔차를 작은 증분으로 풀다 컷백이 반복된다. 논문 모드에서는 0.01 로 시작한다.
+    #     큰 잔차를 작은 증분으로 풀다 컷백이 반복된다. 논문 모드에서는 0.001(HF)/0.01(LF) 로 시작한다.
 )
 
 # Step Clamp Tension : 클램프에 변위 가하기
@@ -1825,7 +1875,7 @@ if LOAD_MODE == 'cable_stress' and _PAPER_PATH:
 #   [paper-match] 논문은 정적 스텝에서 **세 변만** u3=0 이다.
 #     - 종전 disp / physical HF(PAPER_HOLD_U3_GLOBAL=True): 전막 u3=0 (BC_Stabilize_Z)
 #     - LF(NO_CLAMP) / paper-only: 전막 고정 없이 BC_Edges_Only_Z 만
-if (LOAD_MODE == 'disp') or (_PAPER_PATH and PAPER_HOLD_U3_GLOBAL):
+if _HOLD_U3_ALL:
     my_model.DisplacementBC(
         name='BC_Stabilize_Z', 
         createStepName='Initial', 
@@ -1934,14 +1984,8 @@ if not NO_CLAMP:
         u2=(CLAMP_PERT/ sqrt2)
     )
 
-# Step Buckle 에서는 전체 z 구속에서 모서리 z 구속으로 교체 Galhofo reference
-#   [paper-match] LF 는 Step-Buckle 을 삭제하므로 deactivate 할 필요가 없다.
-#     (BC_Stabilize_Z 는 LF 프리스트레스 상태 내내 active 여야 한다.)
-#     HF 만 Step-Buckle -> Step-Postbuckle 전환에서 deactivate 한다.
-if (fidelity == 'HF'
-        and 'BC_Stabilize_Z' in my_model.boundaryConditions
-        and 'Step-Buckle' in my_model.steps):
-    my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Buckle')
+#   [2026-10-21] Step-Buckle 은 어차피 삭제되므로 BC_Stabilize_Z 해제는 죽은 코드였다.
+#     paper HF 는 BC 가 없고, old disp HF 는 Step-Postbuckle 에서 해제한다.
 
 # all_edges = inst_memb.edges 제거 — orphan mesh 에서는 인스턴스의 기하 edge 가 비어 셋이 무효다(§10a).
 
@@ -2110,7 +2154,7 @@ if fidelity == 'LF':
     #   [paper-match] 'E' = Green-Lagrange strain (nlgeom=ON). eval_abaqus 의 ZK
     #     (Zhang & Kiendl: E1/E2/n1) 가 이 필드에서 변형률을 읽는다. 빼면 ZK:FAIL.
     my_model.fieldOutputRequests['F-Output-1'].setValues(
-        variables=('S', 'E', 'U', 'COORD', 'EVOL'),
+        variables=('S', 'E', 'U', 'COORD', 'EVOL', 'RF'),
         frequency=10   # R-10: odb 크기 절감
     )
 
@@ -2127,7 +2171,7 @@ if fidelity == 'LF':
         try:
             lf_sidecar_write(LF_ODB, tag=_LF_MODEL_TAG, extra={
                 'x_c': x_c, 'd_c': d_c, 'load_mode': LOAD_MODE,
-                'paper_path': int(_PAPER_PATH), 'paper_hold_u3': int(PAPER_HOLD_U3_GLOBAL),
+                'paper_path': int(_PAPER_PATH), 'paper_hold_u3': int(_LF_HOLD_U3_ALL),
                 'paper_include_clamps': int(PAPER_INCLUDE_CLAMPS),
                 'mesh_order': MESH_ORDER, 'thickness': THICKNESS,
                 'cable_prestress': CABLE_PRESTRESS,
@@ -2210,52 +2254,48 @@ elif fidelity == 'HF':
         emit("[N-6] coalescence record 실패(무시): %s" % _eig_err)
 
     # [R-13 / 스파이크 10-0] base state(GlobalTension 말단) 응력·반력 측정
-    #   기본 BASE_PROBE=False (수동 진단). 켜려면 True 로 바꾸면 이 런에서 자동 실행된다.
+    #   기본 BASE_PROBE=True (live). False 로 바꾸면 이 런에서 자동 실행하지 않는다.
+    #   소스는 **짝 LF ODB(u3=0)** 우선; 없으면 skip, 디버깅은 SOLARSAIL_BASE_ODB.
     #   수동 진단:
     #     abaqus python base_state_probe.py aba\LF_Analysis_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
-    #     abaqus python base_state_probe.py results\odb\HF_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
-    #     abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-Postbuckle 1.0 1.0
+    #     abaqus python base_state_probe.py results\odb\HF_xc0p5_dc0p5_u3free.odb Step-GlobalTension 1.0 1.0
+    #     abaqus python base_state_probe.py aba\HF_Postbuckle_u3free.odb Step-Postbuckle 1.0 1.0
     #   고정 이름 Buckle_Analysis.odb 는 포인트 태그가 없어 per-point 진단에 쓰지 않는다.
     #   좌굴 성공/실패와 무관하게 ODB 의 GlobalTension 프레임에서 읽는다.
     try:
         if BASE_PROBE:
             _probe = os.path.join(_HERE, 'base_state_probe.py')
-            #   [§19.94] 이 런이 써야 할 좌굴 ODB 의 **명시 경로**(cwd = code\aba, run_job_safely 의 출력
-            #     위치)를 먼저 본다. 예전에는 _first_existing 폴백 체인만 썼기 때문에, 이 런이 ODB 를
-            #     만들지 못하면 code\ 나 code\aba\ 밖의 **지난 런 ODB** 를 조용히 열어 R-13 을 찍을 수
-            #     있었다(감사: 서로 다른 (x_c,d_c) 인데 R-13 숫자가 완전히 동일).
-            #     → 이제는 (i) 명시 경로 우선, (ii) 폴백 시 경고, (iii) mtime 이 런 시작보다 오래되면
-            #       stale 경고. 진단이 본 런을 죽이지 않도록 전부 경고만 낸다.
-            _bodb_run = os.path.abspath(BUCKLE_ODB)
-            _bodb = _bodb_run if os.path.exists(_bodb_run) else None
-            _bodb_src = '이 런 cwd'
-            if _bodb is None:
-                _bodb = _first_existing(os.path.join(_HERE, os.path.basename(BUCKLE_ODB)),
-                                        os.path.join('..', os.path.basename(BUCKLE_ODB)))
-                _bodb_src = '폴백(다른 디렉터리)'
-                if _bodb:
-                    emit("[R-13] !!! 이 런의 ODB 가 없다(%s) -> 폴백 경로 사용: %s (stale 가능)"
-                         % (_bodb_run, _bodb))
-            if os.path.exists(_probe) and _bodb:
+            #   [2026-10-21] HF 가 처음부터 u3-free 이므로 HF 의 GlobalTension 말단은 이미 주름진
+            #     상태다. R-13 은 **짝 LF ODB(u3=0)를 첫 후보**로 읽는다. 고정 이름
+            #     Buckle_Analysis.odb 는 포인트 태그가 없어 폴백으로 쓰지 않는다.
+            #     디버깅은 SOLARSAIL_BASE_ODB 로만 명시한다. 없으면 skip.
+            _bodb = None
+            _bodb_src = ''
+            _base_override = os.environ.get('SOLARSAIL_BASE_ODB')
+            if _base_override:
+                _bodb = os.path.abspath(_base_override)
+                _bodb_src = 'explicit SOLARSAIL_BASE_ODB'
+            elif os.path.exists(LF_ODB) and lf_odb_is_current(LF_ODB, tag=_LF_MODEL_TAG):
+                _bodb = os.path.abspath(LF_ODB)
+                _bodb_src = '짝 LF ODB (same x_c,d_c; u3=0)'
+            if _bodb is None or not os.path.exists(_bodb):
+                emit("[R-13] skip: no point-consistent base ODB "
+                     "(override missing or LF sidecar missing/mismatch)")
+            elif os.path.exists(_probe):
                 emit("[R-13] base state ODB: %s  [%s]" % (_bodb, _bodb_src))
-                #   [§19.94] stale 판정: mtime < 런 시작 이면 이 런이 만든 파일이 아니다.
-                try:
-                    _mt = os.path.getmtime(_bodb)
-                    _age = _RUN_T0 - _mt
-                    _mt_txt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_mt))
-                    if _age > 0.0:
-                        emit("[R-13] !!! stale ODB 가능: 파일 mtime(%s) 이 런 시작(%s) 보다 %.1f 초 "
-                             "오래됨 — R-13 숫자는 **이 설계점의 base state 가 아닐 수 있다**."
-                             % (_mt_txt,
-                                time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_RUN_T0)), _age))
-                        if not RUN_SELF_BUCKLE_JOB:
-                            emit("[R-13]     (원인) 이 런은 자기 좌굴 잡을 돌리지 않는다"
-                                 "(RUN_SELF_BUCKLE_JOB=False) -> 좌굴 ODB 는 모드소스 런의 산출물이다.")
-                    else:
-                        emit("[R-13] ODB 신선도 OK: 런 시작 후 %.1f 초에 생성됨 (mtime %s)"
-                             % (-_age, _mt_txt))
-                except Exception as _mt_err:
-                    emit("[R-13] ODB mtime 확인 실패(무시): %s" % _mt_err)
+                if _bodb_src.startswith('짝 LF'):
+                    #   LF 는 HF 선행 런이므로 mtime < run start 가 정상. sidecar tag 가 신선도 증거다.
+                    emit("[R-13] source=LF prerequisite; mtime<run start is normal; sidecar tag=%s"
+                         % _LF_MODEL_TAG)
+                else:
+                    try:
+                        _mt = os.path.getmtime(_bodb)
+                        _age = _RUN_T0 - _mt
+                        _mt_txt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_mt))
+                        emit("[R-13] explicit override mtime=%s (age %.1f s; stale check not enforced)"
+                             % (_mt_txt, _age))
+                    except Exception as _mt_err:
+                        emit("[R-13] ODB mtime 확인 실패(무시): %s" % _mt_err)
                 _pcmd = ('abaqus python "%s" "%s" Step-GlobalTension'
                          % (_probe, _bodb))
                 _pr = subprocess.run(_pcmd, shell=True, capture_output=True, text=True)
@@ -2275,8 +2315,7 @@ elif fidelity == 'HF':
                         emit("   %s" % _ls); _n_kept += 1
                 emit("[R-13] 요약 %d줄 / 원본 %d줄 (상세 생략)" % (_n_kept, len(_pr_all)))
             else:
-                emit("[R-13] base state 측정 건너뜀 (probe=%s, odb=%s : 후보 %s / %s)"
-                      % (os.path.exists(_probe), bool(_bodb), BUCKLE_ODB, _HERE))
+                emit("[R-13] probe missing: %s" % _probe)
     except Exception as _probe_err:
         emit("[R-13] base state 측정 실패(무시): %s" % _probe_err)
 
@@ -2286,32 +2325,32 @@ elif fidelity == 'HF':
     #   빠진 상태라 '실제 프리텐션'이 아니다). 위 1차 판독(GlobalTension)은 그대로 둔다.
     #   배경 질문: 이 상태의 중앙 응력 Pa 스케일이 7000 Pa 운용점과 얼마나 다른가.
     #
-    #   **주의** 이 시점에 이 런의 HF ODB(HF_Postbuckle.odb)는 **아직 없다** - 포스트버클 잡은 아래에서
-    #     제출된다. 게다가 HF 모델은 포스트버클 제출 **직전에 Step-ClampTension 을 삭제**하므로
-    #     (아래 '기존 Step 정리' 블록) HF_Postbuckle.odb 에는 그 스텝이 **영원히 없다**.
-    #     -> 지금 존재하는 파일로 읽되, **어느 파일을 읽었는지 + 신선도**를 항상 함께 찍는다.
-    #        '이 런의 값'으로 오독되지 않게 하는 것이 이 블록의 핵심이다.
-    #   우선순위: (1) 짝 LF ODB(설계점별 이름 = 오염 없음, 스텝 보유) -> (2) 좌굴 ODB(GT 판독과 같은
-    #     폴백 체인) -> (3) 둘 다 없으면 건너뜀(로그 + 점별 txt 에 nan + 이유).
+    #   [2026-10-21] 이 시점에 이 런의 HF ODB 는 아직 없다 - 포스트버클 잡은 아래에서
+    #     제출된다. HF 모델은 포스트버클 제출 **직전에 Step-ClampTension 을 삭제**하므로
+    #     HF ODB 에는 그 스텝이 **영원히 없다**. -> 짝 LF ODB(또는 명시 override)만 읽는다.
+    #   우선순위: (1) 짝 LF ODB(sidecar 일치, u3=0) -> (2) SOLARSAIL_BASE_ODB override -> (3) skip.
+    #     고정 Buckle_Analysis.odb 폴백은 제거했다.
     try:
         if BASE_PROBE:
             _probe2 = os.path.join(_HERE, 'base_state_probe.py')
             _ct_odb = None
             _ct_src = ''
-            _lf_abs = os.path.abspath(LF_ODB)
-            if os.path.exists(_lf_abs):
-                _ct_odb = _lf_abs
-                _ct_src = '짝 LF ODB(같은 설계점 이름, Step-ClampTension 보유)'
-            if _ct_odb is None:
-                _c1 = os.path.abspath(BUCKLE_ODB)
-                if os.path.exists(_c1):
-                    _ct_odb = _c1
-                    _ct_src = '좌굴 ODB(이 런 cwd)'
+            _base_override = os.environ.get('SOLARSAIL_BASE_ODB')
+            if _base_override:
+                if os.path.exists(_base_override):
+                    _ct_odb = os.path.abspath(_base_override)
+                    _ct_src = 'explicit SOLARSAIL_BASE_ODB'
                 else:
-                    _ct_odb = _first_existing(os.path.join(_HERE, os.path.basename(BUCKLE_ODB)),
-                                              os.path.join('..', os.path.basename(BUCKLE_ODB)))
-                    _ct_src = '폴백(다른 디렉터리의 좌굴 ODB)'
-            if os.path.exists(_probe2) and _ct_odb:
+                    _ct_odb = None
+                    _ct_src = 'override_missing'
+            elif os.path.exists(LF_ODB) and lf_odb_is_current(LF_ODB, tag=_LF_MODEL_TAG):
+                _ct_odb = os.path.abspath(LF_ODB)
+                _ct_src = '짝 LF ODB (same x_c,d_c)'
+            if _ct_odb is None:
+                emit("[R-13:CT] skip: no point-consistent base ODB "
+                     "(override missing or LF sidecar missing/mismatch)")
+                _R13_CT['r13_ct_note'] = 'no point-consistent base ODB'
+            elif os.path.exists(_probe2):
                 #   [paper-match] paper LF ODB 에는 Step-ClampTension 이 없다. 그 경로의
                 #     프리스트레스 상태는 Step-GlobalTension 이므로 그 스텝을 읽는다.
                 _r13_step = ('Step-GlobalTension'
@@ -2322,8 +2361,8 @@ elif fidelity == 'HF':
                 emit("[R-13:CT] !!! 이 런의 HF ODB(%s)는 아직 없다(포스트버클 제출 전) -> 위 파일로 "
                      "**대체 판독**했다. 이 숫자를 '이 런의 HF 값'으로 읽지 마라." % HF_ODB)
                 if not _ct_src.startswith('짝 LF'):
-                    emit("[R-13:CT]     (주의) LF ODB 가 없어 좌굴 ODB 로 대체했다 -> 스텝 이름이 "
-                         "있더라도 **다른 설계점/다른 런의 산출물**일 수 있다(아래 신선도 확인).")
+                    emit("[R-13:CT]     (주의) explicit override 사용 -> 다른 설계점/다른 런의 "
+                         "산출물일 수 있다(아래 mtime 확인).")
                 #   [§19.94] 신선도 판정 - mtime 이 런 시작보다 오래되면 이 런이 만든 파일이 아니다.
                 _mt2_txt = 'nan'
                 _stale2 = 'nan'
@@ -2331,10 +2370,16 @@ elif fidelity == 'HF':
                     _mt2 = os.path.getmtime(_ct_odb)
                     _age2 = _RUN_T0 - _mt2
                     _mt2_txt = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(_mt2))
-                    if _age2 > 0.0:
+                    if _ct_src.startswith('짝 LF'):
+                        #   LF 는 HF 선행 런이므로 mtime<run start 가 정상. sidecar tag 가 증거다.
+                        _stale2 = '0'
+                        emit("[R-13:CT] source=LF prerequisite; sidecar tag=%s; "
+                             "mtime<run start is normal (mtime %s)"
+                             % (_LF_MODEL_TAG, _mt2_txt))
+                    elif _age2 > 0.0:
                         _stale2 = '1'
-                        emit("[R-13:CT] !!! stale: mtime(%s) 이 런 시작(%s) 보다 %.1f 초 오래됨 "
-                             "-> 이 런의 산출물이 아니다(짝 LF ODB 라면 정상: LF 런이 먼저 돌았다)."
+                        emit("[R-13:CT] !!! explicit override is older than run start: "
+                             "mtime(%s) vs run(%s), age %.1f s -> 이 런의 산출물이 아니다."
                              % (_mt2_txt, time.strftime('%Y-%m-%d %H:%M:%S',
                                                         time.localtime(_RUN_T0)), _age2))
                     else:
@@ -2347,9 +2392,9 @@ elif fidelity == 'HF':
                 #     HF_Postbuckle.odb 를 안내하면 '스텝 없음' 경고만 돌아온다(위 **주의** 참조).
                 emit("[R-13:CT] 사후 재판독: abaqus python \"%s\" \"%s\" %s"
                      % (_probe2, _ct_odb, _r13_step))
-                emit("[R-13:CT] (한계) HF_Postbuckle.odb 에서는 이 프리스트레스 스텝을 읽을 수 없다 - "
+                emit("[R-13:CT] (한계) 이 런의 HF ODB(%s)에는 이 프리스트레스 스텝이 없다 - "
                      "HF 런이 포스트버클 직전에 ClampTension 을 삭제하고 GlobalTension 에서 시작한다. "
-                     "프리스트레스 확정은 위 ODB(짝 LF/좌굴)로 한다(이 진단은 전용).")
+                     "프리스트레스 확정은 위 ODB(짝 LF/override)로 한다(이 진단은 전용)." % HF_ODB)
                 _pcmd2 = 'abaqus python "%s" "%s" %s' % (_probe2, _ct_odb, _r13_step)
                 _pr2 = subprocess.run(_pcmd2, shell=True, capture_output=True, text=True)
                 _pr2_all = ((_pr2.stdout or "") + (_pr2.stderr or "")).splitlines()
@@ -2379,18 +2424,19 @@ elif fidelity == 'HF':
                     'r13_ct_odb_mtime': _mt2_txt,
                     'r13_ct_stale': _stale2,
                     'r13_ct_note': '%s / %s%s' % (
-                        _ct_src, ('stale(런 시작 이전 파일)' if _stale2 == '1' else
-                                  ('fresh(런 시작 이후 생성)' if _stale2 == '0' else 'mtime 미확인')),
+                        _ct_src,
+                        ('sidecar-validated LF (mtime<run start is normal)'
+                         if _ct_src.startswith('짝 LF') else
+                         ('stale(런 시작 이전 파일)' if _stale2 == '1' else
+                          ('fresh(런 시작 이후 생성)' if _stale2 == '0' else 'mtime 미확인'))),
                         '' if _kv2 else ' / KV 줄 없음: 스텝 없음 또는 S/프레임 없음(프로브 rc=%d)'
                         % _pr2.returncode)})
                 if not _kv2:
                     emit("[R-13:CT] !!! KV 줄이 없다 -> 판독 실패(스텝 없음/프레임 0/S 없음). "
                          "점별 txt 는 nan 으로 남기고 이유는 r13_ct_note 에 남긴다.")
             else:
-                emit("[R-13:CT] 판독 건너뜀 (probe=%s, odb=%s : 후보 %s / %s)"
-                     % (os.path.exists(_probe2), bool(_ct_odb), LF_ODB, BUCKLE_ODB))
-                _R13_CT['r13_ct_note'] = ('probe=%s odb=%s 로 판독 불가(파일 없음)'
-                                          % (os.path.exists(_probe2), bool(_ct_odb)))
+                emit("[R-13:CT] probe missing: %s" % _probe2)
+                _R13_CT['r13_ct_note'] = 'base_state_probe.py missing'
     except Exception as _probe2_err:
         emit("[R-13:CT] 판독 실패(무시): %s" % _probe2_err)
         #   예외로 끝나도 이유를 남긴다(기본 note 'probe 미실행' 은 이 경우 사실이 아니다).
@@ -2406,7 +2452,7 @@ elif fidelity == 'HF':
         name='Step-Postbuckle', 
         previous='Step-GlobalTension',  
         nlgeom=ON, 
-        stabilizationMagnitude=STABILIZE_POST,      # paper 2e-4 / physical 1.0 / old disp 0.01
+        stabilizationMagnitude=STABILIZE_POST,      # paper 2e-4 / physical 5e-4 / old disp 0.01
         #   근거: 실측 ALLSD/ALLIE = 0.50%% 인데 allsdtol = 5%% -> 인공감쇠가 약 10배의 여유를 남기고
         #   거의 작동하지 않았다. 즉 "감쇠가 컷백을 만든다"는 과거 반증은 "감쇠를 늘리면 도움이 될 것"을
         #   반증하지 않는다(다른 주장). allsdtol 이 상한을 걸어 자체 제한되므로 위험은 유계다.
@@ -2423,6 +2469,7 @@ elif fidelity == 'HF':
     )
     my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
 
+    #   paper HF 는 BC_Stabilize_Z 가 없다(u3-free). old disp HF 만 여기서 전막 u3 를 해제한다.
     if 'BC_Stabilize_Z' in my_model.boundaryConditions:
         my_model.boundaryConditions['BC_Stabilize_Z'].deactivate('Step-Postbuckle')
 
@@ -2442,9 +2489,9 @@ elif fidelity == 'HF':
             u3=0
         )
 
-    # 초기 상태에서 최종 장력(목표 7000 Pa, 미검증)까지 증가
-    #   [paper-match] cable_stress 모드에서는 _DISP_FINAL=0 -> Postbuckle 은 하중 변화가 없는
-    #     통과 스텝이다(주름은 GlobalTension 의 초기응력 평형화에서 이미 발달한다).
+    #   old disp: 최종 장력(목표 7000 Pa, 미검증)까지 증가.
+    #   paper: _DISP_FINAL=0 -> 하중 변화가 없는 **정착 스텝**이다. 주름은 GlobalTension 에서
+    #     이미 발달했고, get_hf/DN 은 이 Postbuckle 마지막 프레임을 읽는다.
     for name, sign in [('Disp_Control_Right', 1), ('Disp_Control_Left', -1)]:
         my_model.boundaryConditions[name].setValuesInStep(
             stepName='Step-Postbuckle',
@@ -2528,11 +2575,12 @@ elif fidelity == 'HF':
         if not inserted:
             my_model.keywordBlock.insert(len(my_model.keywordBlock.sieBlocks)-1, imp_text)
 
-    if not run_job_with_ladder('HF_Postbuckle'):
+    if not run_job_with_ladder(HF_JOB):
         emit("!!! ERROR: HF 완주 실패(안정화 사다리 소진) -> RESULTS:FAIL")
         _archive_result(x_c, d_c, 'HF_FAIL', 'nan,nan,nan,nan',
                         dict({'status': 'LADDER_EXHAUSTED',
-                              'stabilize_ladder': str(STABILIZE_LADDER)},
+                              'stabilize_global_ladder': str(STABILIZE_GLOBAL_LADDER),
+                              'stabilize_post_ladder': str(STABILIZE_POST_LADDER)},
                              **_r13_ct_keys()))
         emit("RESULTS:FAIL")
         sys.stdout.flush()

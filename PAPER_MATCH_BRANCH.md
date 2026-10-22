@@ -13,8 +13,8 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 | Membrane elements | STRI65 + S8R5 (2nd order), 10,100 | **S4/S3 (1st order), 10,100 / 10,201 nodes** (default); 2nd-order generator exists but is experimental |
 | Pre-tension load | cable initial stress 2.69e7 Pa (5PCS), cable ends fixed | **3 cables, sigma11 = 2.69e7 Pa**, ends fixed, no displacement ramp |
 | Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle **0.01 m** (paper 0.10 m reference; λ×P invariant); static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base); **LF and HF post-buckling: no vertex displacement** (initial stress only) |
-| BC | three edges u3 = 0 | **three edges u3 = 0 from Initial** (LF/HF paper path) |
-| Stabilization | 2e-4 | paper: **2e-4**; physical clamp model: **1.0** (clamp cutbacks) |
+| BC | three edges u3 = 0 | **LF: full-membrane u3=0 from Initial; HF paper: three edges only (u3-free); HF old disp: hold -> release** |
+| Stabilization | 2e-4 | **LF GlobalTension 1.0; HF GlobalTension 2e-4 ladder (2e-4/1e-3/1e-2); HF Postbuckle 5e-4 ladder (5e-4/2e-3/1e-2)** |
 | Clamps | none (5PCS) | paper reproduction: `NO_CLAMP = True`; physical model: `PAPER_INCLUDE_CLAMPS = True` (clamps + vertex cables; clamp prestress = `d_c × 2.69e7 Pa`) |
 | Imperfection | first 4 modes, 0.10 t | same; mode table = **seed + clamp_only composite** (2+2) |
 
@@ -27,6 +27,12 @@ PAPER_MESH_ORDER = 1        # 1차 기본 (2차는 실험용)
 CABLE_PRESTRESS = 2.69e7    # Pa; calibrate to 7000 Pa at CENTRE
 PAPER_STABILIZE = 2.0e-4
 USE_COMPOSITE_MODE_TABLE = True   # seed + clamp_only 합성표
+# [2026-10-21] u3-free HF 분기
+STABILIZE_GLOBAL_LF = 1.0             # LF: 기존 값 유지 (u3=0)
+STABILIZE_GLOBAL_LADDER = (2e-4, 1e-3, 1e-2)   # HF: 내리는 방향
+STABILIZE_POST_LADDER = (5e-4, 2e-3, 1e-2)
+# HF Step-GlobalTension initialInc=0.001 / maxNumInc=10000
+# LF Step-GlobalTension initialInc=0.01 / maxNumInc=1000 (회귀 기준선 보존)
 ```
 
 `code/run_abaqus_buckle.py`:
@@ -118,15 +124,13 @@ but it is **not** the mode-table source any more.
 
 `PAPER_INCLUDE_CLAMPS` splits the two models:
 
-| Model | `PAPER_INCLUDE_CLAMPS` | `PAPER_HOLD_U3_GLOBAL` | Clamps | Vertex cables | Use |
+| Model | `PAPER_INCLUDE_CLAMPS` | u3 policy (LF / HF) | Clamps | Vertex cables | Use |
 |---|---|---|---|---|---|
-| Paper 5PCS | `False` | `False` | no | 2.69e7 Pa initial stress | Galhofo comparison |
-| Physical | `True` | **`True`** | yes, **initial stress** `CLAMP_PRESTRESS = d_c * CABLE_PRESTRESS` | 2.69e7 Pa initial stress | MFBO / post-buckling |
+| Paper 5PCS | `False` | LF: full u3=0 / HF: three edges only (free) | no | 2.69e7 Pa initial stress | Galhofo comparison |
+| Physical | `True` | LF: full u3=0 / HF: three edges only (free) | yes, **initial stress** `CLAMP_PRESTRESS = d_c * CABLE_PRESTRESS` | 2.69e7 Pa initial stress | MFBO / post-buckling |
 
-`NO_CLAMP = not PAPER_INCLUDE_CLAMPS`; `PAPER_HOLD_U3_GLOBAL = bool(PAPER_INCLUDE_CLAMPS)`.
-Paper-only: 2e-4, three-edge BC, wrinkles form in `Step-GlobalTension`.
-Physical: 1.0, full-membrane u3=0 in `Step-GlobalTension` -> `Step-Postbuckle` releases
-`BC_Stabilize_Z`, wrinkles form in the postbuckle.
+`NO_CLAMP = not PAPER_INCLUDE_CLAMPS`. `_HOLD_U3_ALL` is fidelity-based: LF always holds the
+full membrane `u3=0`; HF paper is u3-free (three edges only); HF old disp holds then releases.
 Both cable families are initial-stress; the clamp displacement pull is removed
 (`CLAMP_PULL = CLAMP_FINAL = 0`). The composite mode table is the right basis for the physical model.
 
@@ -134,14 +138,14 @@ Both cable families are initial-stress; the clamp displacement pull is removed
 
 In the `cable_stress` path `_DISP_PRE = _DISP_FINAL = 0`, so **LF and HF** apply **no vertex
 displacement**. The LF uses the same initial-stress prestress path and keeps the full-membrane
-`u3=0` (paper path); its final state is `Step-GlobalTension`. The HF releases `BC_Stabilize_Z`
-in `Step-Postbuckle`. The load is the cable/clamp initial stress only. The BC path depends on
-`PAPER_HOLD_U3_GLOBAL`:
+`u3=0` (paper path); its final state is `Step-GlobalTension`. The HF paper path has **no
+full-membrane `u3=0` from Initial** (three edges only), so the wrinkles form in
+`Step-GlobalTension`; `Step-Postbuckle` is a no-load settling step. The old disp HF path keeps
+the old full hold and releases `BC_Stabilize_Z` in `Step-Postbuckle`. The load is the
+cable/clamp initial stress only.
 
-- `True` (physical default): `Step-GlobalTension` holds the full membrane u3=0 (flat pre-tension),
-  `Step-Postbuckle` releases `BC_Stabilize_Z`; the wrinkles form in the postbuckle.
-- `False` (paper-only): only the three edges are u3=0; the wrinkles form in `Step-GlobalTension`.
 
+`PAPER_HOLD_U3_GLOBAL` is no longer a switch; `_HOLD_U3_ALL` is the fidelity-based policy.
 
 - vertex cable initial stress **2.69e7 Pa**, ends fixed;
 - clamp cable initial stress **`d_c × 2.69e7 Pa`**, ends fixed.
@@ -155,7 +159,8 @@ baseline (`LOAD_MODE='disp'`) keeps the 1 mm `GLOBAL_FINAL`; it is not the paper
 |---|---|---|---|
 | LF (paper, `PAPER_INCLUDE_CLAMPS=True`) | `Step-GlobalTension` | cable 2.69e7 Pa + clamp `d_c*2.69e7 Pa`; full-membrane `u3=0`; no displacement | `RESULTS:lf1,lf2,lf3` + `ZK:` |
 | LF (old baseline) | `Step-HighTension` | displacement-driven; preserved when `PAPER_MATCH=False` | `RESULTS:lf1,lf2,lf3` (+ `ZK:` diagnostic) |
-| HF | `Step-Postbuckle` (last frame) | same prestress; `BC_Stabilize_Z` released | `RESULTS:lf1,lf2,lf3,hf`, `DN:`, and `ZK:` from the paired LF ODB |
+| HF (paper) | `Step-Postbuckle` (last frame; no-load settling) | no full u3=0 from Initial; three edges only; wrinkles form in GlobalTension | `RESULTS:lf1,lf2,lf3,hf`, `DN:`, `ZK:` from the paired LF ODB |
+| HF (old disp) | `Step-Postbuckle` (last frame) | full u3=0 hold -> release; final load ramp | same, archived as `HF_<tag>_u3free.odb` for paper |
 
 ### ZK (Zhang & Kiendl) definition
 
@@ -223,46 +228,95 @@ type aba\zk_metrics.txt
 :: 4) HF run
 abaqus cae noGUI=run_abaqus.py -- HF 0.5 0.5
 
-:: 5) manual base-state / post-buckle probes (BASE_PROBE=False)
+:: 5) manual base-state / post-buckle probes (R-13 is also live; see below)
 abaqus python base_state_probe.py aba\LF_Analysis_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
-abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-GlobalTension 1.0 1.0
-abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-Postbuckle 1.0 1.0
+abaqus python base_state_probe.py aba\HF_Postbuckle_u3free.odb Step-GlobalTension 1.0 1.0
+abaqus python base_state_probe.py aba\HF_Postbuckle_u3free.odb Step-Postbuckle 1.0 1.0
 ```
 
-### R-13 base-state probe is manual (`BASE_PROBE=False`)
+### R-13 base-state probe (live by default)
 
-`run_abaqus.py` ships with `BASE_PROBE=False`, so the automatic R-13 / R-13:CT
-probes (and the fixed `Buckle_Analysis.odb` lookup) do not run. This is intentional:
+`run_abaqus.py` ships with `BASE_PROBE=True`. The automatic R-13/R-13:CT now
+uses the **paired LF ODB first** (`lf_odb_is_current` sidecar); the fixed
+`Buckle_Analysis.odb` is **never** used as an implicit fallback. If the LF ODB
+is missing, R-13 skips instead of reading an untagged cross-point file.
 
 - The MFBO objective/training data are `RESULTS` (`lf1-3`, `hf`) only. R-13 is a
   human diagnostic; it does not change the model, ODB, `hf`, `DN`, or `ZK`.
-- The point `results_*.txt` now records `r13_ct_*=nan` + `r13_ct_note`; the
-  `all_results.csv` schema is unchanged.
+- LF is the HF prerequisite (`mfbo.py` runs it first); its `mtime < run start` is
+  normal and the sidecar tag is the freshness proof.
+- Set `BASE_PROBE=False` to disable the automatic probes for a production MFBO sweep.
+- The point `results_*.txt` records `r13_ct_*`; the `all_results.csv` schema is unchanged.
 
-Run the probe manually on a **point-consistent** ODB:
+Manual commands (same sources):
 
 ```bat
 :: paired LF prestress state (same x_c,d_c; no imperfection -> flat u_z baseline)
 abaqus python base_state_probe.py aba\LF_Analysis_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
 
 :: exact HF base if the point-tagged archive exists (includes imperfection + RF)
-abaqus python base_state_probe.py results\odb\HF_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
+abaqus python base_state_probe.py results\odb\HF_xc0p5_dc0p5_u3free.odb Step-GlobalTension 1.0 1.0
 
 :: HF post-buckle: u_z,ave / compression map
-abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-Postbuckle 1.0 1.0
+abaqus python base_state_probe.py aba\HF_Postbuckle_u3free.odb Step-Postbuckle 1.0 1.0
 ```
 
+For debugging only, `SOLARSAIL_BASE_ODB=<path>` overrides the R-13 source explicitly.
 The fixed `aba\Buckle_Analysis.odb` has **no point tag** (and the self-buckle job is
 `RUN_SELF_BUCKLE_JOB=False`), so do not use it as a per-point R-13 source.
 
 If `CENTRE(mid)` is not 7000 Pa, scale:
 `CABLE_PRESTRESS <- CABLE_PRESTRESS * 7000 / measured` and rerun (1–2 iterations).
 
+## LF regression baseline (before the u3-free change)
+
+The LF model must not change. Save the two LF points before/after the patch and compare
+`extraction.txt` / `zk_metrics.txt` numerically (the ODB bytes change because LF now also
+writes `RF`; the solve is unchanged).
+
+```bat
+cd code
+
+:: before the patch (previous commit / git stash), for each point:
+abaqus cae noGUI=run_abaqus.py -- LF 0.5 1.0
+copy aba\extraction.txt results\lf_baseline_xc0p5_dc1.extraction.txt
+copy aba\zk_metrics.txt results\lf_baseline_xc0p5_dc1.zk_metrics.txt
+
+abaqus cae noGUI=run_abaqus.py -- LF 0.5 2.0
+copy aba\extraction.txt results\lf_baseline_xc0p5_dc2.extraction.txt
+copy aba\zk_metrics.txt results\lf_baseline_xc0p5_dc2.zk_metrics.txt
+
+:: after the patch: remove the pre-patch LF ODBs (RF field was added), then rerun
+:: the same two LF points and diff the two txt files
+del /q aba\LF_Analysis*.odb
+```
+
+The LF keeps `Step-GlobalTension` `initialInc=0.01` / `maxNumInc=1000` and the old
+GlobalTension stabilization `1.0`; only the `RF` field output was added.
+
+## Imperfection amplitude sensitivity (HF u3-free)
+
+The HF is free from the start, so the imperfection pattern—not just its role as a
+tie-breaker—selects the wrinkle mode. Run the same point with
+`IMPERFECTION_AMPL_T = 0.1` and `0.5` and compare `hf`, `u_z,ave`, and `DN`:
+
+```bat
+:: edit IMPERFECTION_AMPL_T in code/run_abaqus.py, then:
+abaqus cae noGUI=run_abaqus.py -- HF 0.5 1.0
+abaqus python base_state_probe.py aba\HF_Postbuckle_u3free.odb Step-Postbuckle 1.0 1.0
+```
+
+The mode table does not need regeneration (the amplitude is applied in `build_perturbation`).
+If the result depends on the amplitude, it is **initial-condition dependence**, not physics.
+
 ## Verification done locally (no Abaqus)
 
 > 2026-10-21 변경분 중 `check_model_consistency.py`와 `make_seed.py --dry-run`은 사용자 PC에서
 > 확인했다. `buckle_stub_harness.py`는 첫 실행에서 mock 결함(`Assembly.Set` 이 `.nodes` 를
 > 보존하지 않음 / `getClosest` 반환형)이 드러나 보정했으므로 **재실행**이 필요하다.
+> **u3-free 변경분(LF u3=0 / HF free, GlobalTension 사다리, `HF_Postbuckle_u3free`)은 이
+> 환경에서 실행하지 못했다.** 사용자 PC에서 LF baseline 2점 -> patch -> 재실행 비교,
+> HF `0.5 1.0`, `IMPERFECTION_AMPL_T=0.1/0.5` 순으로 확인한다.
 > 남은 명령:
 > `python -m py_compile run_abaqus.py eval_abaqus.py aba_imperfection.py mfbo.py eval_lf_stub.py run_abaqus_buckle.py check_model_consistency.py buckle_stub_harness.py make_seed.py`,
 > `python eval_lf_stub.py`, `python buckle_stub_harness.py paper 0.5`,
@@ -301,8 +355,9 @@ If `CENTRE(mid)` is not 7000 Pa, scale:
    is **0.0001 m**, which gives 10 symmetric pairs (R5). λ is negative there, so
    `aba_mode_from_odb.py` has `ALLOW_NEGATIVE = True`; only the shapes are used.
    Do not change `MODE_PRESTRESS` without re-checking the pair symmetry and the λ sign.
-4. **No stabilization ladder**: `(2e-4,)` only. A failure yields `RESULTS:FAIL` by design;
-   extend to `(2e-4, 5e-4, 1e-3)` if needed, and record which level completed.
+4. **Stabilization ladder**: HF GlobalTension `(2e-4, 1e-3, 1e-2)` and Postbuckle
+   `(5e-4, 2e-3, 1e-2)` are paired; `ALLSD/ALLIE` is read on **both** steps. >5% is recorded
+   as `SUSPECT` (a fake, damping-supported solution); check `stabilize_used.txt`/CSV.
 5. **LF is also 1st order** on this branch (same model).
 6. **Thickness is still 5 µm** (paper 2.5 µm). Amplitude comparisons must be thickness-normalised.
 7. **Stale LF ODB**: LF ODB names do not encode the model version. The LF reuse is guarded by

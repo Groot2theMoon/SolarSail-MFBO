@@ -93,7 +93,9 @@ python mfbo.py
     *   **HF 모드:** `Step-GlobalTension` -> `Step-ClampTension` -> `Step-Buckle` (모드 추출) / `Step-GlobalTension` -> Imperfection 주입 -> `Step-Postbuckle` (비선형 해석).
 *   **주의:** `*IMPERFECTION` 키워드 삽입 로직(삽입 위치 등)은 Abaqus 버전에 따라 민감할 수 있음.
 *   **Imperfection:** `IMPERFECTION_MODE='odb_table'`(기본) → `seeds/modes_xc<tag>.txt` 합성표를 `part.editNode`로 주입한다. `MODE_SOURCE_ODB`/`.fil`은 `odb_direct`/`file` 경로에서만 사용한다.
-*   **R-13 진단:** `BASE_PROBE=False`(기본). 베이스 상태는 `base_state_probe.py`로 **검증된 ODB**(짝 LF 또는 포인트 HF 아카이브)에 수동 실행한다. 고정 `Buckle_Analysis.odb`는 포인트 태그가 없어 per-point 진단에 쓰지 않는다.
+*   **u3 정책:** LF는 Initial부터 전막 `u3=0`; HF paper는 3변만 `u3=0`으로 처음부터 자유; HF `Step-Postbuckle`은 no-load settling이다.
+*   **HF imperfection 민감도:** HF가 처음부터 자유이므로 `IMPERFECTION_AMPL_T=0.1`과 `0.5`에서 `hf`/`u_z,ave`/`DN`이 달라지는지 확인한다(달라지면 초기조건 의존성).
+*   **R-13 진단:** `BASE_PROBE=True`(live). 짝 LF ODB를 첫 후보로 읽고, 없으면 skip한다. 디버깅은 `SOLARSAIL_BASE_ODB`; MFBO 스윕에서는 `False`로 끌 수 있다. 고정 `Buckle_Analysis.odb`는 포인트 태그가 없어 쓰지 않는다.
 
 ### 3. `eval_abaqus.py` (Post-Processing)
 *   **역할:** run_abaqus.py 로 생성된 ODB 파일을 열어 수치적 성능 지표 계산.
