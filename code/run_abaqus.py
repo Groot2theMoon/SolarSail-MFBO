@@ -260,14 +260,14 @@ IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t �
 #     0.01 -> 완주. 감쇠가 지배 변수임이 단일 변수 실험으로 확정됐다. 첫 레벨로 제출하고
 #     실패하면 다음 레벨로 승급한다(각 레벨의 선택 결과를 로그에 남긴다).
 STABILIZE_LADDER = ((PAPER_STABILIZE,) if (PAPER_MATCH and not PAPER_INCLUDE_CLAMPS)
-                    else ((1.0,) if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS)
+                    else ((0.0005,) if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS)
                           else (0.01,)))
 #   실제 스텝에 들어가는 값 (2026-10-20: 기존 하드코딩 0.0002 를 대체).
 #     paper-only  : 2e-4 (논문값)
 #     physical    : 1.0  (클램프 컷백 회피, 97.7t 기준선)
 #     old disp    : GlobalTension 2e-4 / Postbuckle 0.01 (종전 그대로)
-STABILIZE_GLOBAL = 1.0 if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS) else 0.0002
-STABILIZE_POST = (1.0 if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS)
+STABILIZE_GLOBAL = 0.0005 if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS) else 0.0002
+STABILIZE_POST = (0.0005 if (PAPER_MATCH and PAPER_INCLUDE_CLAMPS)
                   else (PAPER_STABILIZE if PAPER_MATCH else 0.01))
 #   [2026-10-12 §19.57 **되돌림**] 0.1 로 낮췄다가 되돌린다. 바로 아래 2026-10-06 실측이 반대를 말한다:
 #   0.10 -> 증분 눌림 2215 증분/약 90분 + 초기 결함이 약해 분기가 늦게 갈라져 수렴이 어려움,
@@ -2409,10 +2409,10 @@ elif fidelity == 'HF':
         #   판정: 초기 100~200 증분의 증분 상한이 3e-4 이상으로 회복되는가 (10~20분) + energy_check.py
         stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
         continueDampingFactors=False,
-        adaptiveDampingRatio=0.05,
+        adaptiveDampingRatio=0.002,
         initialInc=1e-4,
         minInc=1e-8,          # R-9: 1e-15 는 발산 시 증분 소진까지 수시간
-        maxInc=0.1,
+        maxInc=0.01,
         maxNumInc=10000       # R-9 / [2026-09-28] 1000 -> 10000
         # 상한 상향은 해결책이 아니라 연장이다 — 실제 원인은 국소 불안정으로 증분이 눌리는 것(§13).
         #   ALLSD/ALLIE 가 0.50%(허용 5%)라 allsdtol 상향은 binding 이 아니다(폐기된 레버).
