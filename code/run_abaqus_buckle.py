@@ -116,9 +116,10 @@ CABLE_AREA = np.pi * (CABLE_RADIUS**2)
 LEN_TOP = 0.280 # m
 LEN_BOT = 0.689 # m
 CLAMP_CABLE_LEN = 0.5 # m — 클램프 케이블 길이(HF 와 같아야 한다 — 검사기 HF↔buckle 계약).
-PRETENSION_MODE = 'paper3'    # 'paper3'(논문 3점 2:1) | 'corner2'(종전 √2)
-if PRETENSION_MODE not in ('corner2', 'paper3'):
-    raise RuntimeError("PRETENSION_MODE must be 'corner2' or 'paper3' (got %r)" % (PRETENSION_MODE,))
+#   PRETENSION_MODE 는 **CASE 표가 소유**한다(아래 _ROUTE 에서 파생). 자유 상수로 두지 않는다.
+#   clamp_only 에 paper3(3점 2:1)를 물리면 BC_Anchor_Top 이 앵커에서 구동으로 바뀌어
+#   base state 가 깨진다(실측: 2회 연속 job 중단). 케이스가 자기 pretension 을 들고 있어야
+#   이런 조합이 애초에 만들어지지 않는다.
 DISP_TOP_OVER_CORNER = 2.0    # 상단/코너 지정변위 비. 논문 2:1 / 종전 1.4142135623
 
 # ---- 프리텐션 (CLI 두 번째 인자로 덮어쓴다) ----
@@ -274,11 +275,11 @@ _CASE_TABLE = {
     #  paper      : 논문(Galhofo) 좌굴모델 — **케이블·클램프 없이** 꼭짓점 강체패치 RP 를 직접 구동.
     #               3점(상단 2:1) + Buckle 스텝 5개 전부 0.10 m. PAPER_MATCH=True 의 기본 케이스.
     'seed':       dict(cables=True,  clamps=False, clamp_load='none', corner_dir='hf',
-                       live_driver='corner'),
+                       live_driver='corner', pretension='corner2'),
     'paper':      dict(cables=False, clamps=False, clamp_load='none', corner_dir='hf',
-                       live_driver='corner'),
+                       live_driver='corner', pretension='paper3'),   # 논문 3점 2:1 재현
     'clamp_only': dict(cables=False, clamps=True,  clamp_load='base', corner_dir='hf',
-                       live_driver='clamp', clamp_cable=True),
+                       live_driver='clamp', clamp_cable=True, pretension='corner2'),
 }
 
 
@@ -296,6 +297,10 @@ CLAMP_LOAD = _ROUTE['clamp_load']   # 'none' | 'live' (live = 클램프를 집�
 CORNER_DIR = _ROUTE['corner_dir']   # 모든 현행 케이스가 'hf'(28.6도)
 LIVE_DRIVER = _ROUTE.get('live_driver', 'corner')   # 'corner'(기존 케이스) | 'clamp'(clamp_live)
 HAS_CLAMP_CABLES = bool(_ROUTE.get('clamp_cable', False))
+PRETENSION_MODE = _ROUTE['pretension']   # CASE 가 소유한다 — 자유 상수 아님.
+if PRETENSION_MODE not in ('corner2', 'paper3'):
+    raise RuntimeError("CASE=%r: pretension must be 'corner2' or 'paper3' (got %r)"
+                       % (CASE, PRETENSION_MODE))
 
 def _require_constant(name, have, want):
     """케이스가 요구하는 상수 조합. 무효 조합은 조용한 오답 대신 즉시 예외로 막는다."""
@@ -304,8 +309,9 @@ def _require_constant(name, have, want):
                            "  -> 상수부를 고치거나 CASE 를 바꾸세요." % (CASE, name, want, have))
 
 
-#   PRETENSION_MODE 는 정의부에서 'corner2'|'paper3' 도메인 검사를 이미 한다.
-#   (예전에는 PAPER_MATCH 프리셋과의 일치를 강제했으나, 상수를 독립시켜 그 결합을 없앴다.)
+#   PRETENSION_MODE 는 CASE 표에서 파생되며 그 지점에서 도메인 검사를 한다.
+#   (예전에는 PAPER_MATCH 프리셋과의 일치를 강제했고, 그 뒤 자유 상수로 두는 바람에
+#    clamp_only 에 paper3 가 섞여 job 이 중단됐다. 지금은 CASE 가 소유해 조합 자체가 없다.)
 _require_constant('CORNER_ANGLE_DEG', CORNER_ANGLE_DEG, 28.6)
 
 if HAS_CLAMP_CABLES and not HAS_CLAMPS:

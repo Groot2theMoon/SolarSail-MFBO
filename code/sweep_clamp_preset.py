@@ -1,25 +1,26 @@
 # -*- coding: utf-8 -*-
-"""clamp 프리셋과 CLAMP_PULL 이 클램프 좌굴모드를 깨뜨리는지 격리 검증(OFAT).
+"""clamp 좌굴모드가 깨지는 원인을 격리 검증(OFAT) — CASE='clamp_only' 고정.
 
-배경
-    1차 스윕 결과 λ×PERT 가 네 arm 에서 전부 2.0962e-07 m 로 동일했다.
-    즉 PERTURBATION 은 스케일일 뿐이고 DISP_TOP / STAB 은 λ에 영향이 없었다.
-    원인 후보는 CLAMP_PULL=0 하나뿐이므로 그 arm 을 추가한다.
+현재 상태 (2026-10-22 실측)
+    PRETENSION_MODE 는 **CASE 표가 소유**한다(_ROUTE['pretension']).
+      paper      -> paper3   (논문 Fig.12 3점 2:1 재현)
+      clamp_only -> corner2  (상단 앵커 고정)
+    따라서 clamp_only + paper3 조합은 구조적으로 만들 수 없다. 이 스윕은
+    나머지 자유 상수만 흔든다.
 
 설계 (CASE='clamp_only' 고정)
 
-    arm 0 base   : corner2 / 1.4142 / 0.01 / 5e-4  pull=기본   <- 대조군
-    arm 1 user   : corner2 / 2.0    / 0.1  / 2e-4  pull=기본   <- 요청 3종 동시
-    arm 2 top    : corner2 / 2.0    / 0.01 / 5e-4  pull=기본   <- DISP_TOP 만
-    arm 3 pert   : corner2 / 1.4142 / 0.1  / 5e-4  pull=기본   <- PERTURBATION 만
-    arm 4 stab   : corner2 / 1.4142 / 0.01 / 2e-4  pull=기본   <- MODE_STABILIZATION 만
-    arm 5 paper3 : paper3  / 1.4142 / 0.01 / 5e-4  pull=기본   <- PRETENSION_MODE 만
-    arm 6 dc0    : corner2 / 1.4142 / 0.01 / 5e-4  pull=0      <- CLAMP_PULL=0 (진범 후보)
+    arm 0 base : 1.4142 / 0.01 / 5e-4  pull=기본   <- 대조군
+    arm 1 user : 2.0    / 0.1  / 2e-4  pull=기본   <- 사용자 요청 3종 동시
+    arm 2 top  : 2.0    / 0.01 / 5e-4  pull=기본   <- DISP_TOP_OVER_CORNER 만
+    arm 3 pert : 1.4142 / 0.1  / 5e-4  pull=기본   <- PERTURBATION 만
+    arm 4 stab : 1.4142 / 0.01 / 2e-4  pull=기본   <- MODE_STABILIZATION 만
+    arm 5 dc0  : 1.4142 / 0.01 / 5e-4  pull=0      <- CLAMP_PULL=0
 
 사용
     python sweep_clamp_preset.py --dry-run
-    python sweep_clamp_preset.py                 # 7 arm
-    python sweep_clamp_preset.py --arms 0,5,6    # 실패 arm + dc0 재확인
+    python sweep_clamp_preset.py                 # 6 arm
+    python sweep_clamp_preset.py --arms 0,5      # 일부만
     python sweep_clamp_preset.py --no-retry      # 자동 재시도 끄기
 
 판정
@@ -31,6 +32,7 @@
     - run_abaqus_buckle.py 는 **바이트 단위로 원복**한다(finally).
     - 고유값이 0개면 1회 자동 재시도한다(완료 마커 미기록 같은 일시 중단 대비).
     - 각 arm 의 .dat/.msg 를 sweep_out/ 에 복사한다(잡 이름이 겹쳐도 보존).
+    - P_crit = λ_min x PERTURBATION. 이 값이 일정하면 PERT 는 스케일일 뿐이다.
 """
 from __future__ import print_function
 
@@ -48,15 +50,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BUCKLE = os.path.join(HERE, 'run_abaqus_buckle.py')
 OUTDIR = os.path.join(HERE, 'sweep_out')
 
-# name, PRETENSION_MODE, DISP_TOP_OVER_CORNER, PERTURBATION, MODE_STABILIZATION, CLAMP_PULL
+# name, DISP_TOP_OVER_CORNER, PERTURBATION, MODE_STABILIZATION, CLAMP_PULL(None=--clamp-pull)
 ARMS = [
-    ('base',   'corner2', 1.4142135623, 0.01, 5.0e-4, None),
-    ('user',   'corner2', 2.0,          0.1,  2.0e-4, None),
-    ('top',    'corner2', 2.0,          0.01, 5.0e-4, None),
-    ('pert',   'corner2', 1.4142135623, 0.1,  5.0e-4, None),
-    ('stab',   'corner2', 1.4142135623, 0.01, 2.0e-4, None),
-    ('paper3', 'paper3',  1.4142135623, 0.01, 5.0e-4, None),
-    ('dc0',    'corner2', 1.4142135623, 0.01, 5.0e-4, 0.0),
+    ('base', 1.4142135623, 0.01, 5.0e-4, None),
+    ('user', 2.0,          0.1,  2.0e-4, None),
+    ('top',  2.0,          0.01, 5.0e-4, None),
+    ('pert', 1.4142135623, 0.1,  5.0e-4, None),
+    ('stab', 1.4142135623, 0.01, 2.0e-4, None),
+    ('dc0',  1.4142135623, 0.01, 5.0e-4, 0.0),
 ]
 
 NEG_FATAL = 100   # 이 이상이면 base state 불안정(실측: 실패 1870 / 정상 3)
@@ -69,11 +70,9 @@ def _sub1(pat, rep, s, what):
     return new
 
 
-def patch_constants(txt, pret, top, pert, stab):
-    """CASE 를 clamp_only 로 고정하고 프리셋 상수 4개만 덮어쓴다."""
+def patch_constants(txt, top, pert, stab):
+    """CASE 를 clamp_only 로 고정하고 자유 상수 3개만 덮어쓴다."""
     txt = _sub1(r"^CASE\s*=\s*'[^']*'", "CASE = 'clamp_only'", txt, 'CASE')
-    txt = _sub1(r"^PRETENSION_MODE\s*=\s*'[^']*'",
-                "PRETENSION_MODE = '%s'" % pret, txt, 'PRETENSION_MODE')
     txt = _sub1(r"^DISP_TOP_OVER_CORNER\s*=.*$",
                 "DISP_TOP_OVER_CORNER = %.10g" % top, txt, 'DISP_TOP_OVER_CORNER')
     txt = _sub1(r"^PERTURBATION\s*=.*$",
@@ -149,10 +148,9 @@ def verdict(eigs, neg, err):
 
 def run_arm(i, a):
     """한 arm 실행. 반환: (eigs, neg, err, datp, secs)."""
-    name, pret, top, pert, stab, pull0 = ARMS[i]
+    name, top, pert, stab, pull0 = ARMS[i]
     pull = a.clamp_pull if pull0 is None else pull0
-    txt = patch_constants(io.open(BUCKLE, 'r', encoding='utf-8').read(),
-                          pret, top, pert, stab)
+    txt = patch_constants(io.open(BUCKLE, 'r', encoding='utf-8').read(), top, pert, stab)
     with io.open(BUCKLE, 'w', encoding='utf-8') as f:
         f.write(txt)
     cmd = 'abaqus cae noGUI=run_abaqus_buckle.py -- %g %g %g %g' % (
@@ -183,7 +181,7 @@ def main(argv=None):
     ap.add_argument('--clamp-pull', type=float, default=5.56e-6, dest='clamp_pull',
                     help='기본 CLAMP_PULL [m] (arm 의 pull 이 None 일 때). 1e-4*0.0556')
     ap.add_argument('--excl', type=float, default=0.21)
-    ap.add_argument('--arms', default='', help='예: 0,5,6 (생략하면 전부)')
+    ap.add_argument('--arms', default='', help='예: 0,5 (생략하면 전부)')
     ap.add_argument('--no-retry', dest='retry', action='store_false', default=True,
                     help='고유값 0개일 때 자동 재시도 끄기')
     ap.add_argument('--dry-run', action='store_true')
@@ -203,18 +201,19 @@ def main(argv=None):
     orig = io.open(BUCKLE, 'rb').read()
     print('[sweep] x_c=%g  disp=%.4g  pull(기본)=%.4e  excl=%.2f  arms=%s'
           % (a.x_c, a.disp, a.clamp_pull, a.excl, idx))
-    print('[sweep] 고정: CASE=clamp_only.  음수 고유값 임계=%d' % NEG_FATAL)
+    print('[sweep] CASE=clamp_only 고정, PRETENSION_MODE=corner2(CASE 소유). 음수 임계=%d'
+          % NEG_FATAL)
     results = []
 
     try:
         for i in idx:
-            name, pret, top, pert, stab, pull0 = ARMS[i]
+            name, top, pert, stab, pull0 = ARMS[i]
             pull = a.clamp_pull if pull0 is None else pull0
-            print('\n===== arm %d/%d  %s : PRET=%s  DISP_TOP=%.10g  PERT=%.4g  STAB=%.4g  pull=%.3e ====='
-                  % (i, len(ARMS) - 1, name, pret, top, pert, stab, pull))
+            print('\n===== arm %d/%d  %s : DISP_TOP=%.10g  PERT=%.4g  STAB=%.4g  pull=%.3e ====='
+                  % (i, len(ARMS) - 1, name, top, pert, stab, pull))
             if a.dry_run:
-                patch_constants(orig.decode('utf-8'), pret, top, pert, stab)
-                results.append((name, pret, top, pert, stab, pull, 0, 'DRY', '', 0.0))
+                patch_constants(orig.decode('utf-8'), top, pert, stab)
+                results.append((name, top, pert, stab, pull, 0, 'DRY', '', 0.0))
                 continue
             eigs, neg, err, datp, secs = run_arm(i, a)
             if datp:
@@ -229,18 +228,18 @@ def main(argv=None):
             if pcrit:
                 print('  P_crit = λ_min x PERT = %.4e m' % pcrit)
             print('  => %s (%s)' % (v, why))
-            results.append((name, pret, top, pert, stab, pull, len(eigs), v, why, pcrit))
+            results.append((name, top, pert, stab, pull, len(eigs), v, why, pcrit))
     finally:
         with open(BUCKLE, 'wb') as f:
             f.write(orig)
         print('\n[sweep] run_abaqus_buckle.py 원복 완료 (%d bytes)' % len(orig))
 
     print('\n===== 요약 =====')
-    print('%-7s %-8s %-9s %-6s %-8s %-10s %3s  %-5s %-11s %s'
-          % ('arm', 'PRET', 'DISP_TOP', 'PERT', 'STAB', 'PULL', 'n', '판정', 'P_crit[m]', '비고'))
-    for (name, pret, top, pert, stab, pull, n, v, why, pcrit) in results:
-        print('%-7s %-8s %-9.6g %-6.4g %-8.4g %-10.3e %3d  %-5s %-11s %s'
-              % (name, pret, top, pert, stab, pull, n, v,
+    print('%-7s %-10s %-6s %-8s %-10s %3s  %-5s %-11s %s'
+          % ('arm', 'DISP_TOP', 'PERT', 'STAB', 'PULL', 'n', '판정', 'P_crit[m]', '비고'))
+    for (name, top, pert, stab, pull, n, v, why, pcrit) in results:
+        print('%-7s %-10.6g %-6.4g %-8.4g %-10.3e %3d  %-5s %-11s %s'
+              % (name, top, pert, stab, pull, n, v,
                  ('%.4e' % pcrit) if pcrit else '-', why))
 
     print('\n해석')
