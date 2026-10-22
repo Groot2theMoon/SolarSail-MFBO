@@ -221,10 +221,12 @@ def main(argv=None):
     ap.add_argument('--disp', type=float, default=None,
                     help='buckle 코너 당김 [m]. 생략하면 run_abaqus_buckle.py 의 DISP_GLOBAL')
     ap.add_argument('--excl', type=float, default=0.21)
-    ap.add_argument('--seed-clamp-dc', type=float, default=0.0, dest='seed_clamp_dc',
-                    help='[§19.69/§19.70] 시드 클램프 당김 비율. 기본 0.0 = §19.52 에서 실제로 100/100 을 '
-                         '낸 설정(clamp_only, dc000). HF 의 d_c 와 분리한다 - 맞추면 d_c=0.5 급에서 '
-                         '클램프 base 가 퇴화해 선형모드가 0개 나온다(실측).')
+    ap.add_argument('--seed-clamp-dc', type=float, default=0.0556, dest='seed_clamp_dc',
+                    help='시드 클램프 당김 비율. 기본 0.0556 = CLAMP_DC 와 같은 값 = HF 의 클램프 '
+                         '하중 경로를 그대로 쓴다. 2026-10-22 실측: disp=1e-4 에서 pull=5.56e-6 '
+                         '(0.0556) -> 5모드 PASS / pull=0 -> 10모드 PASS 이지만 클램프 무응력이라 '
+                         'HF 하중 상태를 대표하지 못한다. d_c=0.5 급(0.5)로 키우면 클램프 base 가 '
+                         '퇴화해 모드가 0개가 된다(실측).')
     ap.add_argument('--force', action='store_true', help='캐시 무시하고 재생성')
     ap.add_argument('--dry-run', action='store_true', help='명령만 출력(라이선스 0)')
     ap.add_argument('--refresh-seed-family', action='store_true',

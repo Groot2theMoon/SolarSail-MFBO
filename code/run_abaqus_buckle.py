@@ -72,7 +72,8 @@ MESH_ORDER = 1                # 1차 S4/S3. 2차는 base state 불안정으로 �
 #     SYSTEM MATRIX 592 negative eigenvalues / DIFFERENTIAL MATRIX 166,009 negative diagonals
 #     -> subspace "THE EIGENVALUES CANNOT BE FOUND" (0 modes). 1e-3 m 에서도 0개였던 §8 실측과 같은 영역.
 #   모드는 임퍼펙션의 **형상 기저**일 뿐이고 진폭은 HF 가 0.1 t 로 따로 주므로,
-#   모드 추출은 안정 운용점(1.8e-5 m)에서 하고 2:1 형상만 논문과 맞춘다.
+#   모드 추출은 안정 운용점(1.0e-4 m)에서 한다. 두 가족 모두 이 값에서 검증됐다
+#   (seed 4모드 / clamp 5~10모드). 1.8e-5 는 seed 에서만 확인된 값이라 쓰지 않는다.
 PAPER_STATIC_DISP = 0.0005    # 논문 Fig. 12 정적 스텝 코너값 (D4: 모드 추출에 사용)
 MODE_PRESTRESS = 0.0001       # 2026-10-20: 대칭 10모드 확인된 운용점 (λ 쌍 −1.5867e-4 등)
 
@@ -145,7 +146,9 @@ CLAMP_DC = 0.0556  # d_c — 클램프 당김 비율 (CLAMP_PULL = 코너 당김
 CLAMP_DIR = 'normal'
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
-PERTURBATION = 0.10           # m — Buckle 스텝 섭동. 논문 0.10 / 종전 0.01
+PERTURBATION = 0.01           # m — Buckle 스텝 섭동. 0.10(논문)과 0.01 모두 PASS 했고
+                              #   λ×P 가 불변이라 **고유벡터는 동일**하다. λ 가 큰 쪽(0.01)을
+                              #   고른 이유는 준영모드(−1e-8 급)와 수치적으로 더 멀기 때문이다.
 
 PATTERN_SIGN = 1.0            # 좌굴 '하중 패턴' 부호: 1.0 = 바깥으로 더 당김
 
@@ -171,7 +174,19 @@ if BUCKLE_SOLVER not in ('SUBSPACE', 'LANCZOS'):
                        % (BUCKLE_SOLVER,))
 EIGENSOLVER_CONST = {'SUBSPACE': SUBSPACE, 'LANCZOS': LANCZOS}[BUCKLE_SOLVER]
 
-MODE_STABILIZATION = 2.0e-4   # 논문 2e-4 / 종전 5e-4
+MODE_STABILIZATION = 5.0e-4   # 2e-4(논문)와 5e-4 모두 PASS. 검증 런이 전부 5e-4 였으므로
+                              #   그 값을 고정값으로 쓴다(λ 에는 영향 없음 — 실측).
+
+# ---- ⓘ FROZEN RECIPE (2026-10-22 고정) ----
+#   시드/임퍼펙션 생성 설정을 더 흔들지 않는다. 아래 런들로 확정했다.
+#     seed  (CASE=paper,      paper3 )  disp=1e-4                    -> 4모드, λ −1.59e-4
+#     clamp (CASE=clamp_only, corner2)  disp=1e-4, pull=5.56e-6      -> 5모드, λ +2.10e-5
+#     clamp (CASE=clamp_only, corner2)  disp=1e-4, pull=0            -> 10모드, λ +3.29e-4
+#   실패한 조합은 전부 clamp_only+paper3 였고, 이제 CASE 가 pretension 을 소유하므로
+#   그 조합 자체가 만들어지지 않는다.
+#   ★ PERTURBATION 은 λ 만 1/P 로 스케일하고 **고유벡터는 바꾸지 않는다**(λ×P 실측 불변).
+#     따라서 이 값을 바꿔도 시드표를 재생성할 필요가 없다. 모드 형상이 바뀌는 것은
+#     CASE(=pretension) / DISP / CLAMP_PULL / x_c 뿐이다.
 
 # ---- ⑥ 모드 판정 ----
 # ---- 판정 임계값 (계획 §4: 3번 런 결과 뒤에 확정한다 — 지금은 잠정값) ----
