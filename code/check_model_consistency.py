@@ -321,7 +321,7 @@ def main():
         m = re.search(r'RUN_DIR_NAME\s*=\s*["\']([^"\']+)["\']', txt)
         return m.group(1) if m else None
     ra, rb = _run_dir_of(NEW), _run_dir_of(BUCKLE)
-    print("  run_abaqus_new.py     RUN_DIR_NAME = %s" % ra)
+    print("  run_abaqus.py         RUN_DIR_NAME = %s" % ra)
     print("  run_abaqus_buckle.py  RUN_DIR_NAME = %s" % rb)
     bad3 = []
     if ra is None or rb is None:

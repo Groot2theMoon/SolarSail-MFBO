@@ -233,24 +233,25 @@ If `CENTRE(mid)` is not 7000 Pa, scale:
 
 ## Verification done locally (no Abaqus)
 
-> 2026-10-21 변경분(LF paper path, ZK, sidecar, buckle refactor)은 이 세션에 bash 가 없어
-> 실행하지 못했다. 사용자 PC에서 먼저 실행한다:
+> 2026-10-21 변경분 중 `check_model_consistency.py`와 `make_seed.py --dry-run`은 사용자 PC에서
+> 확인했다. `buckle_stub_harness.py`는 첫 실행에서 mock 결함(`Assembly.Set` 이 `.nodes` 를
+> 보존하지 않음 / `getClosest` 반환형)이 드러나 보정했으므로 **재실행**이 필요하다.
+> 남은 명령:
 > `python -m py_compile run_abaqus.py eval_abaqus.py aba_imperfection.py mfbo.py eval_lf_stub.py run_abaqus_buckle.py check_model_consistency.py buckle_stub_harness.py make_seed.py`,
-> `python check_model_consistency.py`,
 > `python eval_lf_stub.py`, `python buckle_stub_harness.py paper 0.5`,
-> `python buckle_stub_harness.py clamp_only 0.5`, `python buckle_stub_harness.py seed 0.5`,
-> `python make_seed.py --x_c 0.5 --d_c 1.0 --dry-run`.
+> `python buckle_stub_harness.py clamp_only 0.5`, `python buckle_stub_harness.py seed 0.5`.
 
 - `py_compile` on all modified scripts: OK (이전 기준선).
-- `check_model_consistency.py`: 2026-10-21 buckle 리팩토링으로 free-mesh SHARED 9항목을
-  제거했다. PASS 여부/개수는 checker 출력을 기준으로 한다(이전 기준선은 HF↔buckle 30 /
-  HF↔mode source 27).
+- `check_model_consistency.py`: **PASS — HF↔buckle 21 / HF↔mode source 18** (2026-10-21 사용자 런).
+  free-mesh SHARED 9항목 제거 후 예상치와 일치한다.
 - `aba_grid_mesh.py --write --order 2` (optional 2nd-order generator): 30,501 nodes / 9,900 S8R5 + 200 STRI65;
   all checked mid-side nodes are exact edge midpoints; shared edges used twice, boundary edges once.
 - `buckle_stub_harness.py paper|clamp_only|seed 0.5` (1st order): the paper trace is
   Initial (top fixed, corners 0, edges u3=0) → Static (top 0.0002, corners 0.0001) →
   Buckle (top 0.01, corners 0.01). The clamp_only/seed traces are in the harness `[배선]`
   output. Lambda/convergence are NOT verified by the harness.
+  Mock fixes (2026-10-21): `Assembly.Set` keeps `.nodes`; `NodeArray.getClosest` returns
+  `(node, distance)`. Rerun the harness after these fixes.
   The PULL_TOP harness (`buckle_pull_top_stub.py`) was deleted with the feature.
 - `eval_lf_stub.py` (new; run `python3 eval_lf_stub.py`): checks that a fake ODB selects
   `Step-GlobalTension` when `Step-HighTension` is absent and `Step-HighTension` when present;

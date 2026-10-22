@@ -148,7 +148,9 @@ class NodeArray(object):
                  + (n.coordinates[2] - (c[2] if len(c) > 2 else 0.0)) ** 2)
             if bd is None or d < bd:
                 best, bd = n, d
-        return [(best, bd ** 0.5)]
+        #   실제 Abaqus getClosest 는 (node, distance) 형태다.
+        #   run_abaqus_buckle.create_rigid_patch 의 Left 미러 보정이 `_mn[0].label` 로 푼다.
+        return (best, bd ** 0.5)
 
     def sequenceFromLabels(self, labels):
         return NodeArray([self._by_label[l] for l in labels])
@@ -298,6 +300,9 @@ class Assembly(Obj):
     def Set(self, **kw):
         self._log.add(self._name, 'Set', (), kw)
         s = Obj('%s.Set(%s)' % (self._name, kw.get('name')), self._log)
+        #   실제 a.Set(nodes=...) 은 .nodes 를 돌려준다. create_rigid_patch 의 Left 미러
+        #   보정이 `a.sets['Right_Nodes'].nodes` 를 **순회**하므로 목도 보존해야 한다.
+        object.__setattr__(s, 'nodes', kw.get('nodes'))
         if kw.get('name') is not None:
             self.sets[kw['name']] = s
         return s
