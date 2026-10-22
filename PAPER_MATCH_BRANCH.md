@@ -223,10 +223,37 @@ type aba\zk_metrics.txt
 :: 4) HF run
 abaqus cae noGUI=run_abaqus.py -- HF 0.5 0.5
 
-:: 5) probe the pre-tension and post-buckle states
+:: 5) manual base-state / post-buckle probes (BASE_PROBE=False)
+abaqus python base_state_probe.py aba\LF_Analysis_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
 abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-GlobalTension 1.0 1.0
 abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-Postbuckle 1.0 1.0
 ```
+
+### R-13 base-state probe is manual (`BASE_PROBE=False`)
+
+`run_abaqus.py` ships with `BASE_PROBE=False`, so the automatic R-13 / R-13:CT
+probes (and the fixed `Buckle_Analysis.odb` lookup) do not run. This is intentional:
+
+- The MFBO objective/training data are `RESULTS` (`lf1-3`, `hf`) only. R-13 is a
+  human diagnostic; it does not change the model, ODB, `hf`, `DN`, or `ZK`.
+- The point `results_*.txt` now records `r13_ct_*=nan` + `r13_ct_note`; the
+  `all_results.csv` schema is unchanged.
+
+Run the probe manually on a **point-consistent** ODB:
+
+```bat
+:: paired LF prestress state (same x_c,d_c; no imperfection -> flat u_z baseline)
+abaqus python base_state_probe.py aba\LF_Analysis_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
+
+:: exact HF base if the point-tagged archive exists (includes imperfection + RF)
+abaqus python base_state_probe.py results\odb\HF_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
+
+:: HF post-buckle: u_z,ave / compression map
+abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-Postbuckle 1.0 1.0
+```
+
+The fixed `aba\Buckle_Analysis.odb` has **no point tag** (and the self-buckle job is
+`RUN_SELF_BUCKLE_JOB=False`), so do not use it as a per-point R-13 source.
 
 If `CENTRE(mid)` is not 7000 Pa, scale:
 `CABLE_PRESTRESS <- CABLE_PRESTRESS * 7000 / measured` and rerun (1–2 iterations).

@@ -92,6 +92,8 @@ python mfbo.py
         구 기준선(`PAPER_MATCH=False`)은 `Step-GlobalTension` -> `Step-ClampTension` -> `Step-HighTension`.
     *   **HF 모드:** `Step-GlobalTension` -> `Step-ClampTension` -> `Step-Buckle` (모드 추출) / `Step-GlobalTension` -> Imperfection 주입 -> `Step-Postbuckle` (비선형 해석).
 *   **주의:** `*IMPERFECTION` 키워드 삽입 로직(삽입 위치 등)은 Abaqus 버전에 따라 민감할 수 있음.
+*   **Imperfection:** `IMPERFECTION_MODE='odb_table'`(기본) → `seeds/modes_xc<tag>.txt` 합성표를 `part.editNode`로 주입한다. `MODE_SOURCE_ODB`/`.fil`은 `odb_direct`/`file` 경로에서만 사용한다.
+*   **R-13 진단:** `BASE_PROBE=False`(기본). 베이스 상태는 `base_state_probe.py`로 **검증된 ODB**(짝 LF 또는 포인트 HF 아카이브)에 수동 실행한다. 고정 `Buckle_Analysis.odb`는 포인트 태그가 없어 per-point 진단에 쓰지 않는다.
 
 ### 3. `eval_abaqus.py` (Post-Processing)
 *   **역할:** run_abaqus.py 로 생성된 ODB 파일을 열어 수치적 성능 지표 계산.

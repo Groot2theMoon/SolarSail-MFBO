@@ -32,8 +32,8 @@ Flow (Simulation Logic):
                 주지 못한다(실측: 음수고유값 598~2897 / CONVERGED=0 / EIGENVALUES CANNOT BE FOUND).
                 *BUCKLE 은 .fil 출력이 금지되므로(실측 7025) 모드는 ODB 모드 프레임에만 있다
                 -> aba_mode_from_odb.py 가 그 ODB 를 모드표(modes_ClampFree_Buckle.txt)로 만든다.
-         - 2차: 그 모드를 노드 좌표 섭동으로 주입한다(IMPERFECTION_MODE='odb_direct' = 기본,
-                ODB 에서 HF 가 직접 읽는다. 'odb_table' = 모드표 txt 경유).
+         - 2차: 그 모드를 노드 좌표 섭동으로 주입한다(IMPERFECTION_MODE='odb_table' = 기본,
+                seeds/modes_xc<tag>.txt 모드표를 읽는다. 'odb_direct' = ODB 직접 읽기).
                 aba_imperfection.py 가 모드 개수를 검증하고, 부족하면 HF 제출 전에 중단한다.
                 자기 좌굴 잡(Buckle_Analysis)은 클램프 base state 증거용으로만 유지한다.
                 (옵션 IMPERFECTION_MODE='file' = .fil 스테이징 + *IMPERFECTION, FILE=, STEP=n:
@@ -113,7 +113,7 @@ PAPER_HOLD_U3_GLOBAL = bool(PAPER_INCLUDE_CLAMPS)
 USE_COMPOSITE_MODE_TABLE = True
 
 # ---- ① 실행 모드/스위치 ----
-BASE_PROBE = True                # 각 잡 직후 base_state_probe.py (R-13) 자동 실행
+BASE_PROBE = False               # R-13/CT는 수동 진단으로 분리. base_state_probe.py를 검증된 ODB에 직접 실행한다.
 EIG_RECORD = True                # 좌굴 고유치 이력 기록 (coalescence_check.py record)
 RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-24). 이유는 측정된 실패 경로다:
                              #   이 잡은 _EIGENSOLVER='LANCZOS' 로 제출되는데(아래), 이 모델의 좌굴 base state 는
@@ -250,7 +250,7 @@ IMPERFECTION_NAME = 'ClampFree_Buckle'   # 모드 소스 잡 이름과 '같은' 
 IMPERFECTION_MODES = (1, 2, 3, 4)   # 기본 = 논문(Galhofo) 주입 모드 1~4.
 IMPERFECTION_MAX_MODES = 4          # 상한. 모드표에 있는 모드가 더 적으면 그만큼만 쓴다(아래에서 자동 조정).
                                     #  모드 3개를 주입한다(lambda1 탈락). 논문 lambda 스프레드 0.036% 라 모드 3.4 의 기여가 작다(§5a).
-IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. Galhofo 채택값은 0.10 t 이지만 우리는 1.0 을 쓴다.
+IMPERFECTION_AMPL_T = 0.1    # 막 두께 배수. 현재 0.10 t (= 5.0e-7 m). 과거 1.0 t 실험은 수렴/증분 문제로 폐기.
 #   [§19.81] LF 는 **무결함** 모델로 계산한다(사용자 결정).
 #     LF 는 MFBO 의 "싼 대리 모델"이다 — 그 정의가 시드표/진폭에 의존하면 같은 설계점의 LF 값이
 #     시드에 따라 흔들려 다중충실도 구조가 약해진다. LF 분기에서는 섭동 크기를 0 으로 만들어
@@ -2210,9 +2210,13 @@ elif fidelity == 'HF':
         emit("[N-6] coalescence record 실패(무시): %s" % _eig_err)
 
     # [R-13 / 스파이크 10-0] base state(GlobalTension 말단) 응력·반력 측정
-    #   좌굴 성공/실패와 무관하게 Buckle_Analysis.odb 의 GlobalTension 프레임에서 읽는다.
-    #   -> "프리텐션 운용점이 물리적인가"를 실측으로 답하기 위한 것 (미해결 최우선 1건).
-    #   끄려면 BASE_PROBE 상수를 False 로 (구 MFBO_BASE_PROBE 환경변수는 제거됨)
+    #   기본 BASE_PROBE=False (수동 진단). 켜려면 True 로 바꾸면 이 런에서 자동 실행된다.
+    #   수동 진단:
+    #     abaqus python base_state_probe.py aba\LF_Analysis_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
+    #     abaqus python base_state_probe.py results\odb\HF_xc0p5_dc0p5.odb Step-GlobalTension 1.0 1.0
+    #     abaqus python base_state_probe.py aba\HF_Postbuckle.odb Step-Postbuckle 1.0 1.0
+    #   고정 이름 Buckle_Analysis.odb 는 포인트 태그가 없어 per-point 진단에 쓰지 않는다.
+    #   좌굴 성공/실패와 무관하게 ODB 의 GlobalTension 프레임에서 읽는다.
     try:
         if BASE_PROBE:
             _probe = os.path.join(_HERE, 'base_state_probe.py')
