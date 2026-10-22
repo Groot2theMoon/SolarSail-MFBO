@@ -245,8 +245,8 @@ def main(argv=None):
 
     print('\n해석')
     print('  P_crit 열이 일정하면 PERTURBATION 은 스케일일 뿐 물리에 영향 없음')
-    print('  arm6(dc0) FAIL + 음수 고유값 >= 100 -> CLAMP_PULL=0 이 진범')
-    print('  arm6 PASS                            -> dc0 는 무해. 다른 변수를 봐야 함')
+    print('  실패 arm 이 하나뿐이면 그 arm 이 바꾼 변수가 원인')
+    print('  전부 PASS 면 이 축에서 원인 없음 — 다른 축(형상/BC)을 봐야 함')
     print('  원본 .dat/.msg 는 %s 에 보존' % OUTDIR)
     return 0
 
