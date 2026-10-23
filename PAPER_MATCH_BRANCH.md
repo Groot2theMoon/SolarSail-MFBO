@@ -14,7 +14,7 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 | Pre-tension load | cable initial stress 2.69e7 Pa (5PCS), cable ends fixed | **3 cables, sigma11 = 2.69e7 Pa**, ends fixed, no displacement ramp |
 | Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle **0.01 m** (paper 0.10 m reference; λ×P invariant); static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base); **LF and HF post-buckling: no vertex displacement** (initial stress only) |
 | BC | three edges u3 = 0 | **LF: full-membrane u3=0 from Initial; HF paper: three edges only (u3-free); HF old disp: hold -> release** |
-| Stabilization | 2e-4 | **LF GlobalTension 1.0; HF GlobalTension 2e-4 ladder (2e-4/1e-3/1e-2); HF Postbuckle 5e-4 ladder (5e-4/2e-3/1e-2)** |
+| Stabilization | 2e-4 | **LF GlobalTension 1.0; paper HF GlobalTension 2e-4 ladder (2e-4/1e-3/1e-2) + line search; old disp HF Postbuckle 5e-4 ladder (5e-4/2e-3/1e-2)** |
 | Clamps | none (5PCS) | paper reproduction: `NO_CLAMP = True`; physical model: `PAPER_INCLUDE_CLAMPS = True` (clamps + vertex cables; clamp prestress = `d_c × 2.69e7 Pa`) |
 | Imperfection | first 4 modes, 0.10 t | same; mode table = **seed + clamp_only composite** (2+2) |
 
@@ -30,7 +30,8 @@ USE_COMPOSITE_MODE_TABLE = True   # seed + clamp_only 합성표
 # [2026-10-21] u3-free HF 분기
 STABILIZE_GLOBAL_LF = 1.0             # LF: 기존 값 유지 (u3=0)
 STABILIZE_GLOBAL_LADDER = (2e-4, 1e-3, 1e-2)   # HF: 내리는 방향
-STABILIZE_POST_LADDER = (5e-4, 2e-3, 1e-2)
+STABILIZE_POST_LADDER = (5e-4, 2e-3, 1e-2)     # old disp Postbuckle only
+# paper HF: Postbuckle 없이 GlobalTension에 line search + stabilize ladder 적용
 # HF Step-GlobalTension initialInc=0.001 / maxNumInc=10000
 # LF Step-GlobalTension initialInc=0.01 / maxNumInc=1000 (회귀 기준선 보존)
 ```

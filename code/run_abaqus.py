@@ -796,7 +796,7 @@ def _r13_ct_keys():
 
 
 def run_job_safely(job_name, model_name=None, stabilize=None, stabilize_global=None,
-                   hard_fail=True):
+                   hard_fail=True, patch_step=None):
     """
     job 실행 중 .odb, .lck 파일 충돌을 방지하고, 완료까지 대기하는 함수
 
@@ -805,6 +805,7 @@ def run_job_safely(job_name, model_name=None, stabilize=None, stabilize_global=N
       - *IMPERFECTION, FILE=Buckle_Analysis 가 stale .fil 을 조용히 읽는 것을 막는다.
     """
     model_name = model_name or MODEL_NAME
+    patch_step = patch_step or 'Step-Postbuckle'
     for _ext in _JOB_ARTIFACTS:
         _f = '%s.%s' % (job_name, _ext)
         if os.path.exists(_f):
@@ -898,12 +899,14 @@ def run_job_safely(job_name, model_name=None, stabilize=None, stabilize_global=N
         _needs_patch = True
         try:
             with open(job_name + '.inp', 'r', encoding='utf-8', errors='replace') as _fh:
-                _needs_patch = ('Step-Postbuckle' in _fh.read())
+                _needs_patch = (patch_step in _fh.read())
         except Exception:
             _needs_patch = True          # 읽지 못하면 종전 동작(패처 시도) 유지
         if not _needs_patch:
-            emit("[PATCHER] 이 덱에 Step-Postbuckle 이 없다 -> 패처 생략(§19.80, LF 경로)")
-        if _needs_patch and not run_patcher(job_name + '.inp', stabilize=stabilize):
+            emit("[PATCHER] 이 덱에 %s 이 없다 -> 패처 생략(§19.80, LF 경로)"
+                 % patch_step)
+        if _needs_patch and not run_patcher(job_name + '.inp', step=patch_step,
+                                             stabilize=stabilize):
             emit("!!! ERROR: 패처 실패 — 패치되지 않은 덱을 제출하지 않는다(§14).")
             emit("RESULTS:FAIL")
             sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
@@ -1020,11 +1023,17 @@ def run_job_with_ladder(job_name, model_name=None):
             emit("[LADDER] %s 에너지 프로브 실패(무시): %s" % (step_name, _pe_err))
         return None, None
 
+    #   paper HF는 Postbuckle이 없으므로 GlobalTension 자체를 line-search/안정화 대상으로
+    #   삼는다. old disp HF는 기존처럼 Postbuckle을 대상으로 한다.
+    _patch_step = ('Step-Postbuckle' if _HF_USE_POSTBUCKLE else 'Step-GlobalTension')
     for _g_lv, _p_lv in zip(STABILIZE_GLOBAL_LADDER, STABILIZE_POST_LADDER):
-        emit("[LADDER] GlobalTension stabilize=%g / Postbuckle stabilize=%g 시도 (%s)"
-             % (_g_lv, _p_lv, job_name))
-        if run_job_safely(job_name, model_name=model_name, stabilize=_p_lv,
-                          stabilize_global=_g_lv, hard_fail=False):
+        #   paper HF에는 Postbuckle이 없으므로 post stabilize 인자를 넘기지 않는다.
+        _stab_post = _p_lv if _HF_USE_POSTBUCKLE else None
+        emit("[LADDER] GlobalTension stabilize=%g / Postbuckle stabilize=%s 시도 (%s)"
+             % (_g_lv, ('%g' % _p_lv) if _stab_post is not None else 'n/a', job_name))
+        if run_job_safely(job_name, model_name=model_name, stabilize=_stab_post,
+                          stabilize_global=_g_lv, hard_fail=False,
+                          patch_step=_patch_step):
             emit("[LADDER] 완주 (GlobalTension=%g, Postbuckle=%g)" % (_g_lv, _p_lv))
             #   [§19.86] 두 스텝의 ALLSD/ALLIE 를 모두 읽는다. GlobalTension 은 이제
             #     주름이 생기는 스텝이므로 이 값이 선택의 핵심이다.
