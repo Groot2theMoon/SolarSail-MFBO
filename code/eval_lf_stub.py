@@ -303,6 +303,13 @@ def _zk_line(out):
     return None
 
 
+def _zkiw_line(out):
+    for line in out.splitlines():
+        if line.startswith('ZKIW:'):
+            return line
+    return None
+
+
 def _kv_line(line):
     out = {}
     for tok in line.split(':', 1)[1].split():
@@ -382,6 +389,20 @@ def main():
                      zk is not None and zk.startswith('ZK:'), repr(zk))
         ok &= _check('paper: ZK is OK (not FAIL)',
                      zk is not None and zk.startswith('ZK:') and 'FAIL' not in zk, repr(zk))
+        zkiw = _zkiw_line(out)
+        ok &= _check('paper: ZKIW line exists',
+                     zkiw is not None and zkiw.startswith('ZKIW:'), repr(zkiw))
+        if zkiw is not None and 'FAIL' not in zkiw:
+            _ikv = _kv_line(zkiw)
+            ok &= _check('paper: ZKIW zk_Iw == 1.728e-4',
+                         _close(_num(_ikv, 'zk_Iw'), 1.728e-4),
+                         _ikv.get('zk_Iw'))
+            ok &= _check('paper: ZKIW weights == ref_evol',
+                         _ikv.get('zk_Iw_weights') == 'ref_evol',
+                         _ikv.get('zk_Iw_weights'))
+            ok &= _check('paper: ZKIW strain_field == E',
+                         _ikv.get('strain_field') == 'E',
+                         _ikv.get('strain_field'))
         if zk is not None and zk.startswith('ZK:') and 'FAIL' not in zk:
             kv = _kv_line(zk)
             ok &= _check('paper: ZK wrinkled frac == 0.25',
@@ -490,6 +511,9 @@ def main():
                      res is not None and len(res) == 3, repr(res))
         ok &= _check('noE: ZK:FAIL reason=E_field_missing',
                      zk == 'ZK:FAIL reason=E_field_missing', repr(zk))
+        zkiw = _zkiw_line(out)
+        ok &= _check('noE: ZKIW:FAIL',
+                     zkiw == 'ZKIW:FAIL reason=E_field_missing', repr(zkiw))
         ext = os.path.join(d3, 'extraction.txt')
         ok &= _check('noE: extraction.txt exists', os.path.exists(ext))
         zkm = os.path.join(d3, 'zk_metrics.txt')
@@ -557,6 +581,18 @@ def main():
         ok &= _check('LE: ZK is OK (not FAIL)',
                      zk is not None and zk.startswith('ZK:') and 'FAIL' not in zk,
                      repr(zk))
+        zkiw = _zkiw_line(out)
+        ok &= _check('LE: ZKIW is OK (not FAIL)',
+                     zkiw is not None and zkiw.startswith('ZKIW:') and 'FAIL' not in zkiw,
+                     repr(zkiw))
+        if zkiw is not None and 'FAIL' not in zkiw:
+            _ikv = _kv_line(zkiw)
+            ok &= _check('LE: ZKIW zk_Iw == 1.728e-4',
+                         _close(_num(_ikv, 'zk_Iw'), 1.728e-4),
+                         _ikv.get('zk_Iw'))
+            ok &= _check('LE: ZKIW strain_field == LE',
+                         _ikv.get('strain_field') == 'LE',
+                         _ikv.get('strain_field'))
         zkm = os.path.join(d5, 'zk_metrics.txt')
         ok &= _check('LE: zk_metrics.txt exists', os.path.exists(zkm))
         if os.path.exists(zkm):

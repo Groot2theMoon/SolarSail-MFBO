@@ -105,7 +105,8 @@ python mfbo.py
         `|E2|` intensity, `n1` 방향). Abaqus가 `E` 대신 `LE`를 출력하면 `LE` 주성분을
         `E=0.5(exp(2*LE)-1)`로 변환한다(`strain_field` 기록). `RESULTS` 3/4필드는 불변.
         `zk_metrics.txt` 에는 기준면적·slack·positive-part 를 반영한 `zk_Iw` sidecar도
-        기록한다(아직 MFBO LF target 으로 연결되지는 않았고, `mfbo.py` 는 계속 `lf1` 을 쓴다).
+        기록하고, eval stdout 에 `ZKIW:` 별도 줄로 함께 낸다(`RESULTS`/`ZK:` 불변).
+        아직 MFBO LF target 으로 연결되지는 않았고, `mfbo.py` 는 계속 `lf1` 을 쓴다.
     *   **HF Metric:** SRP 모델을 적용하여 변형된 메쉬의 법선 벡터를 적분, wrinkle에 의한 **Thrust Loss** 계산.
     *   **성능:** `bulkDataBlocks`와 `numpy`를 사용하여 Python 루프 속도 문제 개선.
 

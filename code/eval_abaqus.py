@@ -631,6 +631,31 @@ def format_zk_line(zk):
                _zk_fmt(zk.get('zk_dir_deg'), '%.10e')))
 
 
+def format_zk_iw_line(zk):
+    """ZKIW: `zk_Iw` sidecar를 eval stdout 에도 연결한다.
+
+    `RESULTS:` 3/4필드와 `ZK:` 4필드 계약은 **건드리지 않는다**. HF 비교/로그에서
+    `zk_Iw` 와 `hf` 를 한 화면에서 읽기 위한 별도 진단 줄이다.
+    """
+    if not zk or not zk.get('ok'):
+        return 'ZKIW:FAIL reason=%s' % ((zk or {}).get('reason', 'unknown'))
+    return ('ZKIW:zk_Iw=%s zk_Iw_p95=%s zk_Iw_area_total=%s '
+            'zk_Iw_weights=%s zk_Iw_slack_share=%s zk_Iw_wr_share=%s '
+            'zk_Iw_clip_zero_frac=%s zk_Iw_ref_missing=%s '
+            'strain_field=%s strain_measure=%s strain_conversion=%s'
+            % (_zk_fmt(zk.get('zk_Iw'), '%.10e'),
+               _zk_fmt(zk.get('zk_Iw_p95'), '%.10e'),
+               _zk_fmt(zk.get('zk_Iw_area_total'), '%.10e'),
+               zk.get('zk_Iw_weights', 'nan'),
+               _zk_fmt(zk.get('zk_Iw_slack_share'), '%.10e'),
+               _zk_fmt(zk.get('zk_Iw_wr_share'), '%.10e'),
+               _zk_fmt(zk.get('zk_Iw_clip_zero_frac'), '%.10e'),
+               zk.get('zk_Iw_ref_missing', 'nan'),
+               zk.get('strain_field', 'nan'),
+               zk.get('strain_measure', 'nan'),
+               zk.get('strain_conversion', 'nan')))
+
+
 def write_zk_metrics(zk, odb_path):
     """zk_metrics.txt (cwd) 기록. 실패해도 런을 죽이지 않는다."""
     try:
@@ -1046,6 +1071,7 @@ def main():
             #     E 가 없어도 ZK:FAIL 만 내고 LF 결과는 정상적으로 낸다.
             _zk = get_zk(args[-2])
             print(format_zk_line(_zk))
+            print(format_zk_iw_line(_zk))
             write_zk_metrics(_zk, args[-2])
         elif mode == "HFONLY":
             #   [§19.87] HF 단독 평가: 짝 LF ODB 가 없어도 **hf 지표만** 낸다.
@@ -1070,6 +1096,7 @@ def main():
             #     HF 의 hf/DN 은 그대로이고, ZK 는 별도 줄/파일로만 나간다.
             _zk = get_zk(args[-3])
             print(format_zk_line(_zk))
+            print(format_zk_iw_line(_zk))
             write_zk_metrics(_zk, args[-3])
             #   [19.106] delta_n 은 별도 줄로만 낸다(RESULTS 4필드 계약 불변).
             print(format_dn_line(get_dn(args[-2])))

@@ -220,6 +220,11 @@ I_w = (1/A_ref) [ Σ_wr    w_ref · max(|E2| - νE1, 0)
 - `zk_Iw` is **not** `zk_intensity_mean`: the public intensity is wrinkled-only `|E2|`
   with current-`EVOL` weights; `I_w` covers the whole reference area, includes slack,
   applies the `ν` correction, and clips the positive part.
+- `eval_abaqus.py` also emits a separate `ZKIW:` stdout line with `zk_Iw`,
+  `zk_Iw_p95`, weights, shares, clip fraction and strain conversion. It is
+  diagnostic only; `RESULTS:` and `ZK:` are unchanged. HF runs therefore print
+  `RESULTS:...,hf` (HF ODB) and `ZKIW:...,zk_Iw=...` (paired LF ODB) together
+  for the comparison.
 - `zk_Iw` is not yet an MFBO LF target; `mfbo.py` still uses `lf1`. No fixed
   `hf ≈ 2.9234·I_w` scale is assumed — a multi-fidelity GP learns the LF–HF relation.
 - `python eval_lf_stub.py` (no Abaqus license) checks the synthetic `I_w`:

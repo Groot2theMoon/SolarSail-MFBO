@@ -2678,9 +2678,15 @@ try:
     #     (RESULTS: 4필드 계약과 무관한 진단 줄이다.)
     _dn_lines = []
     _zk_lines = []
+    _zkiw_lines = []
     for _ln in ((p.stdout or "") + (p.stderr or "")).splitlines():
         _ls = _ln.strip()
         if not _ls:
+            continue
+        if _ls.startswith("ZKIW:"):
+            #   `zk_Iw` sidecar 진단 줄. FAIL 문자열이 있어도 정상 런을 뒤집지 않는다.
+            _zkiw_lines.append(_ls)
+            emit("   [ZKIW] %s" % _ls)
             continue
         if _ls.startswith("DN:"):
             _dn_lines.append(_ls)
