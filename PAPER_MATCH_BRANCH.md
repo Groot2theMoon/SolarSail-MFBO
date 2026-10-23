@@ -219,11 +219,16 @@ I_w = (1/A_ref) [ Σ_wr    w_ref · max(|E2| - νE1, 0)
 - `python eval_lf_stub.py` (no Abaqus license) checks the synthetic `I_w`:
   reference weights `(1,2,2)`, wrinkled `9.8e-5`, slack `3.34e-4`, the
   `max(|E2|-νE1,0)` clip case, and that the public `ZK:` values are unchanged.
-- If an LF run reports `ZK:FAIL reason=E_field_missing`, the LF ODB was created
-  before the `E` output request was added. The LF sidecar tag is now
-  `globaltension-v2-e1-...`; an older tag is rejected automatically. To be
-  explicit, delete `aba\LF_Analysis_<tag>.odb` and its `.model.txt`, then rerun
-  LF. The current LF deck requests `S, E, U, COORD, EVOL, RF`.
+- If an LF run reports `ZK:FAIL reason=E_field_missing`, first check whether
+  the ODB was reused (old tag) and delete `aba\LF_Analysis_<tag>.odb` plus its
+  `.model.txt`. The LF sidecar tag is now `globaltension-v3-e2-...`.
+- If a fresh LF run still has no `E`, the LF deck creates a dedicated
+  `F-ZK` field output request (`E`, `frequency=1`) on the selected LF step
+  (`Step-GlobalTension` or `Step-HighTension`); inspect it with
+  `findstr /C:"[LF] field output" hf_run_log.txt`. The ODB itself can be
+  inspected without a CAE license:
+  `abaqus python check_odb_fields.py aba\LF_Analysis_<tag>.odb`.
+  `zk_metrics.txt` also records `fields=` and `frame_value=` on failure.
 
 ### hf / DN / u_z,ave definitions (unchanged)
 
@@ -246,7 +251,7 @@ if the table was built on a different mesh or base state.
 cd code
 
 :: 0) one-time after switching to this branch: drop old LF ODBs + sidecars
-::    (the sidecar tag `v2-e1` also rejects pre-E ODBs, but deleting is cleaner)
+::    (the sidecar tag `v3-e2` also rejects pre-E ODBs, but deleting is cleaner)
 del /q aba\LF_Analysis*.odb
 del /q aba\LF_Analysis*.odb.model.txt
 

@@ -510,13 +510,13 @@ _DISP_PRE = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_PATH) else DISP_GLOBA
 _DISP_FINAL = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_PATH) else GLOBAL_FINAL
 #   [paper-match] LF ODB stale guard: 모델 정의가 바뀌면 기존 LF ODB 를 재사용하지 않는다.
 #     sidecar(.model.txt)의 tag 를 현재 경로와 대조한다(aba_imperfection 참조).
-#     tag 에 clamp/u3 sub-mode 와 field-output 버전(e1: ZK 용 E)을 포함한다.
+#     tag 에 clamp/u3 sub-mode 와 field-output 버전(e2: ZK 전용 F-ZK E 요청)을 포함한다.
 #     기본값은 aba_imperfection.LF_MODEL_TAG 와 같아야 한다(mfbo.py 가 그 값을 쓴다).
-#     v2-e1 로 올린 이유: 예전 LF ODB 에는 E 가 없어 zk_Iw/ZK 가 FAIL 한다.
-_LF_MODEL_TAG = (('globaltension-v2-e1-c%d-u%d'
+#     v3-e2 로 올린 이유: v2-e1 ODB 에도 E 가 없어 zk_Iw/ZK 가 FAIL 할 수 있다.
+_LF_MODEL_TAG = (('globaltension-v3-e2-c%d-u%d'
                   % (int(PAPER_INCLUDE_CLAMPS), int(_LF_HOLD_U3_ALL)))
                  if (LOAD_MODE == 'cable_stress' and _PAPER_PATH)
-                 else 'disp-v2-e1')
+                 else 'disp-v3-e2')
 
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
@@ -2185,18 +2185,45 @@ if fidelity == 'LF':
 
     #   [paper-match] 'E' = Green-Lagrange strain (nlgeom=ON). eval_abaqus 의 ZK
     #     (Zhang & Kiendl: E1/E2/n1) 가 이 필드에서 변형률을 읽는다. 빼면 ZK:FAIL.
+    #   [2026-10-23] F-Output-1 에 E 를 setValues 로 덧붙이는 방식이 ODB 에 반영되지 않는
+    #     사례가 확인됐다(tag v2-e1 인데도 E_field_missing). ZK 전용 **별도 요청 F-ZK** 를
+    #     Initial 에 만들고 frequency=1 로 고정한다. F-Output-1 은 S/U/COORD/EVOL/RF 만 남긴다.
     my_model.fieldOutputRequests['F-Output-1'].setValues(
-        variables=('S', 'E', 'U', 'COORD', 'EVOL', 'RF'),
+        variables=('S', 'U', 'COORD', 'EVOL', 'RF'),
         frequency=10   # R-10: odb 크기 절감
     )
+    _zk_output_step = ('Step-HighTension'
+                       if LOAD_MODE != 'cable_stress' else 'Step-GlobalTension')
+    try:
+        if 'F-ZK' in my_model.fieldOutputRequests:
+            del my_model.fieldOutputRequests['F-ZK']
+        my_model.FieldOutputRequest(
+            name='F-ZK',
+            createStepName=_zk_output_step,
+            variables=('E',),
+            frequency=1,   # 마지막 프레임 포함 보장
+        )
+        emit("[LF] field output F-ZK: step=%s variables=('E',) frequency=1"
+             % _zk_output_step)
+    except Exception as _fze:
+        #   API/버전 차이 폴백: 기존 요청에 E 를 넣고 주기를 1 로.
+        emit("[LF] !!! F-ZK 생성 실패(%s) -> F-Output-1 폴백" % _fze)
+        try:
+            my_model.fieldOutputRequests['F-Output-1'].setValues(
+                variables=('S', 'E', 'U', 'COORD', 'EVOL', 'RF'),
+                frequency=1,
+            )
+        except Exception as _fbe:
+            emit("[LF] !!! F-Output-1 폴백도 실패: %s" % _fbe)
     #   [2026-10-21] 덱에 실제로 E 가 들어갔는지 로그로 남긴다. E 가 없으면 ZK/zk_Iw 가
     #     `E_field_missing` 으로 실패하므로, 재사용/stale ODB 와 출력요청 누락을 구분한다.
-    try:
-        _fo = my_model.fieldOutputRequests['F-Output-1']
-        emit("[LF] field output F-Output-1: variables=%s frequency=%s"
-             % (tuple(_fo.variables), _fo.frequency))
-    except Exception as _foe:
-        emit("[LF] !!! field output F-Output-1 확인 실패: %s" % _foe)
+    for _fon in ('F-Output-1', 'F-ZK'):
+        try:
+            _fo = my_model.fieldOutputRequests[_fon]
+            emit("[LF] field output %s: variables=%s frequency=%s"
+                 % (_fon, tuple(_fo.variables), _fo.frequency))
+        except Exception as _foe:
+            emit("[LF] field output %s 확인 실패: %s" % (_fon, _foe))
 
     #   [§19.66] 같은 설계점의 LF 는 재사용한다(잡 재제출 ~3분 절약).
     #   [paper-match] 단, 모델 정의가 바뀐 뒤의 **stale LF ODB** 는 재사용하지 않는다.

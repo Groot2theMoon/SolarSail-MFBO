@@ -385,7 +385,14 @@ def get_zk(odb_path):
 
         e_field, why = _zk_get_e_field(frame, instance)
         if e_field is None:
-            return _zk_fail(why or 'E_field_missing')
+            _fail = _zk_fail(why or 'E_field_missing')
+            #   진단: 선택 프레임에 실제로 어떤 field 가 있는지 sidecar 에 남긴다.
+            try:
+                _fail['fields'] = ','.join(sorted(frame.fieldOutputs.keys()))
+                _fail['frame_value'] = frame.frameValue
+            except Exception:
+                pass
+            return _fail
 
         # ---- E 성분을 요소별 평균 (section point/integration point 평균) ----
         e_acc = {}
@@ -608,6 +615,9 @@ def write_zk_metrics(zk, odb_path):
         if not zk or not zk.get('ok'):
             lines.append('status=FAIL')
             lines.append('reason=%s' % ((zk or {}).get('reason', 'unknown')))
+            for _k in ('fields', 'frame_value'):
+                if _k in (zk or {}):
+                    lines.append('%s=%s' % (_k, zk[_k]))
         else:
             lines.append('status=OK')
             lines.append('step=%s' % zk.get('step', '?'))
