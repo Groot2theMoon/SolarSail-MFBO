@@ -1795,7 +1795,9 @@ my_model.StaticStep(
     stabilizationMagnitude=(STABILIZE_GLOBAL_HF if _IS_HF_RUN else STABILIZE_GLOBAL),
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
     initialInc=((0.001 if _IS_HF_RUN else 0.01) if PAPER_MATCH else 0.0001),
-    minInc=1e-8, maxNumInc=(10000 if _IS_HF_RUN else 1000)
+    minInc=1e-8,
+    maxInc=0.01,
+    maxNumInc=(10000 if _IS_HF_RUN else 1000)
     #   [paper-match] 초기응력은 스텝 시작에 전부 들어간다(램프 없음) -> 첫 증분이 너무 작으면
     #     큰 잔차를 작은 증분으로 풀다 컷백이 반복된다. 논문 모드에서는 0.001(HF)/0.01(LF) 로 시작한다.
 )
@@ -1807,7 +1809,10 @@ my_model.StaticStep(
     nlgeom=ON,
     stabilizationMagnitude=0.0002,      # Galhofo Reference
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
-    initialInc=0.0001, minInc=1e-8, maxNumInc=1000    # P1-2: 1e-15 는 발산 시 증분 폭주
+    initialInc=0.0001, 
+    minInc=1e-8, 
+    maxInc=0.01,
+    maxNumInc=1000    # P1-2: 1e-15 는 발산 시 증분 폭주
 )
 
 # Step Buckle : 버클 모드 찾기. LF에서는 직접적으로 쓰이지 않음. 
@@ -2487,9 +2492,9 @@ elif fidelity == 'HF':
         continueDampingFactors=False,
         adaptiveDampingRatio=0.002,
         initialInc=1e-4,
-        minInc=1e-8,          # R-9: 1e-15 는 발산 시 증분 소진까지 수시간
-        maxInc=0.01,
-        maxNumInc=10000       # R-9 / [2026-09-28] 1000 -> 10000
+        minInc=1e-8,
+        maxInc=0.1,
+        maxNumInc=1000
         # 상한 상향은 해결책이 아니라 연장이다 — 실제 원인은 국소 불안정으로 증분이 눌리는 것(§13).
         #   ALLSD/ALLIE 가 0.50%(허용 5%)라 allsdtol 상향은 binding 이 아니다(폐기된 레버).
     )
