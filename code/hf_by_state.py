@@ -48,11 +48,21 @@ def pick_step(odb, pref):
 
 
 def get_instance(odb):
-    for name in odb.rootAssembly.instances.keys():
-        inst = odb.rootAssembly.instances[name]
-        if len(inst.elements) > 0:
-            return inst
-    return None
+    """MEMBRANE-1 우선. 없으면 요소 수가 가장 많은 인스턴스.
+
+    (get_zk 와 같은 대상을 봐야 한다. 첫 번째 인스턴스를 잡으면
+     클램프/케이블 인스턴스를 물어 요소 1개짜리 부분집합이 될 수 있다.)
+    """
+    insts = odb.rootAssembly.instances
+    keys = insts.keys()
+    if 'MEMBRANE-1' in keys:
+        return insts['MEMBRANE-1']
+    best, bestn = None, -1
+    for name in keys:
+        n = len(insts[name].elements)
+        if n > bestn:
+            best, bestn = insts[name], n
+    return best
 
 
 def element_connectivity(inst):
@@ -60,7 +70,8 @@ def element_connectivity(inst):
     labs, conns = [], []
     for el in inst.elements:
         labs.append(el.label)
-        conns.append([nd.label for nd in el.connectivity])
+        #   Abaqus 버전에 따라 connectivity 가 Node 객체 또는 int 라벨이다.
+        conns.append([getattr(nd, 'label', nd) for nd in el.connectivity])
     return np.asarray(labs, dtype=np.int64), conns
 
 
@@ -167,8 +178,12 @@ def main(argv):
         lf_labels, (e11, e22, e12), lf_fname = got
         e1, e2, m_taut, m_wr, m_sl = principal_and_states(e11, e22, e12, lf_fname)
         wref = _zk_reference_evol(lf, lf_inst)
-        print(_P + ' LF: %s / step=%s frame=%d / field=%s / 요소 %d'
-              % (lf_path, lf_sname, len(lf_step.frames), lf_fname, len(lf_labels)))
+        print(_P + ' LF: %s / 인스턴스=%s / step=%s frame=%d / field=%s / 요소 %d'
+              % (lf_path, lf_inst.name, lf_sname, len(lf_step.frames),
+                 lf_fname, len(lf_labels)))
+        if len(lf_labels) < 100:
+            print(_P + ' !!! 요소 수가 %d 개뿐이다 - 인스턴스를 잘못 골랐을 가능성'
+                  % len(lf_labels))
         if not wref:
             print(_P + ' !!! LF frameValue=0 EVOL 없음 -> 기준면적 가중 불가')
             return 1
