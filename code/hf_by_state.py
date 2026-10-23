@@ -101,14 +101,24 @@ def elem_strains(frame, inst):
     for val in fld.values:
         lab = val.elementLabel
         d = val.data
+        #   6성분(E11,E22,E33,E12,E13,E23) 또는 3성분(E11,E22,E12) 모두 지원.
+        #   get_zk 와 같은 규약: >=6 이면 (0,1,3), >=3 이면 (0,1,2).
+        if len(d) >= 6:
+            t = (float(d[0]), float(d[1]), float(d[3]))
+        elif len(d) >= 3:
+            t = (float(d[0]), float(d[1]), float(d[2]))
+        else:
+            continue
         a = acc.get(lab)
         if a is None:
-            acc[lab] = [float(d[0]), float(d[1]), float(d[3]), 1.0]
+            acc[lab] = [t[0], t[1], t[2], 1.0]
         else:
-            a[0] += float(d[0])
-            a[1] += float(d[1])
-            a[2] += float(d[3])
+            a[0] += t[0]
+            a[1] += t[1]
+            a[2] += t[2]
             a[3] += 1.0
+    if not acc:
+        return None, None, 'strain_values_empty'
     labels = np.asarray(sorted(acc.keys()), dtype=np.int64)
     arr = np.asarray([acc[l] for l in labels], dtype=np.float64)
     cnt = arr[:, 3]
