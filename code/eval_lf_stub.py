@@ -8,6 +8,7 @@
        - get_lf 가 Step-GlobalTension 을 선택한다.
        - lf1/lf2/lf3 계산값.
        - ZK (state_wrinkled_frac, intensity mean/p95, global direction).
+       - zk_Iw (reference weighting, slack, positive-part) sidecar.
        - RESULTS: 3필드 / extraction.txt / zk_metrics.txt.
 
   2) old disp path (Step-HighTension 있음)
@@ -17,6 +18,10 @@
   3) E 필드 없음
        - ZK:FAIL reason=E_field_missing.
        - 그래도 RESULTS 3필드 / extraction.txt 는 정상이다.
+
+  4) I_w positive-part clip
+       - E1>0, E2<0 이지만 |E2|-nu*E1 <= 0 인 요소는 I_w 에서 0.
+       - slack 항만 남는지, clip fraction / share 가 맞는지 확인.
 
 사용:
     python3 eval_lf_stub.py
@@ -136,8 +141,11 @@ class _Odb(object):
 # ---------------------------------------------------------------------------
 # synthetic model
 #   elem 1: taut       S=(100, 50)   E=(1e-3,  5e-4)  vol=1  local1=+x
-#   elem 2: wrinkled   S=(100,-50)   E=(1e-3, -2e-4)  vol=1  local1=30 deg
+#   elem 2: wrinkled   S=(100,-50)   E=(3e-4, -2e-4)  vol=1  local1=30 deg
 #   elem 3: slack      S=(-100,-50)  E=(-1e-4,-3e-4)  vol=2  local1=+x
+#
+#   reference EVOL (frameValue=0): elem1=1, elem2=2, elem3=2  (A_ref=5)
+#   (public ZK 는 현재 EVOL 1,1,2 를 그대로 쓴다 -> state_wrinkled_frac=1/4)
 #
 # expected lf1 = (1+2)/4 = 0.75
 # expected lf2 = -(0.34/2.5e9)*100*(-50) = 6.8e-7   (elem 2 only)
@@ -145,14 +153,29 @@ class _Odb(object):
 # expected ZK  : wrinkled frac = 1/4 = 0.25
 #                intensity mean = p95 = 2e-4
 #                dir = 30 deg (elem 2 local1 rotated by 30 deg)
+# expected I_w = [2*max(2e-4 - 0.34*3e-4, 0)
+#                 + 2*(3e-4 + 0.34*1e-4)] / 5 = 1.728e-4
+#                I_w_p95 = 3.34e-4
+#                slack share = 6.68e-4 / 8.64e-4 = 0.773148...
+#                wr share    = 1.96e-4 / 8.64e-4 = 0.226852...
+#                clip zero frac = 0
 # ---------------------------------------------------------------------------
 ELEMENTS = [
     (1, (1, 2, 3, 4), (100.0, 50.0, 0.0),
      (1e-3, 5e-4, 0.0, 0.0, 0.0, 0.0), 1.0),
     (2, (20, 21, 22, 23), (100.0, -50.0, 0.0),
-     (1e-3, -2e-4, 0.0, 0.0, 0.0, 0.0), 1.0),
+     (3e-4, -2e-4, 0.0, 0.0, 0.0, 0.0), 1.0),
     (3, (30, 31, 32, 33), (-100.0, -50.0, 0.0),
      (-1e-4, -3e-4, 0.0, 0.0, 0.0, 0.0), 2.0),
+]
+
+#   clip test 는 같은 모델에서 elem 2 만 E1=1e-3 으로 바꾼다 -> |E2|-nu*E1 < 0.
+REF_VOL = {1: 1.0, 2: 2.0, 3: 2.0}
+CLIP_ELEMENTS = [
+    (1, ELEMENTS[0][1], ELEMENTS[0][2], ELEMENTS[0][3], ELEMENTS[0][4]),
+    (2, ELEMENTS[1][1], ELEMENTS[1][2],
+     (1e-3, -2e-4, 0.0, 0.0, 0.0, 0.0), ELEMENTS[1][4]),
+    (3, ELEMENTS[2][1], ELEMENTS[2][2], ELEMENTS[2][3], ELEMENTS[2][4]),
 ]
 
 NODES = [
@@ -178,21 +201,32 @@ def _frame(elements, with_E=True):
     return _Frame(fields)
 
 
-def _make_odb(include_high=False, with_E=True, high_zero=True):
+def _ref_frame(elements):
+    """frameValue=0 의 기준 EVOL 만 가진 프레임(I_w 전용)."""
+    return _Frame(
+        {'EVOL': _Field([_Val(lbl, REF_VOL.get(lbl, vol))
+                         for (lbl, conn, s, e, vol) in elements])},
+        frameValue=0.0)
+
+
+def _make_odb(include_high=False, with_E=True, high_zero=True, elements=None):
+    elements = elements or ELEMENTS
     instance = _Instance(
         'MEMBRANE-1',
         [_Node(lbl, c) for (lbl, c) in NODES],
-        [_Elem(lbl, conn) for (lbl, conn, s, e, vol) in ELEMENTS],
+        [_Elem(lbl, conn) for (lbl, conn, s, e, vol) in elements],
     )
-    steps = {'Step-GlobalTension': _Step([_frame(ELEMENTS, with_E=with_E)])}
+    steps = {'Step-GlobalTension': _Step([_ref_frame(elements),
+                                          _frame(elements, with_E=with_E)])}
     if include_high:
         if high_zero:
             elems = [(lbl, conn, (0.0, 0.0, 0.0),
                       (0.0, 0.0, 0.0, 0.0, 0.0, 0.0), vol)
-                     for (lbl, conn, s, e, vol) in ELEMENTS]
+                     for (lbl, conn, s, e, vol) in elements]
         else:
-            elems = ELEMENTS
-        steps['Step-HighTension'] = _Step([_frame(elems, with_E=with_E)])
+            elems = elements
+        steps['Step-HighTension'] = _Step([_ref_frame(elems),
+                                           _frame(elems, with_E=with_E)])
     return _Odb(steps, instance)
 
 
@@ -253,9 +287,37 @@ def _read(path):
         return f.read()
 
 
+def _read_kv(path):
+    out = {}
+    for line in _read(path).splitlines():
+        s = line.strip()
+        if not s or '=' not in s:
+            continue
+        k, v = s.split('=', 1)
+        out[k] = v
+    return out
+
+
+def _num(kv, key):
+    try:
+        return float(kv.get(key, 'nan'))
+    except (TypeError, ValueError):
+        return float('nan')
+
+
+def _close(actual, expected, atol=1e-15, rtol=0.0):
+    try:
+        return abs(float(actual) - float(expected)) <= (
+            atol + rtol * abs(float(expected)))
+    except (TypeError, ValueError):
+        return False
+
+
 def _check(name, cond, detail=''):
+    if detail is None:
+        detail = ''
     print("  %-4s %s%s" % ('OK' if cond else 'FAIL', name,
-                           (' - ' + detail) if detail else ''))
+                           (' - ' + str(detail)) if detail else ''))
     return bool(cond)
 
 
@@ -319,6 +381,36 @@ def main():
                          'step=Step-GlobalTension' in txt)
             ok &= _check('paper: zk file wrinkled frac=0.25',
                          'state_wrinkled_frac=0.25' in txt)
+            zkv = _read_kv(zkm)
+            ok &= _check('paper: public zk_area_total == 4 (current EVOL)',
+                         _close(_num(zkv, 'zk_area_total'), 4.0),
+                         zkv.get('zk_area_total'))
+            ok &= _check('paper: zk_Iw == 1.728e-4',
+                         _close(_num(zkv, 'zk_Iw'), 1.728e-4),
+                         zkv.get('zk_Iw'))
+            ok &= _check('paper: zk_Iw_p95 == 3.34e-4',
+                         _close(_num(zkv, 'zk_Iw_p95'), 3.34e-4),
+                         zkv.get('zk_Iw_p95'))
+            ok &= _check('paper: zk_Iw reference area == 5',
+                         _close(_num(zkv, 'zk_Iw_area_total'), 5.0),
+                         zkv.get('zk_Iw_area_total'))
+            ok &= _check('paper: zk_Iw weights == ref_evol',
+                         zkv.get('zk_Iw_weights') == 'ref_evol',
+                         zkv.get('zk_Iw_weights'))
+            ok &= _check('paper: zk_Iw slack share == 0.773148',
+                         _close(_num(zkv, 'zk_Iw_slack_share'),
+                                0.7731481481481481, atol=1e-12),
+                         zkv.get('zk_Iw_slack_share'))
+            ok &= _check('paper: zk_Iw wr share == 0.226852',
+                         _close(_num(zkv, 'zk_Iw_wr_share'),
+                                0.22685185185185186, atol=1e-12),
+                         zkv.get('zk_Iw_wr_share'))
+            ok &= _check('paper: zk_Iw no clipped wrinkled',
+                         _close(_num(zkv, 'zk_Iw_clip_zero_frac'), 0.0),
+                         zkv.get('zk_Iw_clip_zero_frac'))
+            ok &= _check('paper: zk_Iw ref_missing == 0',
+                         _close(_num(zkv, 'zk_Iw_ref_missing'), 0.0),
+                         zkv.get('zk_Iw_ref_missing'))
 
         # ---------------- 2) old disp path ----------------
         d2 = os.path.join(root, 'disp')
@@ -375,6 +467,46 @@ def main():
                          txt.replace('\n', '; '))
             ok &= _check('noE: zk reason=E_field_missing',
                          'reason=E_field_missing' in txt)
+
+        # ---------------- 4) I_w positive-part clip ----------------
+        d4 = os.path.join(root, 'clip')
+        os.makedirs(d4)
+        p4 = os.path.join(d4, 'LF_clip.odb')
+        with open(p4, 'wb') as f:
+            f.write(b'')
+        rc, out = _run_main(_make_odb(elements=CLIP_ELEMENTS), p4, d4)
+        res = _results(out)
+        ok &= _check('clip: exit 0', rc == 0, 'rc=%r' % rc)
+        ok &= _check('clip: RESULTS has 3 fields',
+                     res is not None and len(res) == 3, repr(res))
+        zkm = os.path.join(d4, 'zk_metrics.txt')
+        ok &= _check('clip: zk_metrics.txt exists', os.path.exists(zkm))
+        if os.path.exists(zkm):
+            zkv = _read_kv(zkm)
+            ok &= _check('clip: public zk_intensity_mean == 2e-4 (unchanged)',
+                         _close(_num(zkv, 'zk_intensity_mean'), 2e-4),
+                         zkv.get('zk_intensity_mean'))
+            ok &= _check('clip: zk_Iw == 1.336e-4 (slack only)',
+                         _close(_num(zkv, 'zk_Iw'), 1.336e-4),
+                         zkv.get('zk_Iw'))
+            ok &= _check('clip: zk_Iw_p95 == 3.34e-4',
+                         _close(_num(zkv, 'zk_Iw_p95'), 3.34e-4),
+                         zkv.get('zk_Iw_p95'))
+            ok &= _check('clip: zk_Iw slack share == 1.0',
+                         _close(_num(zkv, 'zk_Iw_slack_share'), 1.0),
+                         zkv.get('zk_Iw_slack_share'))
+            ok &= _check('clip: zk_Iw wr share == 0.0',
+                         _close(_num(zkv, 'zk_Iw_wr_share'), 0.0),
+                         zkv.get('zk_Iw_wr_share'))
+            ok &= _check('clip: zk_Iw clip_zero_frac == 1.0',
+                         _close(_num(zkv, 'zk_Iw_clip_zero_frac'), 1.0),
+                         zkv.get('zk_Iw_clip_zero_frac'))
+            ok &= _check('clip: zk_Iw reference area == 5',
+                         _close(_num(zkv, 'zk_Iw_area_total'), 5.0),
+                         zkv.get('zk_Iw_area_total'))
+            ok &= _check('clip: zk_Iw weights == ref_evol',
+                         zkv.get('zk_Iw_weights') == 'ref_evol',
+                         zkv.get('zk_Iw_weights'))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

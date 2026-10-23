@@ -102,7 +102,9 @@ python mfbo.py
 *   **주요 로직:**
     *   **LF Metrics:** 압축 응력 부피비(`lf1`), wrinkle 에너지 밀도(`lf2`), 응력 이방성(`lf3`).
     *   **ZK:** 별도 `ZK:` 줄 + `zk_metrics.txt` (Green-Lagrange `E` 기반 taut/wrinkled/slack,
-        `|E2|` intensity, `n1` 방향). `RESULTS` 3/4필드는 불변.
+        `|E2|` intensity, `n1` 방향). `RESULTS` 3/4필드는 불변. `zk_metrics.txt` 에는
+        기준면적·slack·positive-part 를 반영한 `zk_Iw` sidecar도 기록한다(아직 MFBO LF
+        target 으로 연결되지는 않았고, `mfbo.py` 는 계속 `lf1` 을 쓴다).
     *   **HF Metric:** SRP 모델을 적용하여 변형된 메쉬의 법선 벡터를 적분, wrinkle에 의한 **Thrust Loss** 계산.
     *   **성능:** `bulkDataBlocks`와 `numpy`를 사용하여 Python 루프 속도 문제 개선.
 

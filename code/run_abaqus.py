@@ -698,6 +698,8 @@ def _archive_dn(x_c, d_c, dn_lines):
 def _archive_zk(x_c, d_c, zk_lines):
     """[paper-match] eval_abaqus.py 가 낸 `ZK:` 줄을 점별 results txt 에 `zk_` 접두로 append.
 
+    `zk_metrics.txt` sidecar 의 추가 키(`zk_Iw`/기준면적/가중모드)도 함께 append 한다.
+
     계약 보존:
       - `RESULTS:` 3/4필드는 읽지도 쓰지도 않는다.
       - `all_results.csv` 는 열지 않는다(헤더 1회 규칙 - 열 추가 금지).
@@ -727,6 +729,30 @@ def _archive_zk(x_c, d_c, zk_lines):
                     elif not _k.startswith('zk_'):
                         _k = 'zk_' + _k
                     _kv[_k] = _v
+
+        #   `zk_metrics.txt` sidecar 의 추가 키(`zk_Iw` 등)도 점별 txt 에 남긴다.
+        #     ZK: 줄은 public 4키만 갖고, I_w/기준면적/가중모드는 sidecar 에만 있다.
+        #     ZK:FAIL 이면 sidecar 를 합치지 않는다(이전 런의 stale 값 차단).
+        if _fail is None and _kv:
+            try:
+                _zp = os.path.join(os.getcwd(), 'zk_metrics.txt')
+                if os.path.exists(_zp):
+                    with io.open(_zp, 'r', encoding='utf-8', errors='replace') as _zf:
+                        for _ln in _zf:
+                            _s = _ln.strip()
+                            if not _s or '=' not in _s:
+                                continue
+                            _k, _v = _s.split('=', 1)
+                            if _k == 'state_wrinkled_frac':
+                                _k = 'zk_state_wrinkled_frac'
+                            elif _k in ('step', 'frame', 'odb', 'weights', 'note'):
+                                _k = 'zk_' + _k
+                            elif not _k.startswith('zk_'):
+                                _k = 'zk_' + _k
+                            if _k not in _kv:
+                                _kv[_k] = _v
+            except Exception as _e:
+                emit('[ZK] zk_metrics.txt sidecar merge 실패(무시): %s' % _e)
 
         with io.open(_ptxt, 'a', encoding='utf-8') as _f:
             if _fail is not None and not _kv:

@@ -190,6 +190,36 @@ the diagnostics (`zk_state_taut_frac`, `zk_state_slack_frac`, `zk_dir_spread_deg
 `zk_n_elem`, `zk_n_wrinkled`, `zk_area_total`, `weights`, `note`). Successful LF/HF runs
 also append `zk_` keys to `results/results_xc..._dc....txt` (the CSV schema is unchanged).
 
+#### `zk_Iw` sidecar (not the public `ZK:` line)
+
+`zk_metrics.txt` additionally records the reference-area compressive strain `zk_Iw`:
+
+```
+I_w = (1/A_ref) [ Σ_wr    w_ref · max(|E2| - νE1, 0)
+                + Σ_slack w_ref · (|E2| + ν|E1|) ]
+```
+
+- `w_ref` = element `EVOL` at `frameValue=0` (undeformed reference; uniform thickness
+  makes it area-equivalent). If the reference frame is absent, the current `EVOL` or
+  uniform weights are used and `zk_Iw_weights` records the fallback.
+- `wrinkled` (`E1>0, E2<=0`) uses the **positive part** `max(|E2|-νE1, 0)`; a wrinkled
+  element with `|E2| <= νE1` contributes zero (quasi-taut).
+- `slack` (`E1<=0`) contributes `|E2| + ν|E1|`; taut contributes zero.
+- `ν = 0.34` (`ZK_NU` in `eval_abaqus.py`).
+- Sidecar keys: `zk_Iw`, `zk_Iw_p95`, `zk_Iw_area_total`, `zk_Iw_weights`,
+  `zk_Iw_slack_share`, `zk_Iw_wr_share`, `zk_Iw_clip_zero_frac`,
+  `zk_Iw_ref_missing`, `zk_Iw_nu`. `zk_Iw_slack_share` / `zk_Iw_wr_share` are the
+  shares of the `I_w` numerator from slack / wrinkled elements; `zk_Iw_clip_zero_frac`
+  is the fraction of the **wrinkled reference area** whose positive part is zero.
+- `zk_Iw` is **not** `zk_intensity_mean`: the public intensity is wrinkled-only `|E2|`
+  with current-`EVOL` weights; `I_w` covers the whole reference area, includes slack,
+  applies the `ν` correction, and clips the positive part.
+- `zk_Iw` is not yet an MFBO LF target; `mfbo.py` still uses `lf1`. No fixed
+  `hf ≈ 2.9234·I_w` scale is assumed — a multi-fidelity GP learns the LF–HF relation.
+- `python eval_lf_stub.py` (no Abaqus license) checks the synthetic `I_w`:
+  reference weights `(1,2,2)`, wrinkled `9.8e-5`, slack `3.34e-4`, the
+  `max(|E2|-νE1,0)` clip case, and that the public `ZK:` values are unchanged.
+
 ### hf / DN / u_z,ave definitions (unchanged)
 
 - `hf`: `get_hf` integrates the SRP thrust over the last `Step-Postbuckle` frame and returns

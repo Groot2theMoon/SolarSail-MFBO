@@ -17,6 +17,8 @@ LF : 선형/프리스트레스 해석에서 얻을 수 있는 지표들
     - lf3 (Stress Anisotropy): 주응력 간의 비대칭성 비율.
     - ZK (Zhang & Kiendl): Green-Lagrange E 의 주성분 E1/E2 로 taut/wrinkled/slack 을
       판정하고, wrinkled 영역의 |E2| 평균/p95 와 n1 대표 방향각을 낸다.
+      `zk_metrics.txt` 에는 추가로 기준면적 기반 압축 변형률 `zk_Iw` 를 남긴다
+      (public `ZK:` 4필드는 불변).
 
 HF :
     - hf (Thrust Loss): 이상적인 평판 대비, 주름진 형상으로 인해 손실된 추력의 양.
@@ -209,7 +211,11 @@ def get_lf(odb_path):
 #       taut      : E2 > 0
 #       wrinkled  : E1 > 0 and E2 <= 0
 #       slack     : E1 <= 0
-#   intensity   : wrinkled 영역의 |E2| 면적가중 평균 / p95
+#   intensity   : wrinkled 영역의 |E2| 면적가중 평균 / p95 (public ZK)
+#   I_w         : 기준면적(frameValue=0 EVOL) 가중 **전체** 압축 변형률 (sidecar)
+#                 I_w = (1/A_ref)[Σ_wr w_ref·max(|E2|-νE1,0)
+#                                  + Σ_slack w_ref·(|E2|+ν|E1|)]
+#                 public `zk_intensity_mean` 과 달리 taut=0, slack 포함, ν 보정, 기준면적.
 #   direction   : wrinkled 영역 n1 의 면적가중 axial mean (global x-y, mod 180 deg)
 #
 #   Abaqus shell E 성분은 요소 local frame(1축 = node1->node2)이다. E1/E2 는 회전
@@ -221,6 +227,7 @@ def get_lf(odb_path):
 #       계산 불가: "ZK:FAIL reason=.." (ASCII 토큰). RESULTS 3/4필드는 절대 건드리지 않는다.
 # ---------------------------------------------------------------------------
 ZK_DIR_R_MIN = 1.0e-3    # axial mean 이 의미를 가지려면 R >= 이 값 (등방/직교면 nan)
+ZK_NU = 0.34             # Kapton 푸아송비 — `zk_Iw` 의 압축 변형률 보정에만 사용
 
 
 def _zk_fail(reason):
@@ -247,6 +254,39 @@ def _zk_field_len(field):
         return len(field.values)
     except Exception:
         return 0
+
+
+def _zk_reference_evol(odb, instance):
+    """frameValue=0 프레임의 EVOL 을 {elementLabel: volume} 로 반환. 없으면 {}.
+
+    `I_w` 의 기준면적 가중이다. frameValue=0 의 EVOL 은 미변형(초기) 부피이므로,
+    두께가 일정한 막에서는 기준면적 가중과 같다. `hf` 의 `area_ref` 와 같은
+    '미변형 기준'을 쓰되, `I_w` 는 요소별 가중이 필요해 EVOL 을 그대로 쓴다.
+    """
+    ref = {}
+    try:
+        f0 = None
+        for sn in odb.steps.keys():
+            for fr in odb.steps[sn].frames:
+                try:
+                    if (abs(float(fr.frameValue)) < 1e-12
+                            and 'EVOL' in fr.fieldOutputs.keys()):
+                        f0 = fr
+                        break
+                except Exception:
+                    continue
+            if f0 is not None:
+                break
+        if f0 is None:
+            return ref
+        ef = f0.fieldOutputs['EVOL'].getSubset(region=instance)
+        for val in ef.values:
+            v = _zk_float(val.data)
+            if v is not None and np.isfinite(v) and v > 0.0:
+                ref[val.elementLabel] = v
+    except Exception:
+        return {}
+    return ref
 
 
 def _zk_get_e_field(frame, instance):
@@ -381,20 +421,28 @@ def get_zk(odb_path):
         except Exception:
             vol_map = {}
         weight_mode = 'evol' if vol_map else 'uniform'
+        #   `I_w` 전용 기준면적 가중: frameValue=0 EVOL. 없으면 현재 EVOL/균등으로 폴백.
+        ref_vol_map = _zk_reference_evol(odb, instance)
 
         labels_all = sorted(e_acc.keys())
-        labels, e11_l, e22_l, e12_l, w_l = [], [], [], [], []
+        labels, e11_l, e22_l, e12_l, w_l, wref_l = [], [], [], [], [], []
+        ref_missing = 0
         for lbl in labels_all:
             arr = np.asarray(e_acc[lbl], dtype=np.float64)
             m = np.mean(arr, axis=0)
             w = vol_map.get(lbl, 1.0 if not vol_map else 0.0)
             if w <= 0.0:
                 continue
+            wr = ref_vol_map.get(lbl)
+            if wr is None or not np.isfinite(wr) or wr <= 0.0:
+                ref_missing += 1
+                wr = w
             labels.append(lbl)
             e11_l.append(float(m[0]))
             e22_l.append(float(m[1]))
             e12_l.append(float(m[2]))
             w_l.append(float(w))
+            wref_l.append(float(wr))
         if not e11_l:
             return _zk_fail('EVOL_zero_for_all_E_elements')
 
@@ -402,9 +450,18 @@ def get_zk(odb_path):
         e22 = np.asarray(e22_l, dtype=np.float64)
         e12 = np.asarray(e12_l, dtype=np.float64)
         w = np.asarray(w_l, dtype=np.float64)
+        wref = np.asarray(wref_l, dtype=np.float64)
         wsum = float(np.sum(w))
         if not (wsum > 0.0):
             return _zk_fail('EVOL_zero_total')
+        if ref_vol_map and ref_missing == 0:
+            iw_weights = 'ref_evol'
+        elif ref_vol_map and ref_missing < len(labels):
+            iw_weights = 'ref_evol_partial'
+        elif vol_map:
+            iw_weights = 'evol_current'
+        else:
+            iw_weights = 'uniform'
 
         # ---- 주변형률 (local 성분; 고유값은 회전 불변) ----
         mean_e = 0.5 * (e11 + e22)
@@ -429,6 +486,30 @@ def get_zk(odb_path):
         else:
             int_mean = 0.0
             int_p95 = 0.0
+
+        # ---- I_w (sidecar): 기준면적 가중 전체 압축 변형률 ----
+        #   wrinkled: max(|E2|-nu*E1, 0)  (positive part; 준-taut 은 0)
+        #   slack   : |E2| + nu*|E1|     (E1<=0, E2<=0)
+        #   taut    : 0
+        #   분모는 public EVOL 이 아니라 frameValue=0 EVOL 의 합(A_ref)이다.
+        wr_comp = np.maximum(np.abs(e2) - ZK_NU * e1, 0.0)
+        slack_comp = np.abs(e2) + ZK_NU * np.abs(e1)
+        comp = np.zeros_like(e1)
+        comp[mask_wrinkled] = wr_comp[mask_wrinkled]
+        comp[mask_slack] = slack_comp[mask_slack]
+        iw_den = float(np.sum(wref))
+        iw_num = float(np.sum(wref * comp))
+        iw_mean = (iw_num / iw_den) if iw_den > 0.0 else 0.0
+        _pos = comp > 0.0
+        iw_p95 = (_zk_weighted_percentile(comp[_pos], wref[_pos], 95.0)
+                  if np.any(_pos) else 0.0)
+        wr_num = float(np.sum(wref[mask_wrinkled] * wr_comp[mask_wrinkled]))
+        slack_num = float(np.sum(wref[mask_slack] * slack_comp[mask_slack]))
+        iw_slack_share = (slack_num / iw_num) if iw_num > 0.0 else 0.0
+        iw_wr_share = (wr_num / iw_num) if iw_num > 0.0 else 0.0
+        wr_area = float(np.sum(wref[mask_wrinkled]))
+        clip_area = float(np.sum(wref[mask_wrinkled & (wr_comp <= 0.0)]))
+        iw_clip_zero_frac = (clip_area / wr_area) if wr_area > 0.0 else 0.0
 
         # ---- 방향: local 1축 회전 후 axial mean (2*theta) ----
         dir_deg = float('nan')
@@ -478,6 +559,15 @@ def get_zk(odb_path):
                 'zk_n_wrinkled': int(np.count_nonzero(mask_wrinkled)),
                 'zk_area_total': wsum,
                 'weights': weight_mode,
+                'zk_Iw': iw_mean,
+                'zk_Iw_p95': iw_p95,
+                'zk_Iw_area_total': iw_den,
+                'zk_Iw_weights': iw_weights,
+                'zk_Iw_slack_share': iw_slack_share,
+                'zk_Iw_wr_share': iw_wr_share,
+                'zk_Iw_clip_zero_frac': iw_clip_zero_frac,
+                'zk_Iw_ref_missing': int(ref_missing),
+                'zk_Iw_nu': float(ZK_NU),
                 'note': dir_note}
     except Exception as e:
         return _zk_fail('exception_%s' % type(e).__name__)
@@ -525,7 +615,10 @@ def write_zk_metrics(zk, odb_path):
             for k in ('state_wrinkled_frac', 'zk_intensity_mean', 'zk_intensity_p95',
                       'zk_dir_deg', 'zk_state_taut_frac', 'zk_state_slack_frac',
                       'zk_dir_spread_deg', 'zk_n_elem', 'zk_n_wrinkled',
-                      'zk_area_total', 'weights', 'note'):
+                      'zk_area_total', 'weights', 'note',
+                      'zk_Iw', 'zk_Iw_p95', 'zk_Iw_area_total',
+                      'zk_Iw_weights', 'zk_Iw_slack_share', 'zk_Iw_wr_share',
+                      'zk_Iw_clip_zero_frac', 'zk_Iw_ref_missing', 'zk_Iw_nu'):
                 if k in zk:
                     lines.append('%s=%s' % (k, zk[k]))
         with open('zk_metrics.txt', 'w') as f:
