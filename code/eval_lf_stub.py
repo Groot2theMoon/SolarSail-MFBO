@@ -23,12 +23,17 @@
        - E1>0, E2<0 이지만 |E2|-nu*E1 <= 0 인 요소는 I_w 에서 0.
        - slack 항만 남는지, clip fraction / share 가 맞는지 확인.
 
+  5) LE fallback
+       - Abaqus NLGEOM=ON 처럼 E 대신 LE 만 있는 ODB.
+       - LE 주성분을 E=0.5(exp(2*LE)-1) 로 변환해 같은 zk_Iw/ZK 가 나오는지 확인.
+
 사용:
     python3 eval_lf_stub.py
 종료코드: 0 PASS / 1 FAIL
 """
 import contextlib
 import io
+import math
 import os
 import shutil
 import sys
@@ -178,6 +183,27 @@ CLIP_ELEMENTS = [
     (3, ELEMENTS[2][1], ELEMENTS[2][2], ELEMENTS[2][3], ELEMENTS[2][4]),
 ]
 
+
+def _green_to_log_le(e11, e22):
+    """대각 Green-Lagrange E1/E2 -> logarithmic LE1/LE2."""
+    m = 0.5 * (e11 + e22)
+    r = (0.25 * (e11 - e22) ** 2) ** 0.5
+    e1 = m + r
+    e2 = m - r
+    return 0.5 * math.log1p(2.0 * e1), 0.5 * math.log1p(2.0 * e2)
+
+
+def _le_elements(elements):
+    """같은 E 상태를 LE 필드로 표현한 합성 요소 목록(테스트용)."""
+    out = []
+    for (lbl, conn, s, e, vol) in elements:
+        le1, le2 = _green_to_log_le(e[0], e[1])
+        out.append((lbl, conn, s, (le1, le2, 0.0, 0.0, 0.0, 0.0), vol))
+    return out
+
+
+LE_ELEMENTS = _le_elements(ELEMENTS)
+
 NODES = [
     (1, (0.0, 0.0, 0.0)), (2, (1.0, 0.0, 0.0)),
     (3, (1.0, 1.0, 0.0)), (4, (0.0, 1.0, 0.0)),
@@ -191,13 +217,14 @@ NODES = [
 ]
 
 
-def _frame(elements, with_E=True):
+def _frame(elements, with_E=True, strain_key='E'):
     fields = {
         'S': _Field([_Val(lbl, s) for (lbl, conn, s, e, vol) in elements]),
         'EVOL': _Field([_Val(lbl, vol) for (lbl, conn, s, e, vol) in elements]),
     }
     if with_E:
-        fields['E'] = _Field([_Val(lbl, e) for (lbl, conn, s, e, vol) in elements])
+        fields[strain_key] = _Field([_Val(lbl, e)
+                                     for (lbl, conn, s, e, vol) in elements])
     return _Frame(fields)
 
 
@@ -209,7 +236,8 @@ def _ref_frame(elements):
         frameValue=0.0)
 
 
-def _make_odb(include_high=False, with_E=True, high_zero=True, elements=None):
+def _make_odb(include_high=False, with_E=True, high_zero=True, elements=None,
+              strain_key='E'):
     elements = elements or ELEMENTS
     instance = _Instance(
         'MEMBRANE-1',
@@ -217,7 +245,8 @@ def _make_odb(include_high=False, with_E=True, high_zero=True, elements=None):
         [_Elem(lbl, conn) for (lbl, conn, s, e, vol) in elements],
     )
     steps = {'Step-GlobalTension': _Step([_ref_frame(elements),
-                                          _frame(elements, with_E=with_E)])}
+                                          _frame(elements, with_E=with_E,
+                                                 strain_key=strain_key)])}
     if include_high:
         if high_zero:
             elems = [(lbl, conn, (0.0, 0.0, 0.0),
@@ -226,7 +255,8 @@ def _make_odb(include_high=False, with_E=True, high_zero=True, elements=None):
         else:
             elems = elements
         steps['Step-HighTension'] = _Step([_ref_frame(elems),
-                                           _frame(elems, with_E=with_E)])
+                                           _frame(elems, with_E=with_E,
+                                                  strain_key=strain_key)])
     return _Odb(steps, instance)
 
 
@@ -411,6 +441,9 @@ def main():
             ok &= _check('paper: zk_Iw ref_missing == 0',
                          _close(_num(zkv, 'zk_Iw_ref_missing'), 0.0),
                          zkv.get('zk_Iw_ref_missing'))
+            ok &= _check('paper: strain_field == E',
+                         zkv.get('strain_field') == 'E',
+                         zkv.get('strain_field'))
 
         # ---------------- 2) old disp path ----------------
         d2 = os.path.join(root, 'disp')
@@ -505,6 +538,51 @@ def main():
                          _close(_num(zkv, 'zk_Iw_area_total'), 5.0),
                          zkv.get('zk_Iw_area_total'))
             ok &= _check('clip: zk_Iw weights == ref_evol',
+                         zkv.get('zk_Iw_weights') == 'ref_evol',
+                         zkv.get('zk_Iw_weights'))
+
+        # ---------------- 5) LE fallback (Abaqus NLGEOM=ON) ----------------
+        d5 = os.path.join(root, 'le')
+        os.makedirs(d5)
+        p5 = os.path.join(d5, 'LF_le.odb')
+        with open(p5, 'wb') as f:
+            f.write(b'')
+        rc, out = _run_main(
+            _make_odb(elements=LE_ELEMENTS, strain_key='LE'), p5, d5)
+        res = _results(out)
+        zk = _zk_line(out)
+        ok &= _check('LE: exit 0', rc == 0, 'rc=%r' % rc)
+        ok &= _check('LE: RESULTS has 3 fields',
+                     res is not None and len(res) == 3, repr(res))
+        ok &= _check('LE: ZK is OK (not FAIL)',
+                     zk is not None and zk.startswith('ZK:') and 'FAIL' not in zk,
+                     repr(zk))
+        zkm = os.path.join(d5, 'zk_metrics.txt')
+        ok &= _check('LE: zk_metrics.txt exists', os.path.exists(zkm))
+        if os.path.exists(zkm):
+            zkv = _read_kv(zkm)
+            ok &= _check('LE: strain_field == LE',
+                         zkv.get('strain_field') == 'LE',
+                         zkv.get('strain_field'))
+            ok &= _check('LE: strain_measure == E',
+                         zkv.get('strain_measure') == 'E',
+                         zkv.get('strain_measure'))
+            ok &= _check('LE: conversion == green_lagrange_from_log',
+                         zkv.get('strain_conversion') == 'green_lagrange_from_log',
+                         zkv.get('strain_conversion'))
+            ok &= _check('LE: zk_Iw == 1.728e-4 (same as E)',
+                         _close(_num(zkv, 'zk_Iw'), 1.728e-4),
+                         zkv.get('zk_Iw'))
+            ok &= _check('LE: zk_Iw_p95 == 3.34e-4',
+                         _close(_num(zkv, 'zk_Iw_p95'), 3.34e-4),
+                         zkv.get('zk_Iw_p95'))
+            ok &= _check('LE: public zk_intensity_mean == 2e-4',
+                         _close(_num(zkv, 'zk_intensity_mean'), 2e-4),
+                         zkv.get('zk_intensity_mean'))
+            ok &= _check('LE: zk_dir == 30 deg',
+                         _close(_num(zkv, 'zk_dir_deg'), 30.0, atol=1e-9),
+                         zkv.get('zk_dir_deg'))
+            ok &= _check('LE: zk_Iw weights == ref_evol',
                          zkv.get('zk_Iw_weights') == 'ref_evol',
                          zkv.get('zk_Iw_weights'))
     finally:

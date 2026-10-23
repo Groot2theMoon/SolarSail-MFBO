@@ -48,10 +48,12 @@ def main(argv):
                     fields = ['<error:%s>' % type(exc).__name__]
                 print("  frame[%d] value=%s fields=%s"
                       % (i, frame.frameValue, ','.join(fields)))
-            if 'E' not in step.frames[-1].fieldOutputs.keys():
-                print("  !!! last frame has no E")
+            _last = step.frames[-1].fieldOutputs.keys()
+            if ('E' not in _last) and ('LE' not in _last):
+                print("  !!! last frame has neither E nor LE")
             else:
-                print("  OK: last frame has E")
+                print("  OK: last frame has %s"
+                      % ('E' if 'E' in _last else 'LE'))
     finally:
         try:
             odb.close()

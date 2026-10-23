@@ -2183,11 +2183,12 @@ if fidelity == 'LF':
                 u1=sign * CLAMP_FINAL / sqrt2,
                 u2=CLAMP_FINAL / sqrt2)
 
-    #   [paper-match] 'E' = Green-Lagrange strain (nlgeom=ON). eval_abaqus 의 ZK
-    #     (Zhang & Kiendl: E1/E2/n1) 가 이 필드에서 변형률을 읽는다. 빼면 ZK:FAIL.
+    #   [paper-match] 변형률 = Green-Lagrange E. Abaqus NLGEOM=ON 은 ODB 에 E 대신
+    #     LE(logarithmic)를 쓰는 경우가 있다(실측: Lean field 만 존재). eval_abaqus 가
+    #     LE 주성분을 E=0.5*(exp(2*LE)-1) 로 변환하므로 LE 를 명시적으로 요청한다.
     #   [2026-10-23] F-Output-1 에 E 를 setValues 로 덧붙이는 방식이 ODB 에 반영되지 않는
     #     사례가 확인됐다(tag v2-e1 인데도 E_field_missing). ZK 전용 **별도 요청 F-ZK** 를
-    #     Initial 에 만들고 frequency=1 로 고정한다. F-Output-1 은 S/U/COORD/EVOL/RF 만 남긴다.
+    #     선택 LF 스텝에 만들고 frequency=1 로 고정한다. F-Output-1 은 S/U/COORD/EVOL/RF 만 남긴다.
     my_model.fieldOutputRequests['F-Output-1'].setValues(
         variables=('S', 'U', 'COORD', 'EVOL', 'RF'),
         frequency=10   # R-10: odb 크기 절감
@@ -2200,17 +2201,17 @@ if fidelity == 'LF':
         my_model.FieldOutputRequest(
             name='F-ZK',
             createStepName=_zk_output_step,
-            variables=('E',),
+            variables=('LE',),
             frequency=1,   # 마지막 프레임 포함 보장
         )
-        emit("[LF] field output F-ZK: step=%s variables=('E',) frequency=1"
+        emit("[LF] field output F-ZK: step=%s variables=('LE',) frequency=1"
              % _zk_output_step)
     except Exception as _fze:
-        #   API/버전 차이 폴백: 기존 요청에 E 를 넣고 주기를 1 로.
+        #   API/버전 차이 폴백: 기존 요청에 LE 를 넣고 주기를 1 로.
         emit("[LF] !!! F-ZK 생성 실패(%s) -> F-Output-1 폴백" % _fze)
         try:
             my_model.fieldOutputRequests['F-Output-1'].setValues(
-                variables=('S', 'E', 'U', 'COORD', 'EVOL', 'RF'),
+                variables=('S', 'LE', 'U', 'COORD', 'EVOL', 'RF'),
                 frequency=1,
             )
         except Exception as _fbe:

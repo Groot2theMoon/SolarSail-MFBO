@@ -17,6 +17,8 @@ LF : 선형/프리스트레스 해석에서 얻을 수 있는 지표들
     - lf3 (Stress Anisotropy): 주응력 간의 비대칭성 비율.
     - ZK (Zhang & Kiendl): Green-Lagrange E 의 주성분 E1/E2 로 taut/wrinkled/slack 을
       판정하고, wrinkled 영역의 |E2| 평균/p95 와 n1 대표 방향각을 낸다.
+      Abaqus NLGEOM=ON 이 `E` 대신 `LE`(logarithmic)를 출력하면 주성분을
+      `E = 0.5(exp(2*LE)-1)` 로 변환해 같은 Green-Lagrange 기준으로 계산한다.
       `zk_metrics.txt` 에는 추가로 기준면적 기반 압축 변형률 `zk_Iw` 를 남긴다
       (public `ZK:` 4필드는 불변).
 
@@ -206,6 +208,8 @@ def get_lf(odb_path):
 #
 #   LF ODB 의 최종 상태(paper: Step-GlobalTension, disp: Step-HighTension)에서
 #   Green-Lagrange 변형률 E 를 읽어 주성분 E1 >= E2 와 주방향 n1 을 계산한다.
+#   Abaqus/Standard NLGEOM=ON 은 ODB 에 `E` 대신 `LE` 를 쓰는 경우가 있다. 그때는
+#   주성분을 E = 0.5*(exp(2*LE)-1) 로 변환한다(고유벡터는 동일).
 #
 #   상태(요소별, 면적가중):
 #       taut      : E2 > 0
@@ -290,24 +294,32 @@ def _zk_reference_evol(odb, instance):
 
 
 def _zk_get_e_field(frame, instance):
-    """E 를 integration point -> centroid -> raw 순으로 시도한다."""
-    if 'E' not in frame.fieldOutputs.keys():
-        return None, 'E_field_missing'
-    raw = frame.fieldOutputs['E']
-    for _pos in (INTEGRATION_POINT, CENTROID):
-        try:
-            cand = raw.getSubset(position=_pos, region=instance)
-        except Exception:
+    """E(우선) 또는 LE 를 integration point -> centroid -> raw 순으로 시도한다.
+
+    반환: (field, field_name, 실패사유). field_name 은 'E' 또는 'LE'.
+    Abaqus NLGEOM=ON 은 E 대신 LE 를 저장할 수 있다(get_zk 에서 E 로 변환).
+    """
+    keys = frame.fieldOutputs.keys()
+    for _name in ('E', 'LE'):
+        if _name not in keys:
             continue
+        raw = frame.fieldOutputs[_name]
+        for _pos in (INTEGRATION_POINT, CENTROID):
+            try:
+                cand = raw.getSubset(position=_pos, region=instance)
+            except Exception:
+                continue
+            if _zk_field_len(cand) > 0:
+                return cand, _name, None
+        try:
+            cand = raw.getSubset(region=instance)
+        except Exception:
+            cand = raw
         if _zk_field_len(cand) > 0:
-            return cand, None
-    try:
-        cand = raw.getSubset(region=instance)
-    except Exception:
-        cand = raw
-    if _zk_field_len(cand) == 0:
-        return None, 'E_field_empty'
-    return cand, None
+            return cand, _name, None
+    if ('E' not in keys) and ('LE' not in keys):
+        return None, None, 'E_field_missing'
+    return None, None, 'E_field_empty'
 
 
 def _zk_element_local_angles(instance, labels):
@@ -383,7 +395,7 @@ def get_zk(odb_path):
         except Exception:
             return _zk_fail('membrane_instance_missing')
 
-        e_field, why = _zk_get_e_field(frame, instance)
+        e_field, strain_field, why = _zk_get_e_field(frame, instance)
         if e_field is None:
             _fail = _zk_fail(why or 'E_field_missing')
             #   진단: 선택 프레임에 실제로 어떤 field 가 있는지 sidecar 에 남긴다.
@@ -475,6 +487,14 @@ def get_zk(odb_path):
         rad = np.sqrt((0.5 * (e11 - e22)) ** 2 + e12 ** 2)
         e1 = mean_e + rad
         e2 = mean_e - rad
+        #   Abaqus NLGEOM=ON 은 LE(대수 변형률)를 쓴다. 주성분은
+        #   E = 0.5*(exp(2*LE)-1) 로 Green-Lagrange 로 정확히 변환된다(고유벡터 동일).
+        strain_measure = 'E'
+        strain_conversion = 'none'
+        if strain_field == 'LE':
+            e1 = 0.5 * np.expm1(2.0 * e1)
+            e2 = 0.5 * np.expm1(2.0 * e2)
+            strain_conversion = 'green_lagrange_from_log'
 
         mask_taut = (e2 > 0.0)
         mask_wrinkled = (e1 > 0.0) & (e2 <= 0.0)
@@ -566,6 +586,9 @@ def get_zk(odb_path):
                 'zk_n_wrinkled': int(np.count_nonzero(mask_wrinkled)),
                 'zk_area_total': wsum,
                 'weights': weight_mode,
+                'strain_field': strain_field,
+                'strain_measure': strain_measure,
+                'strain_conversion': strain_conversion,
                 'zk_Iw': iw_mean,
                 'zk_Iw_p95': iw_p95,
                 'zk_Iw_area_total': iw_den,
@@ -626,6 +649,7 @@ def write_zk_metrics(zk, odb_path):
                       'zk_dir_deg', 'zk_state_taut_frac', 'zk_state_slack_frac',
                       'zk_dir_spread_deg', 'zk_n_elem', 'zk_n_wrinkled',
                       'zk_area_total', 'weights', 'note',
+                      'strain_field', 'strain_measure', 'strain_conversion',
                       'zk_Iw', 'zk_Iw_p95', 'zk_Iw_area_total',
                       'zk_Iw_weights', 'zk_Iw_slack_share', 'zk_Iw_wr_share',
                       'zk_Iw_clip_zero_frac', 'zk_Iw_ref_missing', 'zk_Iw_nu'):

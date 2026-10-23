@@ -167,6 +167,10 @@ baseline (`LOAD_MODE='disp'`) keeps the 1 mm `GLOBAL_FINAL`; it is not the paper
 `ZK:` is a **separate line**; it never changes the `RESULTS` contract.
 
 - `E` is the Green-Lagrange strain (`nlgeom=ON`) at the last frame of the LF state.
+  Abaqus/Standard may write `LE` (logarithmic strain) instead of `E`; `get_zk` then
+  converts the principal values with `E = 0.5*(exp(2*LE)-1)` (same eigenvectors).
+  `strain_field` records `E` or `LE`, `strain_measure=E`, and
+  `strain_conversion=green_lagrange_from_log` for the fallback.
   Components are averaged over integration/section points per element before the principal
   values (membrane strain).
 - Principal strains `E1 >= E2` in the shell local frame; `E1/E2` are rotation-invariant.
@@ -186,7 +190,8 @@ baseline (`LOAD_MODE='disp'`) keeps the 1 mm `GLOBAL_FINAL`; it is not the paper
   (`S2 < 0`) is the complementary stress-based indicator.
 
 `zk_metrics.txt` (in `code/aba` when run by `run_abaqus.py`) contains `status`, `step`, and
-the diagnostics (`zk_state_taut_frac`, `zk_state_slack_frac`, `zk_dir_spread_deg`,
+the diagnostics (`strain_field`, `strain_measure`, `strain_conversion`,
+`zk_state_taut_frac`, `zk_state_slack_frac`, `zk_dir_spread_deg`,
 `zk_n_elem`, `zk_n_wrinkled`, `zk_area_total`, `weights`, `note`). Successful LF/HF runs
 also append `zk_` keys to `results/results_xc..._dc....txt` (the CSV schema is unchanged).
 
@@ -208,7 +213,8 @@ I_w = (1/A_ref) [ Σ_wr    w_ref · max(|E2| - νE1, 0)
 - `ν = 0.34` (`ZK_NU` in `eval_abaqus.py`).
 - Sidecar keys: `zk_Iw`, `zk_Iw_p95`, `zk_Iw_area_total`, `zk_Iw_weights`,
   `zk_Iw_slack_share`, `zk_Iw_wr_share`, `zk_Iw_clip_zero_frac`,
-  `zk_Iw_ref_missing`, `zk_Iw_nu`. `zk_Iw_slack_share` / `zk_Iw_wr_share` are the
+  `zk_Iw_ref_missing`, `zk_Iw_nu`, plus `strain_field` / `strain_measure` /
+  `strain_conversion`. `zk_Iw_slack_share` / `zk_Iw_wr_share` are the
   shares of the `I_w` numerator from slack / wrinkled elements; `zk_Iw_clip_zero_frac`
   is the fraction of the **wrinkled reference area** whose positive part is zero.
 - `zk_Iw` is **not** `zk_intensity_mean`: the public intensity is wrinkled-only `|E2|`
@@ -222,13 +228,20 @@ I_w = (1/A_ref) [ Σ_wr    w_ref · max(|E2| - νE1, 0)
 - If an LF run reports `ZK:FAIL reason=E_field_missing`, first check whether
   the ODB was reused (old tag) and delete `aba\LF_Analysis_<tag>.odb` plus its
   `.model.txt`. The LF sidecar tag is now `globaltension-v3-e2-...`.
-- If a fresh LF run still has no `E`, the LF deck creates a dedicated
-  `F-ZK` field output request (`E`, `frequency=1`) on the selected LF step
-  (`Step-GlobalTension` or `Step-HighTension`); inspect it with
+  `E_field_missing` now means **neither `E` nor `LE`**; older code reported it
+  for an `LE`-only ODB, which the current code accepts and converts.
+- If a fresh LF run still has no `E`/`LE`, the LF deck creates a dedicated
+  `F-ZK` field output request (`LE`, `frequency=1`) on the selected LF step
+  (`Step-GlobalTension` or `Step-HighTension`); `get_zk` converts `LE` to
+  Green-Lagrange. Inspect it with
   `findstr /C:"[LF] field output" hf_run_log.txt`. The ODB itself can be
   inspected without a CAE license:
   `abaqus python check_odb_fields.py aba\LF_Analysis_<tag>.odb`.
   `zk_metrics.txt` also records `fields=` and `frame_value=` on failure.
+- If the existing ODB already contains `LE`, no LF rerun is required to check the
+  metric; run the evaluator directly:
+  `cd aba` then
+  `abaqus python ..\eval_abaqus.py LF_Analysis_<tag>.odb LF`.
 
 ### hf / DN / u_z,ave definitions (unchanged)
 
