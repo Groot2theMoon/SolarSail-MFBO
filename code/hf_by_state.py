@@ -152,6 +152,26 @@ def principal_and_states(e11, e22, e12, field_name):
     return e1, e2, m_taut, m_wr, m_sl
 
 
+def iw_metrics(e1, e2, m_taut, m_wr, m_sl, wref_arr):
+    """I_w 와 상태별 기여. 정의는 eval_abaqus.get_zk 와 동일."""
+    wr = np.maximum(np.abs(e2) - ZK_NU * e1, 0.0)
+    sl = np.abs(e2) + ZK_NU * np.abs(e1)
+    comp = np.zeros_like(e1)
+    comp[m_wr] = wr[m_wr]
+    comp[m_sl] = sl[m_sl]
+    wsum = float(np.sum(wref_arr))
+    out = {'I_w': (float(np.sum(wref_arr * comp) / wsum) if wsum > 0 else 0.0)}
+    for name, m in (('taut', m_taut), ('wrinkled', m_wr), ('slack', m_sl)):
+        aw = float(np.sum(wref_arr[m]))
+        out[name] = (float(np.sum(wref_arr[m] * comp[m]) / aw) if aw > 0 else 0.0)
+        out[name + '_w'] = aw                # 상태별 기준면적(가중)
+    wr_area = float(np.sum(wref_arr[m_wr]))
+    clip = float(np.sum(wref_arr[m_wr & (wr <= 0.0)]))
+    out['clip_zero_frac'] = (clip / wr_area) if wr_area > 0 else 0.0
+    out['wref_sum'] = wsum
+    return out
+
+
 # ------------------------------------------------------------------ 메인
 def main(argv):
     if len(argv) < 2:
@@ -190,6 +210,11 @@ def main(argv):
         if not wref:
             print(_P + ' !!! LF frameValue=0 EVOL 없음 -> 기준면적 가중 불가')
             return 1
+        wref_lf = np.asarray([wref.get(int(l), 0.0) for l in lf_labels],
+                             dtype=np.float64)
+        iw_lf = iw_metrics(e1, e2, m_taut, m_wr, m_sl, wref_lf)
+        print(_P + ' I_w(LF) = %.6e -> hf_pred = %.6e (2.9234x)'
+              % (iw_lf['I_w'], 2.9234 * iw_lf['I_w']))
         print(_P + ' LF 상태: taut=%.4f wrinkled=%.4f slack=%.4f'
               % (float(np.sum(m_taut)) / len(m_taut),
                  float(np.sum(m_wr)) / len(m_wr),
@@ -240,6 +265,24 @@ def main(argv):
         area_ref_total = float(np.sum(areas0))
         print(_P + ' HF: %s / step=%s frame=%d / 요소 %d / 미변형 면적=%.6f m2'
               % (hf_path, hf_sname, len(hf_step.frames), len(hf_labels), area_ref_total))
+
+        #   HF 자신의 변형률장으로 I_w 를 계산해 LF 와 비교한다(상태는 각자 기준).
+        hf_iw = None
+        _g = elem_strains(hf_frame, hf_inst)
+        if _g[0] is not None:
+            _labs_h, (_a, _b, _c), _fn = _g
+            _e1h, _e2h, _mt, _mw, _ms = principal_and_states(_a, _b, _c, _fn)
+            _wr = _zk_reference_evol(hf, hf_inst)
+            _w = np.asarray([_wr.get(int(l), 0.0) for l in _labs_h],
+                            dtype=np.float64)
+            if float(np.sum(_w)) > 0.0:
+                hf_iw = iw_metrics(_e1h, _e2h, _mt, _mw, _ms, _w)
+                print(_P + ' I_w(HF) = %.6e -> hf_pred = %.6e (2.9234x)'
+                      % (hf_iw['I_w'], 2.9234 * hf_iw['I_w']))
+            else:
+                print(_P + ' (경고) HF 기준 EVOL 없음 -> I_w(HF) 생략')
+        else:
+            print(_P + ' (경고) HF 변형률 없음(%s) -> I_w(HF) 생략' % _g[2])
 
         cos_t = np.clip(normals @ (-np.asarray(U_SUN, dtype=np.float64)), 0.0, 1.0)
         #   요소 손실(면적×):  A_e*(IDEAL - A0*c - 2R0*c^3)
@@ -309,6 +352,31 @@ def main(argv):
             print(_P + '   -> 손실이 wrinkled/slack 에 집중 = **주름 지배**')
         else:
             print(_P + '   -> 혼합. wrinkled 영역 hf_s 와 I_w 를 따로 비교해야 한다')
+
+    # ---------- I_w(LF) vs I_w(HF) vs hf  (프록시 진단)
+    print()
+    try:
+        print(_P + ' ---- I_w 프록시 진단 ----')
+        print(_P + ' hf(실측)              = %.6e' % hf_total)
+        print(_P + ' hf_pred(I_w LF)       = %.6e   (LF 평평, u3=0)'
+              % (2.9234 * iw_lf['I_w']))
+        if hf_iw is not None:
+            print(_P + ' hf_pred(I_w HF)       = %.6e   (HF 자유, u3 free)'
+                  % (2.9234 * hf_iw['I_w']))
+            if hf_iw['I_w'] > 0.0:
+                print(_P + ' I_w(HF)/I_w(LF)       = %.3f' % (hf_iw['I_w'] / iw_lf['I_w']))
+            if 2.9234 * hf_iw['I_w'] > 0.0:
+                print(_P + ' 실측/예측(I_w HF)     = %.3f 배'
+                      % (hf_total / (2.9234 * hf_iw['I_w'])))
+            tw = rows.get('wrinkled')
+            if tw and hf_iw['wrinkled'] > 0.0:
+                print(_P + ' wrinkled 내부: hf_s=%.4e / 2.9234*I_w_wr=%.4e -> %.2f 배'
+                      % (tw['hf_s'], 2.9234 * hf_iw['wrinkled'],
+                         tw['hf_s'] / (2.9234 * hf_iw['wrinkled'])))
+        else:
+            print(_P + ' hf_pred(I_w HF)       = (생략)')
+    except Exception as _e:
+        print(_P + ' (경고) 진단 출력 실패: %s' % _e)
 
     if js_path:
         with open(js_path, 'w') as fh:
