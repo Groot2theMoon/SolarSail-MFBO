@@ -290,7 +290,11 @@ def main():
             'frame_value': frame_value, 'n_elem': int(n),
             'n_wrinkled': int(np.count_nonzero(m_wr)),
             'strain_field': strain_field, 'strain_measure': 'E',
-            'strain_conversion': conversion, 'phi_applied': True,
+            'strain_conversion': conversion,
+            #   phi frame(theta_local + element local 1-axis) is still unverified.
+            #   Do not advertise it as confirmed to downstream JSON consumers.
+            'phi_applied': 'provisional',
+            'phi_frame_status': 'unverified',
             'zk_nu': float(ZK_NU),
             'area_ref_m2_total': area_ref_total,
             'evol_ref_total': wref_sum, 'evol_cur_total': wcur_sum,

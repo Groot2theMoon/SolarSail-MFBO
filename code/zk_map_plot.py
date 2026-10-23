@@ -93,10 +93,13 @@ def _axes(ax, nc, title):
     ax.set_xlim(xmin - pad, xmax + pad)
     ax.set_ylim(ymin - pad, ymax + pad)
     ax.set_aspect('equal')
-    ax.set_xticks([])
-    ax.set_yticks([])
-    for sp in ax.spines.values():
-        sp.set_visible(False)
+    #   논문용 좌표축: x/y[m] 와 눈금을 명시한다(격자 계단형으로 보이는 문제 방지).
+    ax.set_xlabel('x [m]', fontsize=9)
+    ax.set_ylabel('y [m]', fontsize=9)
+    ax.tick_params(axis='both', which='major', labelsize=8,
+                   direction='out', length=3, width=0.6)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     ax.set_title(title, fontsize=10)
 
 
@@ -191,7 +194,7 @@ def _fig4(meta_lf, data_lf, z_lf, meta_hf, data_hf, z_hf, outdir, dpi):
     vmax_lf = vmax_lf if vmax_lf > 0 else 1.0
     pcl = _collection(axs[0], verts_lf, comp, 'viridis',
                       Normalize(0.0, vmax_lf))
-    _axes(axs[0], nc_lf, 'LF potential (u3=0)')
+    _axes(axs[0], nc_lf, 'LF state (LF ODB, u3=0) - I_w integrand')
     cbl = fig.colorbar(pcl, ax=axs[0], fraction=0.035, pad=0.02)
     cbl.set_label('comp (strain)')
     loss = d_hf['loss_e']
@@ -199,10 +202,14 @@ def _fig4(meta_lf, data_lf, z_lf, meta_hf, data_hf, z_hf, outdir, dpi):
     vmax_hf = vmax_hf if vmax_hf > 0 else 1.0
     pch = _collection(axs[1], verts_hf, loss, 'magma',
                       Normalize(0.0, vmax_hf))
-    _axes(axs[1], nc_hf, 'HF loss (reference layout)')
+    _axes(axs[1], nc_hf, 'HF loss (HF ODB state) - reference layout')
     cbh = fig.colorbar(pch, ax=axs[1], fraction=0.035, pad=0.02)
     cbh.set_label('loss_e (relative to hf denominator)')
     fig.suptitle('LF potential vs HF loss - reference element layout', fontsize=11)
+    fig.text(0.5, 0.01,
+             'State/field in each panel is computed from its own ODB; '
+             'element labels align but LF and HF states can differ.',
+             ha='center', fontsize=8)
     _save(fig, outdir, 'fig4_lf_hf.png', dpi)
 
 
@@ -213,7 +220,7 @@ def _fig4b(meta_hf, data_hf, z_hf, outdir, dpi):
     vmax = vmax if vmax > 0 else 1.0
     fig, ax = plt.subplots(figsize=(7.2, 4.4))
     pc = _collection(ax, verts, loss, 'magma', Normalize(0.0, vmax))
-    _axes(ax, nc, 'HF loss (deformed)')
+    _axes(ax, nc, 'HF loss (HF ODB state, deformed)')
     cb = fig.colorbar(pc, ax=ax, fraction=0.035, pad=0.02)
     cb.set_label('loss_e')
     _save(fig, outdir, 'fig4b_hf_deformed.png', dpi)
