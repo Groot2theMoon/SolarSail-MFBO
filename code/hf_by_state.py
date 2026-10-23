@@ -166,6 +166,9 @@ def main(argv):
     lf = openOdb(lf_path, readOnly=True)
     try:
         lf_inst = get_instance(lf)
+        if lf_inst is None:
+            print(_P + ' !!! LF 인스턴스 없음')
+            return 1
         lf_sname, lf_step = pick_step(lf, LF_STEP_PREFERENCE)
         if lf_step is None:
             print(_P + ' !!! LF 스텝 없음')
@@ -207,6 +210,9 @@ def main(argv):
     hf = openOdb(hf_path, readOnly=True)
     try:
         hf_inst = get_instance(hf)
+        if hf_inst is None:
+            print(_P + ' !!! HF 인스턴스 없음')
+            return 1
         hf_sname, hf_step = pick_step(hf, HF_STEP_PREFERENCE)
         if hf_step is None:
             print(_P + ' !!! HF 스텝 없음')
