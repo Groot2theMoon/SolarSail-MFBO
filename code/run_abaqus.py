@@ -510,12 +510,13 @@ _DISP_PRE = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_PATH) else DISP_GLOBA
 _DISP_FINAL = 0.0 if (LOAD_MODE == 'cable_stress' and _PAPER_PATH) else GLOBAL_FINAL
 #   [paper-match] LF ODB stale guard: 모델 정의가 바뀌면 기존 LF ODB 를 재사용하지 않는다.
 #     sidecar(.model.txt)의 tag 를 현재 경로와 대조한다(aba_imperfection 참조).
-#     tag 에 clamp/u3 sub-mode 를 포함해 PAPER_INCLUDE_CLAMPS 과 LF u3 정책 전환도 잡는다.
+#     tag 에 clamp/u3 sub-mode 와 field-output 버전(e1: ZK 용 E)을 포함한다.
 #     기본값은 aba_imperfection.LF_MODEL_TAG 와 같아야 한다(mfbo.py 가 그 값을 쓴다).
-_LF_MODEL_TAG = (('globaltension-v1-c%d-u%d'
+#     v2-e1 로 올린 이유: 예전 LF ODB 에는 E 가 없어 zk_Iw/ZK 가 FAIL 한다.
+_LF_MODEL_TAG = (('globaltension-v2-e1-c%d-u%d'
                   % (int(PAPER_INCLUDE_CLAMPS), int(_LF_HOLD_U3_ALL)))
                  if (LOAD_MODE == 'cable_stress' and _PAPER_PATH)
-                 else 'disp-v1')
+                 else 'disp-v2-e1')
 
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
@@ -2188,6 +2189,14 @@ if fidelity == 'LF':
         variables=('S', 'E', 'U', 'COORD', 'EVOL', 'RF'),
         frequency=10   # R-10: odb 크기 절감
     )
+    #   [2026-10-21] 덱에 실제로 E 가 들어갔는지 로그로 남긴다. E 가 없으면 ZK/zk_Iw 가
+    #     `E_field_missing` 으로 실패하므로, 재사용/stale ODB 와 출력요청 누락을 구분한다.
+    try:
+        _fo = my_model.fieldOutputRequests['F-Output-1']
+        emit("[LF] field output F-Output-1: variables=%s frequency=%s"
+             % (tuple(_fo.variables), _fo.frequency))
+    except Exception as _foe:
+        emit("[LF] !!! field output F-Output-1 확인 실패: %s" % _foe)
 
     #   [§19.66] 같은 설계점의 LF 는 재사용한다(잡 재제출 ~3분 절약).
     #   [paper-match] 단, 모델 정의가 바뀐 뒤의 **stale LF ODB** 는 재사용하지 않는다.

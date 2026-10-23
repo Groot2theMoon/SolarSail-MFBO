@@ -219,6 +219,11 @@ I_w = (1/A_ref) [ Σ_wr    w_ref · max(|E2| - νE1, 0)
 - `python eval_lf_stub.py` (no Abaqus license) checks the synthetic `I_w`:
   reference weights `(1,2,2)`, wrinkled `9.8e-5`, slack `3.34e-4`, the
   `max(|E2|-νE1,0)` clip case, and that the public `ZK:` values are unchanged.
+- If an LF run reports `ZK:FAIL reason=E_field_missing`, the LF ODB was created
+  before the `E` output request was added. The LF sidecar tag is now
+  `globaltension-v2-e1-...`; an older tag is rejected automatically. To be
+  explicit, delete `aba\LF_Analysis_<tag>.odb` and its `.model.txt`, then rerun
+  LF. The current LF deck requests `S, E, U, COORD, EVOL, RF`.
 
 ### hf / DN / u_z,ave definitions (unchanged)
 
@@ -240,9 +245,10 @@ if the table was built on a different mesh or base state.
 ```bat
 cd code
 
-:: 0) one-time after switching to this branch: drop old displacement-driven LF ODBs
-::    (the sidecar guard also detects them, but deleting is cleaner)
+:: 0) one-time after switching to this branch: drop old LF ODBs + sidecars
+::    (the sidecar tag `v2-e1` also rejects pre-E ODBs, but deleting is cleaner)
 del /q aba\LF_Analysis*.odb
+del /q aba\LF_Analysis*.odb.model.txt
 
 :: 1) regenerate seed + clamp_only families and combine (1st order)
 python make_seed.py --x_c 0.5 --d_c 1.0 --force

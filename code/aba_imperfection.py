@@ -531,7 +531,9 @@ LF_SIDECAR_SUFFIX = '.model.txt'
 #   paper physical default: clamps=1, full-membrane u3=1. The tag includes the sub-mode so
 #   switching PAPER_INCLUDE_CLAMPS / PAPER_HOLD_U3_GLOBAL invalidates old LF ODBs.
 #   run_abaqus.py computes the same string from those two flags; keep them in sync.
-LF_MODEL_TAG = 'globaltension-v1-c1-u1'
+#   [2026-10-21] v2-e1: LF field output 에 ZK 용 `E` 를 추가했다. 이전 ODB 는 `E` 가 없어
+#     `ZK:FAIL reason=E_field_missing` 이 나므로, 태그를 올려 재사용을 구조적으로 막는다.
+LF_MODEL_TAG = 'globaltension-v2-e1-c1-u1'
 
 
 def lf_sidecar_path(odb_path):
