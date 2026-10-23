@@ -501,6 +501,11 @@ except:
 #     `_PAPER_HF` 는 HF 전용 분기(예: Postbuckle 에서 BC 재생성 회피)에만 남긴다.
 _PAPER_PATH = bool(PAPER_EDGE_BC_FROM_INITIAL)
 _PAPER_HF = _PAPER_PATH and (fidelity == 'HF')
+#   [2026-10-23] paper HF의 no-load Step-Postbuckle은 제거한다.
+#     실측: GlobalTension은 완주하는데 Postbuckle은 TOO MANY ATTEMPTS로 실패(no load,
+#     allsdtol=0.002, line search 0회). 주름은 이미 GlobalTension에서 형성되므로 hf/DN은
+#     GlobalTension 마지막 프레임에서 읽는다. old disp HF는 BC 해제/최종 변위 때문에 유지.
+_HF_USE_POSTBUCKLE = (LOAD_MODE == 'disp') or (not _PAPER_HF)
 #   [2026-10-21] u3 정책을 fidelity 로 분기한다.
 #     LF  = 항상 전막 u3=0 (깨끗한 프리스트레스 base)
 #     HF  = paper 경로는 처음부터 자유(3변만 u3=0). old disp 는 기존 hold 유지.
@@ -1023,7 +1028,9 @@ def run_job_with_ladder(job_name, model_name=None):
             emit("[LADDER] 완주 (GlobalTension=%g, Postbuckle=%g)" % (_g_lv, _p_lv))
             #   [§19.86] 두 스텝의 ALLSD/ALLIE 를 모두 읽는다. GlobalTension 은 이제
             #     주름이 생기는 스텝이므로 이 값이 선택의 핵심이다.
-            _r_last, _r_max = _probe_step('Step-Postbuckle')
+            _r_last = _r_max = None
+            if _HF_USE_POSTBUCKLE:
+                _r_last, _r_max = _probe_step('Step-Postbuckle')
             _g_last, _g_max = _probe_step('Step-GlobalTension')
             _vals = [v for v in (_r_max, _g_max) if v is not None]
             _all_max = max(_vals) if _vals else None
@@ -2642,6 +2649,13 @@ elif fidelity == 'HF':
 
         if not inserted:
             my_model.keywordBlock.insert(len(my_model.keywordBlock.sieBlocks)-1, imp_text)
+
+    if not _HF_USE_POSTBUCKLE:
+        #   paper HF: no-load 정착 스텝을 모델에서 제거한다. F-Output-1/임퍼펙션은 이미
+        #   GlobalTension에 적용되어 있으므로 hf/DN을 그 마지막 프레임에서 읽을 수 있다.
+        if 'Step-Postbuckle' in my_model.steps:
+            del my_model.steps['Step-Postbuckle']
+            emit("[HF] paper no-load Step-Postbuckle 제거 -> GlobalTension에서 hf/DN")
 
     if not run_job_with_ladder(HF_JOB):
         emit("!!! ERROR: HF 완주 실패(안정화 사다리 소진) -> RESULTS:FAIL")

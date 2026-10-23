@@ -140,9 +140,10 @@ In the `cable_stress` path `_DISP_PRE = _DISP_FINAL = 0`, so **LF and HF** apply
 displacement**. The LF uses the same initial-stress prestress path and keeps the full-membrane
 `u3=0` (paper path); its final state is `Step-GlobalTension`. The HF paper path has **no
 full-membrane `u3=0` from Initial** (three edges only), so the wrinkles form in
-`Step-GlobalTension`; `Step-Postbuckle` is a no-load settling step. The old disp HF path keeps
-the old full hold and releases `BC_Stabilize_Z` in `Step-Postbuckle`. The load is the
-cable/clamp initial stress only.
+`Step-GlobalTension`; the paper HF final state is `Step-GlobalTension` and the no-load
+`Step-Postbuckle` is **removed** (it failed with `TOO MANY ATTEMPTS`, line search 0).
+The old disp HF path keeps the old full hold and releases `BC_Stabilize_Z` in
+`Step-Postbuckle`. The load is the cable/clamp initial stress only.
 
 
 `PAPER_HOLD_U3_GLOBAL` is no longer a switch; `_HOLD_U3_ALL` is the fidelity-based policy.
@@ -159,7 +160,7 @@ baseline (`LOAD_MODE='disp'`) keeps the 1 mm `GLOBAL_FINAL`; it is not the paper
 |---|---|---|---|
 | LF (paper, `PAPER_INCLUDE_CLAMPS=True`) | `Step-GlobalTension` | cable 2.69e7 Pa + clamp `d_c*2.69e7 Pa`; full-membrane `u3=0`; no displacement | `RESULTS:lf1,lf2,lf3` + `ZK:` |
 | LF (old baseline) | `Step-HighTension` | displacement-driven; preserved when `PAPER_MATCH=False` | `RESULTS:lf1,lf2,lf3` (+ `ZK:` diagnostic) |
-| HF (paper) | `Step-Postbuckle` (last frame; no-load settling) | no full u3=0 from Initial; three edges only; wrinkles form in GlobalTension | `RESULTS:lf1,lf2,lf3,hf`, `DN:`, `ZK:` from the paired LF ODB |
+| HF (paper) | `Step-GlobalTension` (last frame; Postbuckle removed) | no full u3=0 from Initial; three edges only; wrinkles form in GlobalTension | `RESULTS:lf1,lf2,lf3,hf`, `DN:`, `ZK:` from the paired LF ODB |
 | HF (old disp) | `Step-Postbuckle` (last frame) | full u3=0 hold -> release; final load ramp | same, archived as `HF_<tag>_u3free.odb` for paper |
 
 ### ZK (Zhang & Kiendl) definition
@@ -250,14 +251,17 @@ I_w = (1/A_ref) [ Σ_wr    w_ref · max(|E2| - νE1, 0)
 
 ### hf / DN / u_z,ave definitions (unchanged)
 
-- `hf`: `get_hf` integrates the SRP thrust over the last `Step-Postbuckle` frame and returns
+- `hf`: `get_hf` integrates the SRP thrust over the HF final frame and returns
   the **relative** loss `loss / (area_ref * IDEAL_THRUST_COEFF)`, where `area_ref` is the
-  **undeformed** area at `frameValue=0` (not the deformed area). Normals are flipped to +z;
-  `flip_bias.txt` records the backward-area percentage and the no-flip value.
-- `DN:dn_deg`: area-weighted equivalent normal deviation from +z at the last `Step-Postbuckle`
-  frame; `dn_psi_deg` is its azimuth.
-- `u_z,ave`: `base_state_probe.py` on the `Step-Postbuckle` last frame,
-  `(|u3,max| + |u3,min|)/2` (paper definition).
+  **undeformed** area at `frameValue=0` (not the deformed area). The HF final step is
+  `Step-Postbuckle` when present (old disp), otherwise `Step-GlobalTension` (paper).
+  Normals are flipped to +z; `flip_bias.txt` records the backward-area percentage and
+  the no-flip value.
+- `DN:dn_deg`: area-weighted equivalent normal deviation from +z at the same HF final frame;
+  `dn_psi_deg` is its azimuth.
+- `u_z,ave`: `base_state_probe.py` on the HF/LF final frame used for the comparison
+  (`Step-Postbuckle` old disp, `Step-GlobalTension` paper), `(|u3,max| + |u3,min|)/2`
+  (paper definition).
 
 ## Required run order (Windows, Abaqus)
 

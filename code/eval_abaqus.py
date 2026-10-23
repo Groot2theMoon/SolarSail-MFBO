@@ -9,7 +9,8 @@ Return Format (stdout):
     - HF Mode: "RESULTS:lf1,lf2,lf3,hf" 
     - 별도 줄: "ZK:state_wrinkled_frac=... zk_intensity_mean=... zk_intensity_p95=... zk_dir_deg=..."
       (Zhang & Kiendl 변형률 기반 주름 상태. RESULTS 계약과 무관하다.)
-      E 필드가 없으면 "ZK:FAIL reason=..." 한 줄만 내고 RESULTS 는 평소대로 낸다.
+      E/LE 필드가 없으면 "ZK:FAIL reason=..." 한 줄만 내고 RESULTS 는 평소대로 낸다.
+    - 별도 줄: "ZKIW:zk_Iw=... ..." (zk_Iw sidecar 진단. RESULTS/ZK 계약과 무관.)
 
 LF : 선형/프리스트레스 해석에서 얻을 수 있는 지표들
     - lf1 (Compressed Volume Ratio): 압축 주응력이 발생하는 요소의 부피 비율.
@@ -26,6 +27,8 @@ HF :
     - hf (Thrust Loss): 이상적인 평판 대비, 주름진 형상으로 인해 손실된 추력의 양.
     - Solar Radiation Pressure (SRP) 모델을 적용하여 변형된 요소들의 법선 벡터 변화를 적분.
     - DN (delta_n): 면적가중 등가법선의 이상법선 대비 편차각. 별도 `DN:` 줄로만 낸다.
+    - HF 최종 스텝: `Step-Postbuckle`이 있으면 그 프레임(old disp), 없으면
+      `Step-GlobalTension` 마지막 프레임(paper HF).
 
 LF 상태 스텝 (2026-10-21):
     - paper 경로(PAPER_MATCH=True): LF 모델의 최종(그리고 유일한) 해석 스텝은
@@ -65,6 +68,40 @@ def _pick_lf_step(odb):
     except Exception:
         names = []
     for name in LF_STEP_PREFERENCE:
+        if name in names:
+            try:
+                frames = odb.steps[name].frames
+                if len(frames) > 0:
+                    return name, frames[-1], names
+            except Exception:
+                pass
+    last = None
+    for name in names:
+        try:
+            frames = odb.steps[name].frames
+            if len(frames) > 0:
+                last = (name, frames[-1])
+        except Exception:
+            pass
+    if last is not None:
+        return last[0], last[1], names
+    return None, None, names
+
+
+#   [2026-10-23] HF 최종 상태 스텝.
+#     old disp HF = Step-Postbuckle (BC 해제/최종 변위).
+#     paper HF = Step-GlobalTension (no-load Postbuckle 제거).
+#   Postbuckle이 있으면 기존과 동일하게 우선한다.
+HF_STEP_PREFERENCE = ('Step-Postbuckle', 'Step-GlobalTension')
+
+
+def _pick_hf_step(odb):
+    """(step_name, frame, available_steps) 반환. Postbuckle -> GlobalTension -> 마지막 스텝."""
+    try:
+        names = list(odb.steps.keys())
+    except Exception:
+        names = []
+    for name in HF_STEP_PREFERENCE:
         if name in names:
             try:
                 frames = odb.steps[name].frames
@@ -795,22 +832,23 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
 
 def get_hf(odb_path):
     """
-    Step-Postbuckle의 마지막 프레임(최종 목표 변위 도달 시점)에서
-    추력 손실(Thrust Loss)을 계산하여 반환함. (포스트버클링이 목표 변위에 도달하지 못하는 경우를 대비)
+    HF 최종 프레임에서 추력 손실(Thrust Loss)을 계산한다.
+
+    old disp HF: Step-Postbuckle 마지막 프레임.
+    paper HF: no-load Postbuckle을 제거했으므로 Step-GlobalTension 마지막 프레임.
     """
     try:
         odb = openOdb(path=odb_path, readOnly=True)
-        
-        if 'Step-Postbuckle' not in odb.steps:
-            print("Error: 'Step-Postbuckle' not found in ODB.")
+
+        step_name, last_frame, _names = _pick_hf_step(odb)
+        if step_name is None or last_frame is None:
+            print("Error: no HF step with frames. available=%s" % (_names,))
             odb.close()
             return None
-            
-        step = odb.steps['Step-Postbuckle']
-        
-        last_frame = step.frames[-1]
+        print("[HF] state step = %s" % step_name)
+
         current_time = last_frame.frameValue
-        
+
         if current_time < 0.99:
             print("Warning: Job did not complete (Time = {:.4f}).".format(current_time))
             odb.close()       # P1-1
@@ -1016,8 +1054,9 @@ def calc_normal_deviation(frame, instance, connectivity, max_node_label):
 
 
 def get_dn(odb_path):
-    """[19.106] HF ODB 의 최종 Postbuckle 프레임에서 delta_n 을 계산한다(get_hf 와 같은 프레임).
+    """[19.106] HF 최종 프레임에서 delta_n 을 계산한다(get_hf 와 같은 프레임).
 
+    old disp HF: Step-Postbuckle / paper HF: Step-GlobalTension.
     실패해도 예외를 던지지 않는다(dict(ok=False, reason=..) 반환) - 호출부가 DN:FAIL 한 줄만 낸다.
     """
     odb = None
@@ -1025,17 +1064,15 @@ def get_dn(odb_path):
         if not odb_path or not os.path.exists(odb_path):
             return _dn_fail('file_not_found')
         odb = openOdb(path=odb_path, readOnly=True)
-        if 'Step-Postbuckle' not in odb.steps:
-            return _dn_fail('step_postbuckle_missing')
-        step = odb.steps['Step-Postbuckle']
-        if not step.frames:
-            return _dn_fail('no_frame')
+        step_name, frame, _names = _pick_hf_step(odb)
+        if step_name is None or frame is None:
+            return _dn_fail('hf_step_missing')
         instance = odb.rootAssembly.instances['MEMBRANE-1']
         connectivity = [e.connectivity for e in instance.elements]
         if not connectivity:
             return _dn_fail('no_element')
         max_label = (instance.nodes[-1].label + 100) if instance.nodes else 100000
-        return calc_normal_deviation(step.frames[-1], instance, connectivity, max_label)
+        return calc_normal_deviation(frame, instance, connectivity, max_label)
     except Exception as e:
         return _dn_fail('exception_' + type(e).__name__)
     finally:
@@ -1045,7 +1082,7 @@ def get_dn(odb_path):
 
 
 def format_dn_line(dn):
-    """[19.106] DN: 한 줄 포맷. RESULTS: 4필드 줄과 **완전히 분리**된 별도 줄이다."""
+    """[19.106] DN: 한 줄 포맷. HF 최종 프레임(Postbuckle 또는 GlobalTension) 기준."""
     if not dn or not dn.get('ok'):
         _r = (dn or {}).get('reason', 'unknown')
         return 'DN:FAIL reason=%s' % _r
@@ -1075,7 +1112,8 @@ def main():
             write_zk_metrics(_zk, args[-2])
         elif mode == "HFONLY":
             #   [§19.87] HF 단독 평가: 짝 LF ODB 가 없어도 **hf 지표만** 낸다.
-            #     get_hf 는 HF ODB 의 Postbuckle 프레임만 읽으므로 LF 없이 성립한다.
+            #     get_hf 는 HF ODB 의 최종 프레임(Postbuckle 또는 GlobalTension)만 읽으므로
+            #     LF 없이 성립한다.
             #     LF 자리에는 nan 을 채운다(LF 지표는 그 점에서 정의되지 않음).
             hf_metric = get_hf(args[-2])
             if hf_metric is None:
