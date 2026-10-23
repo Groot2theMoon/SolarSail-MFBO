@@ -103,6 +103,20 @@ def elem_areas_normals(frame, conns, maxlab):
     return areas, normals
 
 
+def element_loss_abs(areas, normals):
+    """요소별 절대 손실(면적×): A_e*(IDEAL - A0*c - 2R0*c^3)."""
+    cos_t = np.clip(normals @ (-np.asarray(U_SUN, dtype=np.float64)), 0.0, 1.0)
+    return areas * (IDEAL_THRUST_COEFF - A0 * cos_t - 2.0 * R0 * cos_t ** 3)
+
+
+def element_losses(areas, normals, area_ref_total):
+    """요소별 상대 손실: sum(loss_e) == hf (eval_abaqus 와 같은 정규화)."""
+    _den = float(area_ref_total) * IDEAL_THRUST_COEFF
+    if _den <= 0.0:
+        return np.zeros_like(np.asarray(areas, dtype=np.float64))
+    return element_loss_abs(areas, normals) / _den
+
+
 def elem_strains(frame, inst):
     """요소별 평균 (E11,E22,E12) + 필드명. integration point -> 요소 평균."""
     fld, fname, why = _zk_get_e_field(frame, inst)
@@ -284,9 +298,8 @@ def main(argv):
         else:
             print(_P + ' (경고) HF 변형률 없음(%s) -> I_w(HF) 생략' % _g[2])
 
-        cos_t = np.clip(normals @ (-np.asarray(U_SUN, dtype=np.float64)), 0.0, 1.0)
         #   요소 손실(면적×):  A_e*(IDEAL - A0*c - 2R0*c^3)
-        loss_e = areas * (IDEAL_THRUST_COEFF - A0 * cos_t - 2.0 * R0 * cos_t ** 3)
+        loss_e = element_loss_abs(areas, normals)
         hf_total = float(np.sum(loss_e) / (area_ref_total * IDEAL_THRUST_COEFF))
         print(_P + ' HF hf(재계산) = %.10e' % hf_total)
     finally:

@@ -806,6 +806,7 @@ def run_job_safely(job_name, model_name=None, stabilize=None, stabilize_global=N
     """
     model_name = model_name or MODEL_NAME
     patch_step = patch_step or 'Step-Postbuckle'
+    _locked = []
     for _ext in _JOB_ARTIFACTS:
         _f = '%s.%s' % (job_name, _ext)
         if os.path.exists(_f):
@@ -813,6 +814,14 @@ def run_job_safely(job_name, model_name=None, stabilize=None, stabilize_global=N
                 os.remove(_f)
             except OSError as _e:
                 emit("  (warning) could not remove %s: %s" % (_f, _e))
+                _locked.append(_f)
+    if _locked:
+        emit("!!! ERROR: 이전 Abaqus 프로세스가 %s 파일을 잠그고 있습니다." % job_name)
+        emit("    잠긴 파일: %s" % ', '.join(_locked))
+        emit("    Abaqus/CAE·Standard·pre 프로세스를 종료한 뒤 다시 실행하세요.")
+        emit("    (이 상태로 제출하면 새 job이 이전 파일/프로세스와 섞여 결과를 신뢰할 수 없습니다.)")
+        sys.stdout.flush()
+        sys.exit(1)
 
     lck_file = job_name + '.lck'
     odb_file = job_name + '.odb'
