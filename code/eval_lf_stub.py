@@ -217,14 +217,18 @@ NODES = [
 ]
 
 
-def _frame(elements, with_E=True, strain_key='E'):
+def _frame(elements, with_E=True, strain_key='E', field_only=None):
+    _fo = list(field_only or [])
     fields = {
-        'S': _Field([_Val(lbl, s) for (lbl, conn, s, e, vol) in elements]),
-        'EVOL': _Field([_Val(lbl, vol) for (lbl, conn, s, e, vol) in elements]),
+        'S': _Field([_Val(lbl, s) for (lbl, conn, s, e, vol) in elements]
+                    + [_Val(lbl, s) for (lbl, s, e, vol) in _fo]),
+        'EVOL': _Field([_Val(lbl, vol) for (lbl, conn, s, e, vol) in elements]
+                       + [_Val(lbl, vol) for (lbl, s, e, vol) in _fo]),
     }
     if with_E:
         fields[strain_key] = _Field([_Val(lbl, e)
-                                     for (lbl, conn, s, e, vol) in elements])
+                                     for (lbl, conn, s, e, vol) in elements]
+                                    + [_Val(lbl, e) for (lbl, s, e, vol) in _fo])
     return _Frame(fields)
 
 
@@ -237,7 +241,7 @@ def _ref_frame(elements):
 
 
 def _make_odb(include_high=False, with_E=True, high_zero=True, elements=None,
-              strain_key='E'):
+              strain_key='E', field_only=None):
     elements = elements or ELEMENTS
     instance = _Instance(
         'MEMBRANE-1',
@@ -246,7 +250,8 @@ def _make_odb(include_high=False, with_E=True, high_zero=True, elements=None,
     )
     steps = {'Step-GlobalTension': _Step([_ref_frame(elements),
                                           _frame(elements, with_E=with_E,
-                                                 strain_key=strain_key)])}
+                                                 strain_key=strain_key,
+                                                 field_only=field_only)])}
     if include_high:
         if high_zero:
             elems = [(lbl, conn, (0.0, 0.0, 0.0),
@@ -256,7 +261,8 @@ def _make_odb(include_high=False, with_E=True, high_zero=True, elements=None,
             elems = elements
         steps['Step-HighTension'] = _Step([_ref_frame(elems),
                                            _frame(elems, with_E=with_E,
-                                                  strain_key=strain_key)])
+                                                  strain_key=strain_key,
+                                                  field_only=field_only)])
     return _Odb(steps, instance)
 
 
@@ -403,10 +409,15 @@ def main():
             ok &= _check('paper: ZKIW strain_field == E',
                          _ikv.get('strain_field') == 'E',
                          _ikv.get('strain_field'))
+            ok &= _check('paper: ZKIW carries zk_Iw_pa ([A3])',
+                         _close(_num(_ikv, 'zk_Iw_pa'),
+                                1.728e-4 * E.ZK_E / (1.0 - E.ZK_NU ** 2),
+                                rtol=1e-12),
+                         _ikv.get('zk_Iw_pa'))
         if zk is not None and zk.startswith('ZK:') and 'FAIL' not in zk:
             kv = _kv_line(zk)
-            ok &= _check('paper: ZK wrinkled frac == 0.25',
-                         abs(float(kv.get('state_wrinkled_frac', 'nan')) - 0.25) < 1e-12,
+            ok &= _check('paper: ZK frac == 0.4 (ref EVOL weight, [B4])',
+                         abs(float(kv.get('state_wrinkled_frac', 'nan')) - 0.4) < 1e-12,
                          kv.get('state_wrinkled_frac'))
             ok &= _check('paper: ZK intensity mean == 2e-4',
                          abs(float(kv.get('zk_intensity_mean', 'nan')) - 2e-4) < 1e-15,
@@ -430,8 +441,8 @@ def main():
                          txt.replace('\n', '; '))
             ok &= _check('paper: zk step=Step-GlobalTension',
                          'step=Step-GlobalTension' in txt)
-            ok &= _check('paper: zk file wrinkled frac=0.25',
-                         'state_wrinkled_frac=0.25' in txt)
+            ok &= _check('paper: zk file wrinkled frac=0.4',
+                         'state_wrinkled_frac=0.4' in txt)
             zkv = _read_kv(zkm)
             ok &= _check('paper: public zk_area_total == 4 (current EVOL)',
                          _close(_num(zkv, 'zk_area_total'), 4.0),
@@ -465,6 +476,40 @@ def main():
             ok &= _check('paper: strain_field == E',
                          zkv.get('strain_field') == 'E',
                          zkv.get('strain_field'))
+            # ---- [A3]/[B3]/[B5] 새 키 ----
+            ok &= _check('paper: frac_by == mixed ([B3])',
+                         zkv.get('zk_state_frac_by') == 'mixed',
+                         zkv.get('zk_state_frac_by'))
+            ok &= _check('paper: strain-criterion frac == 0.4 ([B3] 병기)',
+                         _close(_num(zkv, 'zk_state_wrinkled_frac_strain'), 0.4),
+                         zkv.get('zk_state_wrinkled_frac_strain'))
+            ok &= _check('paper: current-EVOL frac == 0.25 ([B4] 역사값)',
+                         _close(_num(zkv, 'zk_state_wrinkled_frac_current_w'), 0.25),
+                         zkv.get('zk_state_wrinkled_frac_current_w'))
+            ok &= _check('paper: strain-current-EVOL frac == 0.25 (역사 조합)',
+                         _close(_num(zkv, 'zk_state_wrinkled_frac_strain_current_w'), 0.25),
+                         zkv.get('zk_state_wrinkled_frac_strain_current_w'))
+            ok &= _check('paper: state fractions sum to 1',
+                         _close(_num(zkv, 'state_wrinkled_frac')
+                                + _num(zkv, 'zk_state_taut_frac')
+                                + _num(zkv, 'zk_state_slack_frac'), 1.0, atol=1e-12))
+            ok &= _check('paper: zk_n_sp >= 1 ([A3])', _num(zkv, 'zk_n_sp') >= 1,
+                         zkv.get('zk_n_sp'))
+            ok &= _check('paper: zk_area_unit == m3 ([A3])',
+                         zkv.get('zk_area_unit') == 'm3', zkv.get('zk_area_unit'))
+            ok &= _check('paper: I_w branch identity == 1 (§2-b)',
+                         _num(zkv, 'zk_Iw_branch_identity') == 1.0,
+                         zkv.get('zk_Iw_branch_identity'))
+            ok &= _check('paper: zk_Iw_pa == I_w*E/(1-nu^2) ([A3])',
+                         _close(_num(zkv, 'zk_Iw_pa'),
+                                1.728e-4 * E.ZK_E / (1.0 - E.ZK_NU ** 2),
+                                rtol=1e-12))
+            _pa_ref = 2.311e-06 * E.ZK_E / (1.0 - E.ZK_NU ** 2)
+            ok &= _check('paper: I_w=2.311e-06 -> ~6532 Pa ([A3] 상수)',
+                         6500.0 <= _pa_ref <= 6560.0, '%.1f' % _pa_ref)
+            ok &= _check('paper: maxsp 진단 == canonical (sp 정보 없음) ([B5])',
+                         _close(_num(zkv, 'zk_intensity_maxsp_mean'), 2e-4),
+                         zkv.get('zk_intensity_maxsp_mean'))
 
         # ---------------- 2) old disp path ----------------
         d2 = os.path.join(root, 'disp')
@@ -540,10 +585,13 @@ def main():
         ok &= _check('clip: zk_metrics.txt exists', os.path.exists(zkm))
         if os.path.exists(zkm):
             zkv = _read_kv(zkm)
-            ok &= _check('clip: public zk_intensity_mean == 2e-4 (unchanged)',
-                         _close(_num(zkv, 'zk_intensity_mean'), 2e-4),
+            ok &= _check('clip: mixed reclassifies clipped elem -> intensity 0 ([B3])',
+                         _close(_num(zkv, 'zk_intensity_mean'), 0.0),
                          zkv.get('zk_intensity_mean'))
-            ok &= _check('clip: zk_Iw == 1.336e-4 (slack only)',
+            ok &= _check('clip: strain-criterion intensity preserved == 2e-4 ([B3] 병기)',
+                         _close(_num(zkv, 'zk_intensity_mean_strain'), 2e-4),
+                         zkv.get('zk_intensity_mean_strain'))
+            ok &= _check('clip: I_w still clips that element (stress-taut => 0)',
                          _close(_num(zkv, 'zk_Iw'), 1.336e-4),
                          zkv.get('zk_Iw'))
             ok &= _check('clip: zk_Iw_p95 == 3.34e-4',
@@ -555,7 +603,7 @@ def main():
             ok &= _check('clip: zk_Iw wr share == 0.0',
                          _close(_num(zkv, 'zk_Iw_wr_share'), 0.0),
                          zkv.get('zk_Iw_wr_share'))
-            ok &= _check('clip: zk_Iw clip_zero_frac == 1.0',
+            ok &= _check('clip: clip_zero_frac (strain 기준) == 1.0 — 정의 보존',
                          _close(_num(zkv, 'zk_Iw_clip_zero_frac'), 1.0),
                          zkv.get('zk_Iw_clip_zero_frac'))
             ok &= _check('clip: zk_Iw reference area == 5',
@@ -619,6 +667,36 @@ def main():
                          _close(_num(zkv, 'zk_dir_deg'), 30.0, atol=1e-9),
                          zkv.get('zk_dir_deg'))
             ok &= _check('LE: zk_Iw weights == ref_evol',
+                         zkv.get('zk_Iw_weights') == 'ref_evol',
+                         zkv.get('zk_Iw_weights'))
+
+        # ---------------- 6) [B1] 인스턴스 밖 요소(케이블) 혼입 차단 ----------------
+        d6 = os.path.join(root, 'cable')
+        os.makedirs(d6)
+        p6 = os.path.join(d6, 'LF_cable.odb')
+        with open(p6, 'wb') as f:
+            f.write(b'')
+        #   E/EVOL 필드에는 있지만 instance.elements 에는 없는 요소(케이블 T3D2 가정).
+        cable = [(99, (50.0, -40.0, 0.0),
+                  (5e-4, -5e-4, 0.0, 0.0, 0.0, 0.0), 3.0)]
+        rc, out = _run_main(_make_odb(field_only=cable), p6, d6)
+        zk = _zk_line(out)
+        ok &= _check('B1: exit 0', rc == 0, 'rc=%r' % rc)
+        ok &= _check('B1: ZK is OK (not FAIL)',
+                     zk is not None and 'FAIL' not in (zk or ''), repr(zk))
+        zkm = os.path.join(d6, 'zk_metrics.txt')
+        if os.path.exists(zkm):
+            zkv = _read_kv(zkm)
+            ok &= _check('B1: cable filtered -> zk_n_elem == 3',
+                         _close(_num(zkv, 'zk_n_elem'), 3.0),
+                         zkv.get('zk_n_elem'))
+            ok &= _check('B1: cable volume excluded -> zk_area_total == 4',
+                         _close(_num(zkv, 'zk_area_total'), 4.0),
+                         zkv.get('zk_area_total'))
+            ok &= _check('B1: cable does not disturb zk_Iw',
+                         _close(_num(zkv, 'zk_Iw'), 1.728e-4),
+                         zkv.get('zk_Iw'))
+            ok &= _check('B1: weights stay ref_evol',
                          zkv.get('zk_Iw_weights') == 'ref_evol',
                          zkv.get('zk_Iw_weights'))
     finally:

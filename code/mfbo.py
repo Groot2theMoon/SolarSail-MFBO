@@ -21,6 +21,7 @@ Solar-Sail의 형상 변수(x1, x2)를 최적화하여 추력 성능 저하를 �
 """
 
 import subprocess
+import json
 import os
 import aba_imperfection   # §19.66: 설계점별 LF ODB 이름 규약
 import torch 
@@ -53,6 +54,82 @@ os.chdir(_HERE)      # 체크포인트 등 MFBO 자체 산출물은 code/ 에 �
 
 FAIL = float("nan")
 
+# ---------------------------------------------------------------------------
+# [C1/C2] ZK 관측 배선
+#   eval_abaqus.py 는 RESULTS(3/4필드)와 별도로 `ZK:`(public 4키) / `ZKIW:`(I_w sidecar)
+#   줄을 낸다. 종전에는 이 줄을 **파싱조차 하지 않아** ZK 가 최적화에 닿지 못했다.
+#   여기서는 (i) 파싱만 추가(기본 동작 불변), (ii) LF 목적값 선택을 상수 하나로 분리한다.
+#   주의: `zk_dir_spread_deg`/`zk_n_sp` 같은 sidecar 전용 키는 stdout 에 없어 LF_TARGET 불가.
+# ---------------------------------------------------------------------------
+ZK_LOG = True       # True = 런마다 zk dict 를 1줄 JSON 으로 남긴다(관측 전용, 스키마 불변)
+LF_TARGET = 'lf1'   # 'lf1'|'lf2'|'lf3'|'state_wrinkled_frac'|'zk_intensity_mean'
+                    # |'zk_intensity_p95'|'zk_dir_deg'|'zk_Iw'|'zk_Iw_pa'|'zk_Iw_p95'
+_LF_IDX = {'lf1': 0, 'lf2': 1, 'lf3': 2}
+
+
+def _parse_zk(stdout):
+    """`ZK:`/`ZKIW:` 줄을 dict 로. 숫자는 float, 문자열은 그대로, FAIL 은 'FAIL' 키."""
+    out = {'zk': {}, 'zkiw': {}, 'FAIL': None}
+    for _ln in (stdout or '').splitlines():
+        _s = _ln.strip()
+        for _tag, _dst in (('ZK:', 'zk'), ('ZKIW:', 'zkiw')):
+            if not _s.startswith(_tag):
+                continue
+            _body = _s[len(_tag):].strip()
+            if _body.startswith('FAIL'):
+                out['FAIL'] = _body
+                continue
+            for _tok in _body.split():
+                if '=' not in _tok:
+                    continue
+                _k, _v = _tok.split('=', 1)
+                try:
+                    out[_dst][_k] = float(_v)
+                except ValueError:
+                    out[_dst][_k] = _v
+    return out
+
+
+def _zk_lookup(zk, key):
+    """ZK/ZKIW dict 조회. `state_wrinkled_frac` <-> `zk_state_wrinkled_frac` 별칭 허용."""
+    _d1 = (zk or {}).get('zk') or {}
+    _d2 = (zk or {}).get('zkiw') or {}
+    _alias = key[3:] if key.startswith('zk_') else ('zk_' + key)
+    for _d in (_d1, _d2):
+        for _k in (key, _alias):
+            if _k in _d:
+                return _d[_k]
+    return None
+
+
+def _lf_value(parsed_data, zk, target=None):
+    """RESULTS/ZK 에서 LF 목적값을 고른다. 못 얻으면 FAIL(nan) — 조용한 0 금지."""
+    target = target or LF_TARGET
+    if target in _LF_IDX:
+        try:
+            return float(parsed_data[_LF_IDX[target]])
+        except (IndexError, TypeError, ValueError):
+            return FAIL
+    v = _zk_lookup(zk, target)
+    if v is None:
+        print("!!! LF target %r unavailable (ZK: %s)"
+              % (target, (zk or {}).get('FAIL')))
+        return FAIL
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        print("!!! LF target %r is not numeric: %r" % (target, v))
+        return FAIL
+
+
+def _log_zk(zk):
+    """zk dict 1줄 JSON. CSV/체크포인트 스키마는 건드리지 않는다(관측 전용)."""
+    try:
+        print("  [ZKJSON] " + json.dumps(zk, ensure_ascii=False, sort_keys=True,
+                                         default=str))
+    except Exception as e:
+        print("  [ZKJSON] log failed: %s" % e)
+
 def save_checkpoint(train_x, train_y, iteration):
     """
     현재 상태를 파일로 저장
@@ -79,22 +156,32 @@ def load_checkpoint():
         return None, None, 0
 
 # run_abaqus.py 기반으로 작성
-def get_abaqus(new_x, new_s):
+def get_abaqus(new_x, new_s, return_zk=False):
     """
     new_x : [x1, x2]
     new_s : 0.0(LF) or 1.0(HF)
+    return_zk : False(기본) = 종전과 동일한 2-튜플. True = (lf, hf, zk dict) 3-튜플.
 
     Returns:
         tuple or float: 
             - HF 모드일 때: (lf_val, hf_val) 반환. HF 해석 시 LF 결과도 부산물로 얻어짐.
             - LF 모드일 때: (lf_val, None) 반환.
-            - 에러 발생 시: 1e6 (Penalty) 또는 -1e6 반환.
-            
+            - 에러 발생 시: FAIL(nan).
+
     Note:
         Abaqus는 표준 출력(stdout)에 "RESULTS:val1,val2..." 형식으로 결과를 찍어야 함.
+        LF 로 돌려주는 값은 `LF_TARGET` 이 고른다(기본 'lf1' = 종전과 완전 동일).
+        ZK 목적값을 고르면 ZK:FAIL 일 때 nan 이 되어 그 관측은 자동으로 skip 된다.
     """
     mode_str = "HF" if new_s > 0.5 else "LF"
     x1, x2 = new_x[0], new_x[1]
+
+    def _pack(lf, hf, zk=None):
+        """2-튜플/3-튜플 반환을 한 곳에 모은다(기본 False = 기존 호출부 계약 불변)."""
+        if return_zk:
+            return lf, hf, (zk if zk is not None else
+                            {'zk': {}, 'zkiw': {}, 'FAIL': 'no_zk_line'})
+        return lf, hf
     # M-15: Abaqus 없이 배관을 검증하는 mock oracle (MFBO_MOCK=1 일 때만)
     if MOCK:
         import numpy as _np
@@ -102,7 +189,9 @@ def get_abaqus(new_x, new_s):
         _lf = float(_np.ravel(evaluate_currin_mf([[x1, x2]], 0.0))[0])
         _hf = float(_np.ravel(evaluate_currin_mf([[x1, x2]], 1.0))[0])
         print(f"--- [MOCK] {mode_str} currin lf={_lf:.6f} hf={_hf:.6f} ---")
-        return (_lf, _hf) if mode_str == "HF" else (_lf, None)
+        if mode_str == "HF":
+            return _pack(_lf, _hf)
+        return _pack(_lf, None)
 
     _script = os.path.join(_HERE, "run_abaqus.py")
     command = f'abaqus cae noGUI="{_script}" -- {mode_str} {x1} {x2}'
@@ -127,7 +216,7 @@ def get_abaqus(new_x, new_s):
             if not os.path.exists(_lf_odb):
                 print("!!! HF prerequisite LF run produced no %s - aborting this HF point."
                       % os.path.basename(_lf_odb))
-                return FAIL, FAIL
+                return _pack(FAIL, FAIL)
         #   [2026-10-12 계획 T8] HF 임퍼펙션 시드는 설계점 (x_c, d_c) 마다 달라진다.
         #   표 경로는 run_abaqus.py 가 결정적으로 조립하므로(seeds/modes_xc<NNN>_dc<NNN>.txt)
         #   여기서는 **없을 때만** 만든다(같은 점 재방문 비용 0). 실패하면 HF 를 돌리지 않는다.
@@ -142,7 +231,7 @@ def get_abaqus(new_x, new_s):
             if not os.path.exists(_seed_tbl):
                 print("!!! HF seed table generation failed - aborting this HF point.")
                 print((_sr.stdout or "")[-800:])
-                return FAIL, FAIL
+                return _pack(FAIL, FAIL)
 
     print(f"--- Running Abaqus [{mode_str}] x1: {x1:.6f} x2: {x2:.6f} ---")
     
@@ -168,12 +257,12 @@ def get_abaqus(new_x, new_s):
                 data_str = line.strip().split("RESULTS:")[1].strip()
                 if data_str.upper() == "FAIL":        # eval_abaqus.py 의 명시적 실패 신호
                     print("!!! Simulation reported FAIL.")
-                    return FAIL, FAIL
+                    return _pack(FAIL, FAIL)
                 try:
                     parsed_data = [float(val) for val in data_str.split(',')]
                 except ValueError:
                     print("!!! Unparsable RESULTS payload: %r" % data_str)
-                    return FAIL, FAIL
+                    return _pack(FAIL, FAIL)
                 break
         
         if parsed_data is None:
@@ -182,29 +271,36 @@ def get_abaqus(new_x, new_s):
             print(result.stderr) # 에러 로그 출력
             print("--- Stdout (tail 40) ---")
             print("\n".join(result.stdout.splitlines()[-40:]))
-            return FAIL, FAIL
+            return _pack(FAIL, FAIL)
+
+        # [C1] ZK:/ZKIW: 는 RESULTS 와 무관한 별도 줄이다. 파싱만 하고 기본 반환은 불변.
+        _z = _parse_zk(result.stdout)
+        if ZK_LOG or return_zk:
+            _log_zk(_z)
 
         # 데이터 반환 로직
         if mode_str == "HF":
             # HF는 lf1, lf2, lf3, hf 4개를 반환
             if len(parsed_data) >= 4:
-                print(f"  >> [Done] LF: {parsed_data[0]:.6e}, HF: {parsed_data[1]:.6e}")
-                return parsed_data[0], parsed_data[3]
+                _lf_out = _lf_value(parsed_data, _z)
+                print(f"  >> [Done] LF({LF_TARGET}): {_lf_out:.6e}, HF: {parsed_data[3]:.6e}")
+                return _pack(_lf_out, parsed_data[3], _z)
             else:
-                 print("!!! Error: HF result should have at least 2 values.")
-                 return FAIL, FAIL
+                print("!!! Error: HF result should have at least 4 values.")
+                return _pack(FAIL, FAIL, _z)
         else:
             # LF는 lf1, lf2, lf3 총 3개
-            print(f"  >> [Done] LF: {parsed_data[0]:.6e}")
-            return parsed_data[0], None
+            _lf_out = _lf_value(parsed_data, _z)
+            print(f"  >> [Done] LF({LF_TARGET}): {_lf_out:.6e}")
+            return _pack(_lf_out, None, _z)
 
     except subprocess.CalledProcessError as e:
         print(f"!!! Abaqus execution failed (Return Code {e.returncode})")
         print(e.stderr)
-        return FAIL, FAIL
+        return _pack(FAIL, FAIL)
     except Exception as e:
         print(f"!!! System Error: {e}")
-        return FAIL, FAIL
+        return _pack(FAIL, FAIL)
 
 def unnormalize_params(norm_x):
     """

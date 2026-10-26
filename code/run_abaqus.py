@@ -716,10 +716,11 @@ def _archive_dn(x_c, d_c, dn_lines):
         emit('[DN] 실패(무시, 런은 계속): %s' % _e)
 
 
-def _archive_zk(x_c, d_c, zk_lines):
+def _archive_zk(x_c, d_c, zk_lines, zkiw_lines=None):
     """[paper-match] eval_abaqus.py 가 낸 `ZK:` 줄을 점별 results txt 에 `zk_` 접두로 append.
 
     `zk_metrics.txt` sidecar 의 추가 키(`zk_Iw`/기준면적/가중모드)도 함께 append 한다.
+    [A2] `ZKIW:` 줄이 stdout 의 **정본**이다 -> sidecar 병합이 실패해도 값이 남는다.
 
     계약 보존:
       - `RESULTS:` 3/4필드는 읽지도 쓰지도 않는다.
@@ -751,10 +752,30 @@ def _archive_zk(x_c, d_c, zk_lines):
                         _k = 'zk_' + _k
                     _kv[_k] = _v
 
+        #   [A2] ZKIW: 는 stdout 이 정본이다(sidecar 병합이 실패해도 값이 남는다).
+        #     ZK: 4키와 겹치지 않으므로 그대로 덮어쓴다.
+        for _ln in (zkiw_lines or []):
+            _s = str(_ln).strip()
+            if not _s.startswith('ZKIW:'):
+                continue
+            _body2 = _s[5:].strip()
+            if _body2.startswith('FAIL'):
+                continue
+            for _tok in _body2.split():
+                if '=' not in _tok:
+                    continue
+                _k, _v = _tok.split('=', 1)
+                if not _k.startswith('zk_'):
+                    _k = 'zk_' + _k      #   sidecar 병합과 같은 키 이름(zk_strain_field 등)
+                _kv[_k] = _v
+
         #   `zk_metrics.txt` sidecar 의 추가 키(`zk_Iw` 등)도 점별 txt 에 남긴다.
         #     ZK: 줄은 public 4키만 갖고, I_w/기준면적/가중모드는 sidecar 에만 있다.
-        #     ZK:FAIL 이면 sidecar 를 합치지 않는다(이전 런의 stale 값 차단).
-        if _fail is None and _kv:
+        #   [A1] ZK:FAIL 이어도 sidecar 를 병합한다 — 원인 단서(fields/frame_value)가
+        #     거기에만 있고, 다음 런이 zk_metrics.txt 를 덮으면 영구 소실된다.
+        #     stale 차단은 "FAIL 에서는 진단 키만 통과"로 대신한다(값 키는 병합 금지).
+        _FAILDX = ('fields', 'frame_value', 'reason', 'odb')
+        if _fail is not None or _kv:
             try:
                 _zp = os.path.join(os.getcwd(), 'zk_metrics.txt')
                 if os.path.exists(_zp):
@@ -764,23 +785,30 @@ def _archive_zk(x_c, d_c, zk_lines):
                             if not _s or '=' not in _s:
                                 continue
                             _k, _v = _s.split('=', 1)
+                            if _k == 'status':
+                                continue
+                            if _fail is not None and _k not in _FAILDX:
+                                continue
                             if _k == 'state_wrinkled_frac':
                                 _k = 'zk_state_wrinkled_frac'
                             elif _k in ('step', 'frame', 'odb', 'weights', 'note'):
                                 _k = 'zk_' + _k
                             elif not _k.startswith('zk_'):
                                 _k = 'zk_' + _k
-                            if _k not in _kv:
+                            if _k not in _kv:      #   stdout 우선
                                 _kv[_k] = _v
             except Exception as _e:
                 emit('[ZK] zk_metrics.txt sidecar merge 실패(무시): %s' % _e)
 
         with io.open(_ptxt, 'a', encoding='utf-8') as _f:
-            if _fail is not None and not _kv:
+            if _fail is not None:
                 #   계산 불가: 0 으로 뭉개지 않는다(nan + 사유). CSV 는 그대로.
                 _f.write('zk_state_wrinkled_frac=nan\n')
                 _f.write('zk_note=%s\n' % _fail.replace(' ', '_'))
-                emit('[ZK] !!! ZK 계산 실패 -> zk_state_wrinkled_frac=nan (%s)' % _fail)
+                for _k in sorted(_kv):
+                    _f.write('%s=%s\n' % (_k, _kv[_k]))
+                emit('[ZK] !!! ZK 계산 실패 -> zk_state_wrinkled_frac=nan (%s) / 진단키 %d개'
+                     % (_fail, len(_kv)))
                 return
             if not _kv:
                 emit('[ZK] !!! 줄 없음 (eval_abaqus.py 출력에 ZK: 이 없다) - zk_ 아카이빙 생략')
@@ -2783,7 +2811,7 @@ try:
         # [paper-match] ZK: 줄 -> 점별 txt 에 zk_ 접두 append (CSV 열은 그대로).
         #   HFONLY 처럼 짝 LF 가 없으면 ZK 줄 자체가 없다(경고 생략).
         if _zk_lines or fidelity == 'LF':
-            _archive_zk(x_c, d_c, _zk_lines)
+            _archive_zk(x_c, d_c, _zk_lines, _zkiw_lines)
         # 성공한 HF 런에서만: HF ODB 설계점 태깅 + slope_stats 아카이빙(예외 안전).
         #     _archive_result 가 점별 txt 를 'w' 로 다시 쓰므로 **그 뒤에** append 해야 한다.
         _archive_slope(x_c, d_c)

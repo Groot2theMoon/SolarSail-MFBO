@@ -22,6 +22,12 @@ LF : 선형/프리스트레스 해석에서 얻을 수 있는 지표들
       `E = 0.5(exp(2*LE)-1)` 로 변환해 같은 Green-Lagrange 기준으로 계산한다.
       `zk_metrics.txt` 에는 추가로 기준면적 기반 압축 변형률 `zk_Iw` 를 남긴다
       (public `ZK:` 4필드는 불변).
+      [B3] 상태 기준은 `ZK_STATE_CRITERION` 이 고른다(기본 'mixed' = 응력 경계
+      taut<->wrinkled + 변형률 경계 wrinkled<->slack). 'strain' 은 2024판 역사값이다.
+      두 정의는 sidecar 에 병기한다(`zk_state_frac_by`, `zk_state_wrinkled_frac_strain`,
+      `zk_state_wrinkled_frac_strain_current_w`, `zk_intensity_mean_strain`).
+      `zk_Iw` 는 두 기준에서 값이 같다(`zk_Iw_branch_identity` 가 1 이면 항등 확인).
+      [B4] 상태 frac/intensity 가중: frac = 기준면적(frameValue=0 EVOL), intensity = 현재 EVOL.
 
 HF :
     - hf (Thrust Loss): 이상적인 평판 대비, 주름진 형상으로 인해 손실된 추력의 양.
@@ -268,7 +274,24 @@ def get_lf(odb_path):
 #       계산 불가: "ZK:FAIL reason=.." (ASCII 토큰). RESULTS 3/4필드는 절대 건드리지 않는다.
 # ---------------------------------------------------------------------------
 ZK_DIR_R_MIN = 1.0e-3    # axial mean 이 의미를 가지려면 R >= 이 값 (등방/직교면 nan)
-ZK_NU = 0.34             # Kapton 푸아송비 — `zk_Iw` 의 압축 변형률 보정에만 사용
+
+# ---- [A3] ZK 재료 상수 블록 -------------------------------------------------
+#   `zk_Iw` 는 무차원 변형률, `lf2` 는 Pa 다. 둘을 비교/대체하려면 Pa 환산이 필요하다.
+#   nu/E 를 여기저기 하드코딩하면 모델 재료를 바꿨을 때 조용히 틀어진다
+#   (lf2 의 `nu, E = 0.34, 2.5e9` 와 같은 종류의 함정) -> 한 곳에 모은다.
+#   주의: run_abaqus.py 의 실제 재료 상수와 **반드시** 같아야 한다(자동 검증 없음).
+ZK_E = 2.5e9             # Pa, Kapton. 어긋나면 zk_Iw_pa 가 조용히 틀어진다
+ZK_NU = 0.34             # Kapton 푸아송비 — `zk_Iw` 보정 + [B3] 응력 경계에 사용
+# ---- [B2] 변형률 임계값 ------------------------------------------------------
+#   0.0 = 종전과 **바이트 동일**(정의 변경 없음). lf1 의 -1e-7 과 맞추려면 값을 준다
+#   (그 순간 state_wrinkled_frac 의 정의가 바뀐다).
+ZK_EPS = 0.0
+# ---- [B3] 상태 기준 ----------------------------------------------------------
+#   'strain' = 2024판(역사값: taut = E2>0) | 'mixed' = 응력 경계(taut<->wrinkled,
+#   S2 ~ E2+nu*E1) + 변형률 경계(wrinkled<->slack). mixed 는 변형률-wrinkled 중
+#   S2>=0 인 면적(실측 29.8%)을 taut 로 재분류한다.
+#   I_w 는 두 기준에서 **값이 같다**(comp = max(-(E2+nu*E1),0) 항등, §2-b).
+ZK_STATE_CRITERION = 'mixed'
 
 
 def _zk_fail(reason):
@@ -295,6 +318,32 @@ def _zk_field_len(field):
         return len(field.values)
     except Exception:
         return 0
+
+
+def _zk_section_point(val):
+    """[A3/B5] FieldValue 의 section point 번호. 정보가 없으면 None."""
+    try:
+        sp = getattr(val, 'sectionPoint', None)
+    except Exception:
+        return None
+    if sp is None:
+        return None
+    try:
+        return int(getattr(sp, 'number', sp))
+    except Exception:
+        return None
+
+
+def _zk_principals(e11, e22, e12, strain_field):
+    """(단면) 성분 -> 주변형률. LE 면 E=0.5(exp(2LE)-1) 로 변환(고유벡터 동일)."""
+    _m = 0.5 * (e11 + e22)
+    _r = np.sqrt((0.5 * (e11 - e22)) ** 2 + e12 ** 2)
+    _e1 = _m + _r
+    _e2 = _m - _r
+    if strain_field == 'LE':
+        _e1 = 0.5 * np.expm1(2.0 * _e1)
+        _e2 = 0.5 * np.expm1(2.0 * _e2)
+    return _e1, _e2
 
 
 def _zk_reference_evol(odb, instance):
@@ -443,12 +492,30 @@ def get_zk(odb_path):
                 pass
             return _fail
 
+        #   [B1] 폴백(subset 실패 시 cand=raw)이든 subset 이든 **막 인스턴스 요소만**
+        #     통과시킨다. 폴백이면 모델 전체 필드가 올 수 있고, 그러면 케이블(T3D2)/클램프
+        #     변형률이 지표에 섞인다(EVOL subset 에 없으면 대개 걸러지지만 보장이 아니다).
+        _mem_labels = None
+        try:
+            _mem_labels = set(int(getattr(el, 'label', -1))
+                              for el in instance.elements)
+        except Exception:
+            _mem_labels = None
+
         # ---- E 성분을 요소별 평균 (section point/integration point 평균) ----
         e_acc = {}
+        e_sp_acc = {}        # [B5] (label, sectionPoint) -> [sum11, sum22, sum12, n]
+        _sp_seen = {}        # [A3] label -> {sectionPoint number}
         for val in e_field.values:
             lbl = getattr(val, 'elementLabel', None)
             if lbl is None:
                 continue
+            if _mem_labels is not None:
+                try:
+                    if int(lbl) not in _mem_labels:
+                        continue
+                except Exception:
+                    continue
             d = val.data
             try:
                 if len(d) >= 6:
@@ -462,6 +529,17 @@ def get_zk(odb_path):
             if not (np.isfinite(e11) and np.isfinite(e22) and np.isfinite(e12)):
                 continue
             e_acc.setdefault(lbl, []).append((e11, e22, e12))
+            _spn = _zk_section_point(val)
+            if _spn is not None:
+                _sp_seen.setdefault(lbl, set()).add(_spn)
+                _acc = e_sp_acc.get((lbl, _spn))
+                if _acc is None:
+                    _acc = [0.0, 0.0, 0.0, 0]
+                    e_sp_acc[(lbl, _spn)] = _acc
+                _acc[0] += e11
+                _acc[1] += e22
+                _acc[2] += e12
+                _acc[3] += 1
         if not e_acc:
             return _zk_fail('E_field_empty')
 
@@ -502,6 +580,9 @@ def get_zk(odb_path):
         if not e11_l:
             return _zk_fail('EVOL_zero_for_all_E_elements')
 
+        #   [A3] 평균한 두께 방향(section point) 개수. 정보가 없으면 1 로 둔다.
+        _n_sp = max((len(_s) for _s in _sp_seen.values()), default=0) or 1
+
         e11 = np.asarray(e11_l, dtype=np.float64)
         e22 = np.asarray(e22_l, dtype=np.float64)
         e12 = np.asarray(e12_l, dtype=np.float64)
@@ -533,13 +614,30 @@ def get_zk(odb_path):
             e2 = 0.5 * np.expm1(2.0 * e2)
             strain_conversion = 'green_lagrange_from_log'
 
-        mask_taut = (e2 > 0.0)
-        mask_wrinkled = (e1 > 0.0) & (e2 <= 0.0)
-        mask_slack = (e1 <= 0.0)
-        wt = w / wsum
+        #   [B2] 변형률 기준 마스크(ZK_EPS=0 이면 종전과 동일).
+        mask_taut_s = (e2 > ZK_EPS)
+        mask_slack_s = (e1 <= -ZK_EPS)
+        mask_wr_s = ~(mask_taut_s | mask_slack_s)
+        #   [B3] S2*(1-nu^2)/E 에 비례(양수 = 인장). 실측 29.8% 가 strain-wrinkled 이지만
+        #     응력으로는 taut 다 -> 그 면적을 taut 로 넘긴다.
+        _s2p = e2 + ZK_NU * e1
+        if ZK_STATE_CRITERION == 'mixed':
+            mask_slack = mask_slack_s                  # wrinkled<->slack: 변형률
+            mask_taut = (_s2p > ZK_EPS)                # taut<->wrinkled : 응력
+            mask_wrinkled = ~(mask_taut | mask_slack)  # 상호배타 + 전수 -> 합=1 보장
+        else:
+            mask_taut = mask_taut_s
+            mask_slack = mask_slack_s
+            mask_wrinkled = mask_wr_s
+        #   [B4] frac 가중 = 기준면적(frameValue=0 EVOL). `zk_Iw` 와 기준을 맞춘다.
+        #     현재 EVOL 가중은 역사 비교용으로 sidecar 에 병기한다.
+        wt = wref / float(np.sum(wref))
+        wt_cur = w / wsum
         frac_wr = float(np.sum(wt[mask_wrinkled]))
         frac_taut = float(np.sum(wt[mask_taut]))
         frac_slack = float(np.sum(wt[mask_slack]))
+        #   전환 기간 병기: 변형률 기준 frac(정의가 어느 쪽인지 명시적으로 남긴다).
+        frac_wr_strain = float(np.sum(wt[mask_wr_s]))
 
         if np.any(mask_wrinkled):
             vals = np.abs(e2[mask_wrinkled])
@@ -551,16 +649,32 @@ def get_zk(odb_path):
             int_mean = 0.0
             int_p95 = 0.0
 
+        #   [B3] 변형률 기준 intensity 병기(역사값). mixed-wrinkled 는 strain-wrinkled 의
+        #     부분집합이므로(E2 <= -nu*E1 < 0) 같은 |E2| 를 더 넓은 면적에서 평균한 값이다.
+        if np.any(mask_wr_s):
+            _vs = np.abs(e2[mask_wr_s])
+            _ws = w[mask_wr_s]
+            _ds = float(np.sum(_ws))
+            int_mean_s = float(np.sum(_vs * _ws) / _ds) if _ds > 0.0 else 0.0
+            int_p95_s = _zk_weighted_percentile(_vs, _ws, 95.0)
+        else:
+            int_mean_s = 0.0
+            int_p95_s = 0.0
+
         # ---- I_w (sidecar): 기준면적 가중 전체 압축 변형률 ----
-        #   wrinkled: max(|E2|-nu*E1, 0)  (positive part; 준-taut 은 0)
-        #   slack   : |E2| + nu*|E1|     (E1<=0, E2<=0)
-        #   taut    : 0
         #   분모는 public EVOL 이 아니라 frameValue=0 EVOL 의 합(A_ref)이다.
+        #   [B3] 세 분기(taut 0 / wrinkled max(|E2|-nu*E1,0) / slack |E2|+nu*|E1|)의 합은
+        #     max(-(E2+nu*E1), 0) 과 **항등**이다(§2-b). 그래서 상태 기준을 바꿔도 I_w 값은
+        #     변하지 않는다 -> 아래 `zk_Iw_branch_identity` 키가 그 증거다(값은 항상 comp).
         wr_comp = np.maximum(np.abs(e2) - ZK_NU * e1, 0.0)
         slack_comp = np.abs(e2) + ZK_NU * np.abs(e1)
-        comp = np.zeros_like(e1)
-        comp[mask_wrinkled] = wr_comp[mask_wrinkled]
-        comp[mask_slack] = slack_comp[mask_slack]
+        comp = np.maximum(-(e2 + ZK_NU * e1), 0.0)
+        #   회귀 증거용 옛 3분기. 마스크는 **변형률 기준**이라 상태 기준과 무관하다.
+        comp_legacy = np.zeros_like(e1)
+        comp_legacy[mask_wr_s] = wr_comp[mask_wr_s]
+        comp_legacy[mask_slack_s] = slack_comp[mask_slack_s]
+        iw_branch_identity = int(bool(np.allclose(comp, comp_legacy,
+                                                  rtol=1e-12, atol=1e-20)))
         iw_den = float(np.sum(wref))
         iw_num = float(np.sum(wref * comp))
         iw_mean = (iw_num / iw_den) if iw_den > 0.0 else 0.0
@@ -571,8 +685,11 @@ def get_zk(odb_path):
         slack_num = float(np.sum(wref[mask_slack] * slack_comp[mask_slack]))
         iw_slack_share = (slack_num / iw_num) if iw_num > 0.0 else 0.0
         iw_wr_share = (wr_num / iw_num) if iw_num > 0.0 else 0.0
-        wr_area = float(np.sum(wref[mask_wrinkled]))
-        clip_area = float(np.sum(wref[mask_wrinkled & (wr_comp <= 0.0)]))
+        #   [B3] clip_zero_frac 은 **정의 변경 대상이 아니다**: "변형률-wrinkled 중
+        #     응력-taut" 비율(=mixed 기준의 근거 수치, 실측 0.2979)이다. 상태 마스크와
+        #     무관하게 변형률 기준으로 계산해 역사값을 보존한다(0 으로 만들면 증거가 사라진다).
+        wr_area = float(np.sum(wref[mask_wr_s]))
+        clip_area = float(np.sum(wref[mask_wr_s & (wr_comp <= 0.0)]))
         iw_clip_zero_frac = (clip_area / wr_area) if wr_area > 0.0 else 0.0
 
         # ---- 방향: local 1축 회전 후 axial mean (2*theta) ----
@@ -606,6 +723,43 @@ def get_zk(odb_path):
                 else:
                     dir_note = 'local_axis_invalid'
 
+        # ---- [B5] section point 진단: 가장 압축적인 단면 기준 intensity ----
+        #   canonical 은 **중면 평균**(막 이론 정합)이다. 굽힘이 크면 중면 평균이 압축을
+        #   상쇄(과소평가)하므로 두께 방향 최악값을 진단으로 병기한다. canonical 불변.
+        #   section point 정보가 없는 ODB 는 canonical 과 같은 값으로 둔다.
+        int_maxsp_mean = int_mean
+        int_maxsp_p95 = int_p95
+        if e_sp_acc:
+            _best = {}
+            for (_slbl, _spn), _acc in e_sp_acc.items():
+                if _acc[3] <= 0:
+                    continue
+                _p1, _p2 = _zk_principals(_acc[0] / _acc[3], _acc[1] / _acc[3],
+                                          _acc[2] / _acc[3], strain_field)
+                _cur = _best.get(_slbl)
+                if _cur is None or _p2 < _cur[1]:
+                    _best[_slbl] = (_p1, _p2)
+            _mvals, _mwts = [], []
+            for _slbl, (_p1, _p2) in _best.items():
+                if ZK_STATE_CRITERION == 'mixed':
+                    _is_wr = ((_p2 + ZK_NU * _p1) <= ZK_EPS) and not (_p1 <= -ZK_EPS)
+                else:
+                    _is_wr = (_p1 > -ZK_EPS) and (_p2 <= ZK_EPS)
+                if not _is_wr:
+                    continue
+                _mv = vol_map.get(_slbl, 1.0 if not vol_map else 0.0)
+                if _mv > 0.0:
+                    _mvals.append(abs(float(_p2)))
+                    _mwts.append(float(_mv))
+            if _mvals:
+                _mva = np.asarray(_mvals, dtype=np.float64)
+                _mwa = np.asarray(_mwts, dtype=np.float64)
+                int_maxsp_mean = float(np.sum(_mva * _mwa) / np.sum(_mwa))
+                int_maxsp_p95 = _zk_weighted_percentile(_mva, _mwa, 95.0)
+            else:
+                int_maxsp_mean = 0.0
+                int_maxsp_p95 = 0.0
+
         try:
             _nfr = int(len(odb.steps[step_name].frames))
         except Exception:
@@ -635,6 +789,23 @@ def get_zk(odb_path):
                 'zk_Iw_clip_zero_frac': iw_clip_zero_frac,
                 'zk_Iw_ref_missing': int(ref_missing),
                 'zk_Iw_nu': float(ZK_NU),
+                # ---- [A3] 단위/파생/진단 ----
+                'zk_Iw_pa': iw_mean * ZK_E / (1.0 - ZK_NU ** 2),
+                'zk_area_unit': 'm3',            # zk_area_total 은 면적이 아니라 부피(EVOL)
+                'zk_n_sp': int(_n_sp),           # 평균한 section point 개수(정보 없으면 1)
+                'zk_e2_min': float(np.min(e2)),  # GL 포화 여유(|E|<=0.5)
+                # ---- [B3] 기준/병기 ----
+                'zk_state_frac_by': ZK_STATE_CRITERION,
+                'zk_state_wrinkled_frac_strain': frac_wr_strain,
+                'zk_state_wrinkled_frac_strain_current_w': float(np.sum(wt_cur[mask_wr_s])),
+                'zk_intensity_mean_strain': int_mean_s,
+                'zk_intensity_p95_strain': int_p95_s,
+                'zk_state_wrinkled_frac_current_w': float(np.sum(wt_cur[mask_wrinkled])),
+                'zk_Iw_state_criterion': 'stress_boundary_independent',
+                'zk_Iw_branch_identity': iw_branch_identity,
+                # ---- [B5] 두께 방향 최악 단면 진단 ----
+                'zk_intensity_maxsp_mean': int_maxsp_mean,
+                'zk_intensity_maxsp_p95': int_maxsp_p95,
                 'note': dir_note}
     except Exception as e:
         return _zk_fail('exception_%s' % type(e).__name__)
@@ -679,6 +850,7 @@ def format_zk_iw_line(zk):
     return ('ZKIW:zk_Iw=%s zk_Iw_p95=%s zk_Iw_area_total=%s '
             'zk_Iw_weights=%s zk_Iw_slack_share=%s zk_Iw_wr_share=%s '
             'zk_Iw_clip_zero_frac=%s zk_Iw_ref_missing=%s '
+            'zk_Iw_pa=%s '
             'strain_field=%s strain_measure=%s strain_conversion=%s'
             % (_zk_fmt(zk.get('zk_Iw'), '%.10e'),
                _zk_fmt(zk.get('zk_Iw_p95'), '%.10e'),
@@ -688,6 +860,7 @@ def format_zk_iw_line(zk):
                _zk_fmt(zk.get('zk_Iw_wr_share'), '%.10e'),
                _zk_fmt(zk.get('zk_Iw_clip_zero_frac'), '%.10e'),
                zk.get('zk_Iw_ref_missing', 'nan'),
+               _zk_fmt(zk.get('zk_Iw_pa'), '%.10e'),
                zk.get('strain_field', 'nan'),
                zk.get('strain_measure', 'nan'),
                zk.get('strain_conversion', 'nan')))
@@ -714,7 +887,14 @@ def write_zk_metrics(zk, odb_path):
                       'strain_field', 'strain_measure', 'strain_conversion',
                       'zk_Iw', 'zk_Iw_p95', 'zk_Iw_area_total',
                       'zk_Iw_weights', 'zk_Iw_slack_share', 'zk_Iw_wr_share',
-                      'zk_Iw_clip_zero_frac', 'zk_Iw_ref_missing', 'zk_Iw_nu'):
+                      'zk_Iw_clip_zero_frac', 'zk_Iw_ref_missing', 'zk_Iw_nu',
+                      'zk_Iw_pa', 'zk_area_unit', 'zk_n_sp', 'zk_e2_min',
+                      'zk_state_frac_by', 'zk_state_wrinkled_frac_strain',
+                      'zk_state_wrinkled_frac_strain_current_w',
+                      'zk_intensity_mean_strain', 'zk_intensity_p95_strain',
+                      'zk_state_wrinkled_frac_current_w', 'zk_Iw_state_criterion',
+                      'zk_Iw_branch_identity',
+                      'zk_intensity_maxsp_mean', 'zk_intensity_maxsp_p95'):
                 if k in zk:
                     lines.append('%s=%s' % (k, zk[k]))
         with open('zk_metrics.txt', 'w') as f:

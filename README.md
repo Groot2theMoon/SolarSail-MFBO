@@ -28,7 +28,8 @@
 > **가설:** "선형 해석(LF)에서 압축 응력이 넓게 분포하는 디자인은, 실제 포스트버클링 해석(HF)에서도 주름(Wrinkle)이 크게 발생하여 추력 성능이 떨어질 것이다."
 
 * eval_abaqus.py docstring에서도 밝히듯이, 실제로는 3가지의 lf 지표를 제안하므로, 3개 중 원하는 지표를 선택하여 mfbo를 진행할 수 있습니다.
-* 수정을 위해서는 mfbo.py 의 get_abaqus 함수내에서 parsed_data[0] 를 1 or 2 로 수정하면 됩니다.
+* 지표 선택은 `mfbo.py` 의 **`LF_TARGET` 상수 하나**로 합니다(`lf1`/`lf2`/`lf3`/`state_wrinkled_frac`/`zk_Iw`/`zk_Iw_pa` …).
+  기본값 `lf1` 은 종전과 완전히 동일하며, ZK 계열로 바꾸면 `ZK:FAIL` 인 점은 nan 이 되어 자동으로 관측에서 제외됩니다.
 ---
 
 ## System Architecture
@@ -106,7 +107,12 @@ python mfbo.py
         `E=0.5(exp(2*LE)-1)`로 변환한다(`strain_field` 기록). `RESULTS` 3/4필드는 불변.
         `zk_metrics.txt` 에는 기준면적·slack·positive-part 를 반영한 `zk_Iw` sidecar도
         기록하고, eval stdout 에 `ZKIW:` 별도 줄로 함께 낸다(`RESULTS`/`ZK:` 불변).
-        아직 MFBO LF target 으로 연결되지는 않았고, `mfbo.py` 는 계속 `lf1` 을 쓴다.
+        추가 진단 키: `zk_state_frac_by`(mixed/strain), `zk_state_wrinkled_frac_strain`,
+        `zk_state_wrinkled_frac_strain_current_w`, `zk_state_wrinkled_frac_current_w`,
+        `zk_Iw_branch_identity`(세 분기=단일식 항등 증거), `zk_Iw_pa`(Pa 환산),
+        `zk_area_unit`(m3), `zk_n_sp`, `zk_intensity_maxsp_*`.
+        `mfbo.py` 는 `ZK:`/`ZKIW:` 를 파싱해 `[ZKJSON]` 1줄로 남기고, LF 목적값은
+        `LF_TARGET` 상수로 고른다(기본 `lf1` = 종전과 동일, 게이트 통과 전 변경 금지).
     *   **HF Metric:** SRP 모델을 적용하여 변형된 메쉬의 법선 벡터를 적분, wrinkle에 의한 **Thrust Loss** 계산.
     *   **성능:** `bulkDataBlocks`와 `numpy`를 사용하여 Python 루프 속도 문제 개선.
 
