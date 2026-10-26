@@ -66,6 +66,18 @@ import subprocess
 import time
 import numpy as np
 
+# ---- explicit CLI config (no environment variables) ----
+for _cp in (os.getcwd(), os.path.dirname(os.getcwd()),
+            os.path.dirname(os.path.dirname(os.getcwd()))):
+    if os.path.exists(os.path.join(_cp, 'analysis_config.py')):
+        if _cp not in sys.path:
+            sys.path.insert(0, _cp)
+        break
+import analysis_config as _AC
+_CLI_REST, _CLI_CONFIG, _CLI_CASE = _AC.split_cli(sys.argv[1:])
+_CFG = _AC.load_config(_CLI_CONFIG)
+_CFG_HASH = _AC.config_hash(_CFG)
+
 # ===== SETTINGS =====
 #   [§19.110] 실행/모델 설정값은 전부 이 블록에 있다. 값을 고칠 때는 여기만 본다.
 #     종전에는 설정이 2259줄 본문에 흩어져 있었다 — NUMCPUS 97 / N_EIG 836 / MODE_SOURCE 840 /
@@ -306,6 +318,8 @@ BUCKLE_ODB = 'Buckle_Analysis.odb'   # legacy self-buckle name; R-13 does NOT us
 HF_JOB = 'HF_Postbuckle_u3free'
 HF_ODB = HF_JOB + '.odb'
 # ============================================================================
+#   Explicit config overrides the default settings above.  No env vars.
+_AC.apply_globals(globals(), _CFG)
 
 # ---- 스크립트 위치(_HERE) / Abaqus 작업 디렉터리(_RUN) 결정 ----
 # 주의: `abaqus cae noGUI=script.py` 로 실행하면 스크립트가 execfile 로 로드되어
@@ -470,13 +484,14 @@ _RUN_T0 = time.time()
 #   비어 있으면 점별 txt 에는 'nan' + 이유가 들어간다(_r13_ct_keys 참조).
 _R13_CT = {}
 emit_start()
+_AC.log_config(emit, _CFG, _CLI_CASE)
 
 
 try:
-    # abaqus cae noGUI=run_abaqus.py -- [HF/LF] x_c d_c
-    fidelity = sys.argv[-3].upper()
-    x_c = float(sys.argv[-2])
-    d_c = float(sys.argv[-1])
+    # abaqus cae noGUI=run_abaqus.py -- [HF/LF] x_c d_c [--config ...]
+    fidelity = _CLI_REST[-3].upper()
+    x_c = float(_CLI_REST[-2])
+    d_c = float(_CLI_REST[-1])
     # 범위 가드: 두 클램프 패치(반경 0.2 m)는 사선변 위에서 거리 20*x_c 만큼 떨어진다.
     #   x_c < 0.05 이면 두 패치가 겹치고, x_c = 1.0 이면 꼭짓점 RP 패치와 겹친다.
     #   상한은 mfbo.py 의 설계공간(x1_max=0.95)과 반드시 일치해야 한다 — 좁게 잡으면

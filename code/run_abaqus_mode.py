@@ -52,6 +52,18 @@ import subprocess
 import time
 import numpy as np
 
+# ---- explicit CLI config (no environment variables) ----
+for _cp in (os.getcwd(), os.path.dirname(os.getcwd()),
+            os.path.dirname(os.path.dirname(os.getcwd()))):
+    if os.path.exists(os.path.join(_cp, 'analysis_config.py')):
+        if _cp not in sys.path:
+            sys.path.insert(0, _cp)
+        break
+import analysis_config as _AC
+_CLI_REST, _CLI_CONFIG, _CLI_CASE = _AC.split_cli(sys.argv[1:])
+_CFG = _AC.load_config(_CLI_CONFIG)
+_CFG_HASH = _AC.config_hash(_CFG)
+
 # 로깅 — cae noGUI 는 스크립트 stdout 을 콘솔로 보내지 않고 execfile 이라 __file__ 도 없다(§1).
 #   파일이 주 채널이다. canary 로 이 파일이 실제 실행되는지부터 확인한다.
 try:
@@ -355,6 +367,10 @@ MODE_TABLE = 'modes_%s.txt' % JOB_NAME       # HF 는 ..\modes_ClampFree_Buckle.
 WRITE_MODE_TABLE = True                      # 잡 성공 후 ODB 에서 모드표를 직접 만든다
 RUN_BASE_STATE_PROBE = True                  # base state 압축영역 측정(토큰 소량, 결과 해석용)
 BUCKLE_STEP_NO = 2                           # 이 모델의 스텝 순서: 1=GlobalTension 2=Buckle
+
+#   Explicit config overrides defaults.  No environment variables.
+_AC.apply_globals(globals(), _CFG)
+_AC.log_config(emit, _CFG, _CLI_CASE)
 
 # -------------------------------------------------------------
 # 2. 모델 초기화 및 재질

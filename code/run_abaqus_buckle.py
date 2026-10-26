@@ -47,6 +47,18 @@ import time
 import traceback
 import numpy as np
 
+# ---- explicit CLI config (no environment variables) ----
+for _cp in (os.getcwd(), os.path.dirname(os.getcwd()),
+            os.path.dirname(os.path.dirname(os.getcwd()))):
+    if os.path.exists(os.path.join(_cp, 'analysis_config.py')):
+        if _cp not in sys.path:
+            sys.path.insert(0, _cp)
+        break
+import analysis_config as _AC
+_CLI_REST, _CLI_CONFIG, _CLI_CASE = _AC.split_cli(sys.argv[1:])
+_CFG = _AC.load_config(_CLI_CONFIG)
+_CFG_HASH = _AC.config_hash(_CFG)
+
 # ===== SETTINGS =====
 #   [§19.108] 실행/모델 설정값은 전부 이 블록에 있다. 값을 고칠 때는 여기만 본다.
 #     종전에는 CASE / CLAMP_DC / PULL_TOP 스위치처럼 설정이 본문 중간에 흩어져 있었다.
@@ -76,7 +88,7 @@ PAPER_STATIC_DISP = 0.0005    # 논문 Fig. 12 정적 스텝 코너값 (참고�
 MODE_PRESTRESS = 0.0001       # 2026-10-20: 대칭 10모드 확인된 운용점 (λ 쌍 −1.5867e-4 등)
 
 # ---- ① CASE 선택 ----
-CASE = 'paper'                # 'paper'(케이블·클램프 없음) | 'seed' | 'clamp_only'
+CASE = _CLI_CASE or _CFG.get('CASE', 'paper')   # 'paper' | 'seed' | 'clamp_only'
 
 # ---- ② 형상/격자 ----
 BASE = 20.0   # m
@@ -194,6 +206,10 @@ NUMCPUS = 4
 
 MODEL_PREFIX = 'SailModel_Buckle'
 INSTANCE_NAME = 'MEMBRANE-1'
+#   Explicit config overrides defaults; --case has higher priority than JSON CASE.
+_AC.apply_globals(globals(), _CFG)
+if _CLI_CASE:
+    CASE = _CLI_CASE
 
 # ---- 스크립트 위치(_HERE) / Abaqus 작업 디렉터리(_RUN) 결정 ----
 # 주의: `abaqus cae noGUI=script.py` 로 실행하면 스크립트가 execfile 로 로드되어
@@ -223,6 +239,7 @@ def _resolve_here():
     return os.getcwd()
 
 _HERE = _resolve_here()
+_AC.log_config(print, _CFG, CASE)
 # 작업 디렉터리: 좌굴 산출물 전용.
 #   HF/LF 산출물(code/aba)과 섞으면 두 가지가 조용히 망가진다:
 #     (a) *IMPERFECTION, FILE=... 이 stale .fil 을 읽을 수 있다
@@ -352,7 +369,7 @@ def parse_args(argv):
             (nums[3] if len(nums) > 3 else None))
 
 
-x_c, _disp_arg, _clamp_arg, _excl_arg = parse_args(sys.argv)
+x_c, _disp_arg, _clamp_arg, _excl_arg = parse_args(_CLI_REST)
 DISP = DISP_GLOBAL if _disp_arg is None else _disp_arg
 # 클램프 법선 당김 — 기본은 코너 당김과 같은 비율(A-route 의 d_c), CLI 3번째 인자로 직접 지정 가능.
 #   예: -- 0.5 0 5e-5  -> 코너 미구동 + 클램프만 5e-5 m (클램프 단독 구동 진단)

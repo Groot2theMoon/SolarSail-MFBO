@@ -42,6 +42,11 @@ except Exception:
     pass
 sys.path.insert(0, HERE)
 import aba_imperfection as A                                                     # noqa: E402
+import analysis_config as AC                                                   # noqa: E402
+import aba_grid_mesh                                                           # noqa: E402
+
+CFG = {}
+CFG_PATH = None
 
 BUCKLE_SCRIPT = os.path.join(HERE, A.BUCKLE_SCRIPT_NAME)
 SEEDS_DIR = os.path.join(HERE, A.SEED_DIR_NAME)
@@ -81,7 +86,9 @@ def _need(path, what, hint=''):
 
 
 def buckle_disp():
-    """run_abaqus_buckle.py 의 DISP_GLOBAL(또는 MODE_PRESTRESS)을 읽는다."""
+    """explicit config -> buckle source DISP_GLOBAL/MODE_PRESTRESS."""
+    if CFG.get('DISP_GLOBAL') is not None:
+        return float(CFG['DISP_GLOBAL'])
     txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
     m = re.search(r'^DISP_GLOBAL\s*=\s*([0-9.eE+-]+)', txt, re.M)
     if m:
@@ -91,15 +98,14 @@ def buckle_disp():
 
 
 def buckle_mesh_tag():
-    """run_abaqus_buckle.py 의 PAPER_MATCH/PAPER_MESH_ORDER 를 읽어 메쉬 태그를 맞춘다.
-
-    2차 격자(PAPER_MESH_ORDER=2)면 잡 이름이 'grid2' 다 — make_seed 가 1차 이름으로
-    ODB 를 찾으면 항상 빈손이 되어 잡을 불필요하게 다시 돌린다(또는 stale 을 집는다).
-    """
+    """explicit config -> buckle source PAPER_MATCH/PAPER_MESH_ORDER."""
     txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
-    _paper = re.search(r'^PAPER_MATCH\s*=\s*True\b', txt, re.M) is not None
-    _o2 = re.search(r'^PAPER_MESH_ORDER\s*=\s*2\b', txt, re.M) is not None
-    return 'grid2' if (_paper and _o2) else 'grid'
+    _paper = CFG.get('PAPER_MATCH',
+                     re.search(r'^PAPER_MATCH\s*=\s*True\b', txt, re.M) is not None)
+    order = int(CFG.get('MESH_ORDER', 0) or
+                CFG.get('PAPER_MESH_ORDER',
+                        2 if re.search(r'^PAPER_MESH_ORDER\s*=\s*2\b', txt, re.M) else 1))
+    return 'grid2' if (_paper and order == 2) else 'grid'
 
 
 def seed_case():
@@ -112,10 +118,13 @@ def seed_case():
 
 
 def buckle_pert_tag():
-    """run_abaqus_buckle.py 의 PERTURBATION -> 잡 이름의 _plvNNNNN 태그."""
+    """explicit config -> buckle source PERTURBATION -> _plvNNNNN."""
     txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
-    m = re.search(r'^PERTURBATION\s*=\s*([0-9.eE+-]+)', txt, re.M)
-    p = float(m.group(1)) if m else 0.01
+    if CFG.get('PERTURBATION') is not None:
+        p = float(CFG['PERTURBATION'])
+    else:
+        m = re.search(r'^PERTURBATION\s*=\s*([0-9.eE+-]+)', txt, re.M)
+        p = float(m.group(1)) if m else 0.01
     return '_plv%05d' % int(round(p * 1.0e5))
 
 
@@ -134,11 +143,35 @@ def _table_nodes(path):
 
 
 def expected_membrane_nodes():
-    """PAPER_MATCH + PAPER_MESH_ORDER=2 -> 30,501 (S8R5/STRI65); 그 외 1차 10,201."""
+    """Mesh node count from resolved config (defaults: current source).
+
+    1st order: seed_div=200 -> 10,201 / 632 -> 100,489 / 2000 -> 1,002,001.
+    2nd order is counted through aba_grid_mesh._second_order.
+    """
     txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
-    _paper = re.search(r'^PAPER_MATCH\s*=\s*True\b', txt, re.M) is not None
-    _o2 = re.search(r'^PAPER_MESH_ORDER\s*=\s*2\b', txt, re.M) is not None
-    return 30501 if (_paper and _o2) else 10201
+
+    def _c(name, default):
+        if name in CFG and CFG[name] is not None:
+            try:
+                return float(CFG[name])
+            except Exception:
+                return default
+        m = re.search(r'^%s\s*=\s*([0-9.eE+-]+)' % name, txt, re.M)
+        return float(m.group(1)) if m else default
+
+    base = _c('BASE', 20.0)
+    height = _c('HEIGHT', 10.0)
+    seed_div = _c('SEED_DIV', 200.0)
+    order = int(CFG.get('MESH_ORDER',
+                        2 if re.search(r'^PAPER_MESH_ORDER\s*=\s*2\b', txt, re.M) else 1))
+    if order == 2:
+        nodes, s4, s3 = aba_grid_mesh.generate_grid(base, height, seed_div)
+        nodes2, _, _ = aba_grid_mesh._second_order(nodes, s4, s3)
+        return len(nodes2)
+    h = base / seed_div
+    nx = int(round(base / h))
+    ny = int(round(height / h))
+    return sum(max(0, nx - 2 * j + 1) for j in range(ny + 1))
 
 
 def check_table_nodes(path, what):
@@ -221,6 +254,7 @@ def main(argv=None):
     ap.add_argument('--disp', type=float, default=None,
                     help='buckle 코너 당김 [m]. 생략하면 run_abaqus_buckle.py 의 DISP_GLOBAL')
     ap.add_argument('--excl', type=float, default=0.21)
+    ap.add_argument('--config', default=None, help='explicit JSON config')
     ap.add_argument('--seed-clamp-dc', type=float, default=0.0556, dest='seed_clamp_dc',
                     help='시드 클램프 당김 비율. 기본 0.0556 = CLAMP_DC 와 같은 값 = HF 의 클램프 '
                          '하중 경로를 그대로 쓴다. 2026-10-22 실측: disp=1e-4 에서 pull=5.56e-6 '
@@ -232,6 +266,10 @@ def main(argv=None):
     ap.add_argument('--refresh-seed-family', action='store_true',
                     help='x_c 무관한 seed 가족도 다시 뽑는다')
     a = ap.parse_args(argv)
+    global CFG, CFG_PATH
+    CFG_PATH = os.path.abspath(a.config) if a.config else None
+    CFG = AC.load_config(a.config)
+    AC.print_config(CFG)
 
     disp = a.disp if a.disp is not None else buckle_disp()
     pull = disp * a.d_c                        # HF 와 짝지을 설계점 값(표 이름/헤더에 쓴다)
@@ -260,11 +298,11 @@ def main(argv=None):
             print("      buckle 산출물 있음 - 잡 생략 (%s)" % os.path.basename(odb))
         else:
             _job_t0 = time.time()
-            with CasePatch(_sc, a.dry_run):
-                rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g 0' % (a.x_c, disp),
-                           a.dry_run, cwd=HERE)
-                if rc:
-                    return rc
+            _ca = (' --config "%s" --case %s ' % (CFG_PATH, _sc)) if CFG_PATH else (' --case %s ' % _sc)
+            rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py --%s%g %g 0'
+                       % (_ca, a.x_c, disp), a.dry_run, cwd=HERE)
+            if rc:
+                return rc
             odb, _job = expected_odb(a.x_c, disp, 0.0, _sc, a.excl)
             if not a.dry_run and not fresh(odb, _job_t0):
                 raise SystemExit(
@@ -294,11 +332,12 @@ def main(argv=None):
             print("      buckle 산출물 있음 - 잡 생략 (%s)" % os.path.basename(odb))
         else:
             _job_t0 = time.time()
-            with CasePatch('clamp_only', a.dry_run):
-                rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py -- %g %g %g %g'
-                           % (a.x_c, disp, pull_seed, a.excl), a.dry_run, cwd=HERE)
-                if rc:
-                    return rc
+            _ca = (' --config "%s" --case clamp_only ' % CFG_PATH) if CFG_PATH else ' --case clamp_only '
+            rc, _ = sh('abaqus cae noGUI=run_abaqus_buckle.py --%s%g %g %g %g'
+                       % (_ca, a.x_c, disp, pull_seed, a.excl),
+                       a.dry_run, cwd=HERE)
+            if rc:
+                return rc
             odb, _job = expected_odb(a.x_c, disp, a.seed_clamp_dc, 'clamp_only', a.excl)
             if not a.dry_run and not fresh(odb, _job_t0):
                 raise SystemExit(
@@ -375,7 +414,8 @@ def main(argv=None):
     if not ok:
         print("!!! 게이트 실패 - 표를 만들었지만 HF 가 중단한다: %s" % why)
         return 1
-    if nodes != [10201] or sorted(tbl.keys()) != [1, 2, 3, 4] or any(p != 1.0 for p in peaks):
+    _exp_nodes = expected_membrane_nodes()
+    if nodes != [_exp_nodes] or sorted(tbl.keys()) != [1, 2, 3, 4] or any(p != 1.0 for p in peaks):
         print("!!! 검증 실패 - nodes=%s modes=%s peaks=%s" % (nodes, sorted(tbl.keys()), peaks))
         return 1
     print("[make_seed] OK — HF 가 %s 를 읽는다" % os.path.basename(out_tbl))
