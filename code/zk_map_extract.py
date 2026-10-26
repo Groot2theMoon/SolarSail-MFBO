@@ -222,7 +222,10 @@ def main():
         comp[m_wr] = wr[m_wr]
         comp[m_sl] = sl[m_sl]
         comp[~np.isfinite(comp)] = 0.0
-        clip = ((state == 1) & (comp <= 0.0)).astype(np.int64)
+        #   [2026-10-26] `clip` 은 **변형률-wrinkled 중 응력-taut** 비율이다
+        #     (eval_abaqus 의 mask_wr_s & wr_comp<=0 와 같은 정의, 역사값 0.2979).
+        #     mixed-wrinkled 는 정의상 comp>0 이므로 mixed 로 계산하면 항상 0 이 된다.
+        clip = ((state_strain == 1) & (comp <= 0.0)).astype(np.int64)
 
         iw_val = float(np.sum(wref * comp) / wref_sum) if wref_sum > 0 else 0.0
         pos = comp > 0.0

@@ -152,8 +152,10 @@ def main():
         _ss = data['state_strain']
         for name, code in (('taut', 0), ('wrinkled', 1), ('slack', 2)):
             frac_strain[name] = float(np.sum(wcur[_ss == code]) / cur_sum)
-    wr_ref = float(np.sum(wref[state == 1]))
-    clip_frac = (float(np.sum(wref[(state == 1) & (clip == 1)]) / wr_ref)
+    #   clip 은 "변형률-wrinkled 중 응력-taut" 비율이므로 변형률 상태로 나눈다.
+    _st_clip = data['state_strain'] if 'state_strain' in data else state
+    wr_ref = float(np.sum(wref[_st_clip == 1]))
+    clip_frac = (float(np.sum(wref[(_st_clip == 1) & (clip == 1)]) / wr_ref)
                  if wr_ref > 0 else 0.0)
     spread = _dir_spread(state, dir_g, wcur)
 
