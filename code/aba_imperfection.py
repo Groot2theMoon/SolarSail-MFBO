@@ -33,6 +33,7 @@ abaqus 모듈을 쓰지 않는다(stdlib only) -> 하네스에서 단위시험 �
 from __future__ import print_function
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -541,6 +542,24 @@ def lf_sidecar_path(odb_path):
     return odb_path + LF_SIDECAR_SUFFIX
 
 
+def model_fingerprint(values):
+    """[CONFIG] 모델 정의값 dict -> 12자 sha1. LF 재사용 가드의 기계 판독용 지문.
+
+    왜 필요한가: `LF_MODEL_TAG` 는 물리 경로(clamp/u3)만 담아서, config 로
+    `THICKNESS`/`SEED_DIV`/`MESH_ORDER`/프리텐션을 바꿔도 **같은 (x_c,d_c) 의 옛 LF ODB 가
+    조용히 재사용**됐다(모델 오염). sidecar 의 사람용 extra 는 아무도 다시 읽지 않았다.
+    값은 `%.12g` 로 정규화해 int/float/str 표기 차이(200 vs 200.0)로 지문이 흔들리지 않게 한다.
+    """
+    body = {}
+    for k, v in (values or {}).items():
+        try:
+            body[str(k)] = '%.12g' % float(v)
+        except (TypeError, ValueError):
+            body[str(k)] = str(v)
+    raw = json.dumps(body, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+    return hashlib.sha1(raw.encode('utf-8')).hexdigest()[:12]
+
+
 def lf_sidecar_write(odb_path, tag=None, extra=None):
     """LF ODB 옆에 model sidecar 를 쓴다. 실패는 호출자가 처리한다."""
     kv = {'tag': tag or LF_MODEL_TAG,
@@ -566,11 +585,26 @@ def lf_sidecar_read(odb_path):
     return out
 
 
-def lf_odb_is_current(odb_path, tag=None):
-    """LF ODB 가 현재 모델 정의(tag)로 만들어진 것인가. sidecar 없으면 False."""
+def lf_odb_is_current(odb_path, tag=None, model_fp=None, config_sha=None):
+    """LF ODB 가 현재 모델 정의로 만들어진 것인가. sidecar 없으면 False.
+
+    인자별 판정:
+      tag        : 물리 경로 버전(필수, 기존 동작).
+      model_fp   : 모델 정의값 sha1 — run_abaqus 가 자기가 아는 값으로 대조(가장 강함).
+      config_sha : config sha1 — mfbo 처럼 모델값을 모르는 호출자가 쓰는 **거친** 대조.
+    `None` 이면 그 축은 검사하지 않는다(기존 호출부 호환). sidecar 에 키가 없으면 불일치로 본다
+    (구 ODB 1회 재제출 = 안전한 방향).
+    """
     if not odb_path or not os.path.exists(odb_path):
         return False
-    return lf_sidecar_read(odb_path).get('tag') == (tag or LF_MODEL_TAG)
+    d = lf_sidecar_read(odb_path)
+    if d.get('tag') != (tag or LF_MODEL_TAG):
+        return False
+    if model_fp is not None and d.get('model_fp') != model_fp:
+        return False
+    if config_sha is not None and d.get('config_sha1') != config_sha:
+        return False
+    return True
 
 
 def file_token(path):

@@ -24,6 +24,7 @@ import subprocess
 import json
 import os
 import aba_imperfection   # §19.66: 설계점별 LF ODB 이름 규약
+import analysis_config    # [CONFIG] mfbo 가 기대하는 config 신원(기본값) 계산용
 import torch 
 import warnings
 from scipy.stats import qmc
@@ -64,7 +65,14 @@ FAIL = float("nan")
 ZK_LOG = True       # True = 런마다 zk dict 를 1줄 JSON 으로 남긴다(관측 전용, 스키마 불변)
 LF_TARGET = 'lf1'   # 'lf1'|'lf2'|'lf3'|'state_wrinkled_frac'|'zk_intensity_mean'
                     # |'zk_intensity_p95'|'zk_dir_deg'|'zk_Iw'|'zk_Iw_pa'|'zk_Iw_p95'
+                    # |'zk_dir_spread_deg'(ZKIW)
 _LF_IDX = {'lf1': 0, 'lf2': 1, 'lf3': 2}
+
+#   [CONFIG] mfbo 는 `--config` 를 넘기지 않는다(= run_abaqus 기본값으로 해석된다).
+#     따라서 LF 재사용 판정도 "기본 config 로 만들어진 ODB 인가"로 해야 한다. 수동으로
+#     JSON config(예: SEED_DIV=632)로 돌린 LF ODB 를 조용히 재사용하면 그 점의 lf/ZK 가
+#     **다른 메시의 값**이 된다(모델값을 직접 모르므로 config sha 로 거칠게 대조).
+_DEFAULT_CONFIG_SHA1 = analysis_config.config_hash({})
 
 
 def _parse_zk(stdout):
@@ -204,7 +212,10 @@ def get_abaqus(new_x, new_s, return_zk=False):
         _lf_odb = os.path.join(_RUN, aba_imperfection.lf_odb_name(x1, x2))
         #   [paper-match] 모델 정의가 바뀐 LF ODB 는 재사용하지 않는다(sidecar tag).
         #     sidecar 가 없으면(예: 이 기능 이전에 만든 ODB) LF 를 다시 돌린다.
-        if aba_imperfection.lf_odb_is_current(_lf_odb):
+        #   [CONFIG] tag 뿐 아니라 config 신원까지 대조한다. sidecar 에 config_sha1 이 없는
+        #     구 ODB 는 불일치로 보고 1회 재제출한다(안전한 방향).
+        if aba_imperfection.lf_odb_is_current(_lf_odb,
+                                              config_sha=_DEFAULT_CONFIG_SHA1):
             print(f"--- LF reuse: {os.path.basename(_lf_odb)} (skip submit) ---")
         else:
             if os.path.exists(_lf_odb):

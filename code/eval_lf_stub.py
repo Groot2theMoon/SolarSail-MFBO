@@ -414,6 +414,12 @@ def main():
                                 1.728e-4 * E.ZK_E / (1.0 - E.ZK_NU ** 2),
                                 rtol=1e-12),
                          _ikv.get('zk_Iw_pa'))
+            ok &= _check('paper: ZKIW carries zk_state_frac_by ([B3] 정의 버전)',
+                         _ikv.get('zk_state_frac_by') == 'mixed',
+                         _ikv.get('zk_state_frac_by'))
+            ok &= _check('paper: ZKIW carries zk_dir_spread_deg (LF_TARGET 후보)',
+                         _close(_num(_ikv, 'zk_dir_spread_deg'), 0.0),
+                         _ikv.get('zk_dir_spread_deg'))
         if zk is not None and zk.startswith('ZK:') and 'FAIL' not in zk:
             kv = _kv_line(zk)
             ok &= _check('paper: ZK frac == 0.4 (ref EVOL weight, [B4])',
@@ -699,6 +705,43 @@ def main():
             ok &= _check('B1: weights stay ref_evol',
                          zkv.get('zk_Iw_weights') == 'ref_evol',
                          zkv.get('zk_Iw_weights'))
+
+        # ---------------- 7) [CONFIG] apply_globals / LF 재사용 가드 ----------------
+        import analysis_config as AC
+        import aba_imperfection as AI
+        _g = {'A': 1, 'B': 2, 'RUN_DIR_NAME': 'aba'}
+        _r = AC.apply_globals(_g, {'A': 10, 'TYPO_KEY': 1, 'RUN': {}})
+        ok &= _check('config: known key applied', _g['A'] == 10, _g['A'])
+        ok &= _check('config: unknown key reported (silent drop 금지)',
+                     _r.get('unknown') == ['TYPO_KEY'], _r.get('unknown'))
+        ok &= _check('config: RUN is metadata, not unknown',
+                     'RUN' not in (_r.get('unknown') or []))
+        _denied = False
+        try:
+            AC.apply_globals({'RUN_DIR_NAME': 'aba'}, {'RUN_DIR_NAME': 'x'},
+                             forbidden=('RUN_DIR_NAME',))
+        except RuntimeError:
+            _denied = True
+        ok &= _check('config: forbidden key raises', _denied)
+        _fp1 = AI.model_fingerprint({'THICKNESS': 5e-06, 'SEED_DIV': 200})
+        _fp2 = AI.model_fingerprint({'SEED_DIV': 200.0, 'THICKNESS': 5e-6})
+        _fp3 = AI.model_fingerprint({'SEED_DIV': 632, 'THICKNESS': 5e-6})
+        ok &= _check('config: model_fingerprint deterministic', _fp1 == _fp2, (_fp1, _fp2))
+        ok &= _check('config: model_fingerprint sensitive', _fp1 != _fp3, (_fp1, _fp3))
+        _sp = os.path.join(d6, 'LF_guard.odb')
+        with open(_sp, 'wb') as _f:
+            _f.write(b'')
+        AI.lf_sidecar_write(_sp, tag='T', extra={'model_fp': _fp1, 'config_sha1': 'c1'})
+        ok &= _check('lf guard: tag+model_fp agree -> current',
+                     AI.lf_odb_is_current(_sp, tag='T', model_fp=_fp1))
+        ok &= _check('lf guard: model_fp mismatch -> stale',
+                     not AI.lf_odb_is_current(_sp, tag='T', model_fp=_fp3))
+        ok &= _check('lf guard: config_sha mismatch -> stale',
+                     not AI.lf_odb_is_current(_sp, tag='T', config_sha='c2'))
+        ok &= _check('lf guard: config_sha agree -> current',
+                     AI.lf_odb_is_current(_sp, tag='T', config_sha='c1'))
+        ok &= _check('lf guard: tag mismatch -> stale',
+                     not AI.lf_odb_is_current(_sp, tag='U'))
     finally:
         shutil.rmtree(root, ignore_errors=True)
 

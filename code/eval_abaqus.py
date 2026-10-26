@@ -217,7 +217,9 @@ def get_lf(odb_path):
         # 인장(sig1>0)과 압축(sig2<0)이 공존하는 영역의 변형 에너지
         mask_tc = (sig_1 > 1e-7) & (sig_2 < -1e-7)
         if np.any(mask_tc):
-            nu, E = 0.34, 2.5e9
+            #   [P3] 재료 상수는 ZK 재료 블록 **하나**만 쓴다. 여기에 0.34/2.5e9 를 따로
+            #     두면 모델 재료(run_abaqus 의 Elastic 리터럴)와 조용히 어긋난다.
+            nu, E = ZK_NU, ZK_E
             # Wrinkling Energy Formula
             e_density = -(nu / E) * sig_1[mask_tc] * sig_2[mask_tc]
             lf2_energy_density = np.sum(e_density * vols[mask_tc]) / np.sum(vols[mask_tc])
@@ -850,7 +852,7 @@ def format_zk_iw_line(zk):
     return ('ZKIW:zk_Iw=%s zk_Iw_p95=%s zk_Iw_area_total=%s '
             'zk_Iw_weights=%s zk_Iw_slack_share=%s zk_Iw_wr_share=%s '
             'zk_Iw_clip_zero_frac=%s zk_Iw_ref_missing=%s '
-            'zk_Iw_pa=%s '
+            'zk_Iw_pa=%s zk_state_frac_by=%s zk_dir_spread_deg=%s '
             'strain_field=%s strain_measure=%s strain_conversion=%s'
             % (_zk_fmt(zk.get('zk_Iw'), '%.10e'),
                _zk_fmt(zk.get('zk_Iw_p95'), '%.10e'),
@@ -861,6 +863,8 @@ def format_zk_iw_line(zk):
                _zk_fmt(zk.get('zk_Iw_clip_zero_frac'), '%.10e'),
                zk.get('zk_Iw_ref_missing', 'nan'),
                _zk_fmt(zk.get('zk_Iw_pa'), '%.10e'),
+               zk.get('zk_state_frac_by', 'nan'),
+               _zk_fmt(zk.get('zk_dir_spread_deg'), '%.10e'),
                zk.get('strain_field', 'nan'),
                zk.get('strain_measure', 'nan'),
                zk.get('strain_conversion', 'nan')))

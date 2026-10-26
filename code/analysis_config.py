@@ -12,9 +12,13 @@ passed on the command line:
     python run_analysis.py --config configs/paper_sd632.json
 
 The JSON is a flat override map.  Keys that match a script global are applied;
-unknown keys (for example the "RUN" section consumed by run_analysis.py) are
-ignored by Abaqus scripts.  This keeps the first migration step small while
-making the config authoritative for every key it contains.
+unknown keys (for example the "RUN" section consumed by run_analysis.py) are reported
+back to the caller, which should log them.  Two optional guards exist:
+`forbidden` (keys another process depends on) and `allowed` (default-deny whitelist).
+Note that model-defining keys (THICKNESS, SEED_DIV, MESH_ORDER, prestresses) are
+legitimately configurable; their effect is tracked by the LF sidecar's `model_fp`
+(see aba_imperfection.model_fingerprint) so a config change cannot silently reuse an
+old LF ODB.
 """
 from __future__ import print_function
 
@@ -87,14 +91,30 @@ def _as_tuple(v):
     return v
 
 
-def apply_globals(g, cfg):
+def apply_globals(g, cfg, allowed=None, forbidden=()):
     """Apply flat config keys to a script's globals.
 
     Only keys already present in the script are overridden.  A few derived
     flags are kept consistent when their parents are supplied.
+
+    Args:
+        allowed:   optional whitelist.  When given, a known key outside it is fatal
+                   (default-deny).  Kept optional because one JSON config is consumed
+                   by several scripts whose globals differ.
+        forbidden: keys that must never be overridden (another process depends on
+                   their value, e.g. RUN_DIR_NAME is hardcoded as "aba" in mfbo.py).
+
+    Returns:
+        {'applied': [...], 'unknown': [...]}.  `unknown` = keys not present in this
+        script's globals (typos, or keys meant for another script).  Callers should
+        emit them; silently ignoring a typo is how "설정했는데 안 먹었다" happens.
+
+    Raises:
+        RuntimeError: a `forbidden` key, or a known key outside `allowed`.
     """
+    out = {'applied': [], 'unknown': []}
     if not cfg:
-        return
+        return out
     skip = {'_CONFIG_PATH', 'RUN', '_comment', '_notes'}
     tuple_keys = ('IMPERFECTION_MODES', 'STABILIZE_GLOBAL_LADDER',
                   'STABILIZE_POST_LADDER')
@@ -102,8 +122,17 @@ def apply_globals(g, cfg):
         if key in skip:
             continue
         if key not in g:
+            out['unknown'].append(key)
             continue
+        if key in forbidden:
+            raise RuntimeError(
+                '[CONFIG] %r 는 이 스크립트에서 덮어쓸 수 없습니다'
+                ' (다른 프로세스가 그 값에 의존합니다).' % key)
+        if allowed is not None and key not in allowed:
+            raise RuntimeError(
+                '[CONFIG] %r 는 허용목록에 없습니다 (default-deny).' % key)
         g[key] = _as_tuple(value) if key in tuple_keys else value
+        out['applied'].append(key)
 
     # derived flags used by run_abaqus.py
     if 'PAPER_INCLUDE_CLAMPS' in cfg and 'NO_CLAMP' in g:
@@ -124,6 +153,8 @@ def apply_globals(g, cfg):
             pass
     if 'HF_JOB' in cfg and 'HF_ODB' in g:
         g['HF_ODB'] = str(g['HF_JOB']) + '.odb'
+
+    return out
 
 
 def log_config(emit, cfg, case=None):

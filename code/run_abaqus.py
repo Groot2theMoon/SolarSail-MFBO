@@ -319,7 +319,12 @@ HF_JOB = 'HF_Postbuckle_u3free'
 HF_ODB = HF_JOB + '.odb'
 # ============================================================================
 #   Explicit config overrides the default settings above.  No env vars.
-_AC.apply_globals(globals(), _CFG)
+#   [CONFIG] 다른 프로세스가 값에 의존하는 키는 config 로 바꿀 수 없다.
+#     RUN_DIR_NAME: mfbo.py 가 "aba" 를 하드코딩한다 -> 바꾸면 mfbo 가 ODB 를 못 찾는다.
+_CFG_FORBIDDEN = ('RUN_DIR_NAME',)
+_CFG_APPLY = _AC.apply_globals(globals(), _CFG, forbidden=_CFG_FORBIDDEN)
+#   config 신원(sha1). LF sidecar 와 점별 results txt 에 남겨 "이 점이 어느 config 였나"를 추적한다.
+_CFG_SHA1 = _AC.config_hash(_CFG)
 
 # ---- 스크립트 위치(_HERE) / Abaqus 작업 디렉터리(_RUN) 결정 ----
 # 주의: `abaqus cae noGUI=script.py` 로 실행하면 스크립트가 execfile 로 로드되어
@@ -368,6 +373,7 @@ from aba_imperfection import (ImperfectionSourceError, stage,           # noqa: 
                               EDGE_SPRING_ELEM_TYPES,
                               point_tag, lf_odb_name, lf_job_name,
                               lf_sidecar_write, lf_odb_is_current,
+                              lf_sidecar_read, model_fingerprint,
                               seed_table_path, seed_gate, BUCKLE_SCRIPT_NAME,
                               SEED_DIR_NAME, job_completed_from_logs, value_tag)
 # aba_grid_mesh: boundary_node_labels / clamp_exclude_labels / make_set (면외 z 구속 노드셋). §9
@@ -485,6 +491,15 @@ _RUN_T0 = time.time()
 _R13_CT = {}
 emit_start()
 _AC.log_config(emit, _CFG, _CLI_CASE)
+#   [CONFIG] 적용/무시된 키를 남긴다. 오타 키가 조용히 사라지면 "설정했는데 안 먹었다"가 된다.
+#     unknown 은 이 스크립트 globals 에 없는 키다(다른 스크립트용 키일 수 있으므로 경고만).
+if _CFG:
+    emit('[CONFIG] applied=%d keys=%s'
+         % (len(_CFG_APPLY.get('applied') or []),
+            ','.join(_CFG_APPLY.get('applied') or []) or '-'))
+if _CFG_APPLY.get('unknown'):
+    emit('[CONFIG] !!! unknown(이 스크립트에 없는 키 -> 무시): %s'
+         % ', '.join(sorted(_CFG_APPLY['unknown'])))
 
 
 try:
@@ -538,6 +553,31 @@ _LF_MODEL_TAG = (('globaltension-v3-e2-c%d-u%d'
                  if (LOAD_MODE == 'cable_stress' and _PAPER_PATH)
                  else 'disp-v3-e2')
 
+#   [CONFIG] 모델 정의값 지문(model_fp). 하드코딩 tag 만으로는 config 로 바뀐
+#     THICKNESS/SEED_DIV/MESH_ORDER/프리텐션/재료가 재사용 가드에 안 잡혔다
+#     -> 같은 (x_c,d_c) 의 옛 LF ODB 가 조용히 재사용되어 ZK/lf 가 오염된다(실측 위험:
+#     configs/paper_sd632.json 은 SEED_DIV=632 로 요소 ~10배인데 태그/파일명이 같다).
+#     이 지문을 sidecar 에 남기고 재사용 전에 대조한다(모르는 호출자는 config sha 로 대조).
+_LF_MODEL_FP = model_fingerprint({
+    'SEED_DIV': globals().get('SEED_DIV'),
+    'MESH_ORDER': globals().get('MESH_ORDER'),
+    'THICKNESS': globals().get('THICKNESS'),
+    'SIGMA0': globals().get('SIGMA0'),
+    'CABLE_PRESTRESS': globals().get('CABLE_PRESTRESS'),
+    'CABLE_AREA': globals().get('CABLE_AREA'),
+    'BASE': globals().get('BASE'),
+    'HEIGHT': globals().get('HEIGHT'),
+    'ELEM_CODE_QUAD': globals().get('ELEM_CODE_QUAD'),
+    'ELEM_CODE_TRI': globals().get('ELEM_CODE_TRI'),
+    'USE_GRID_MESH': globals().get('USE_GRID_MESH'),
+    'PAPER_INCLUDE_CLAMPS': globals().get('PAPER_INCLUDE_CLAMPS'),
+    'PAPER_MATCH': globals().get('PAPER_MATCH'),
+    'LOAD_MODE': globals().get('LOAD_MODE'),
+    'LF_HOLD_U3_ALL': _LF_HOLD_U3_ALL,
+})
+emit('[CONFIG] lf_model_fp=%s config_sha1=%s lf_tag=%s'
+     % (_LF_MODEL_FP, _CFG_SHA1, _LF_MODEL_TAG))
+
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
                   'dat', 'res', 'abq', 'ipm', 'mdl', 'stt', 'cid')
@@ -563,6 +603,16 @@ def _archive_result(x_c, d_c, fidelity, results_csv, extra=None):
                'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
                'lf1': _p[0], 'lf2': _p[1], 'lf3': _p[2], 'hf': _p[3]}
         _kv.update(extra or {})
+        #   [CONFIG] 이 점이 **어느 config/모델**로 계산됐는지 남긴다. HF 는 짝 LF ODB 를
+        #     재사용할 수 있으므로 "이 런의 config"(_CFG_SHA1)와 "LF ODB sidecar 의 config"를
+        #     따로 적는다(둘이 다르면 재사용이 섞였다는 신호다). CSV 열은 늘리지 않는다.
+        _kv.setdefault('config_sha1', _CFG_SHA1)
+        try:
+            _lfsd = lf_sidecar_read(globals().get('LF_ODB') or '')
+        except Exception:
+            _lfsd = {}
+        _kv.setdefault('lf_config_sha1', _lfsd.get('config_sha1', 'nan'))
+        _kv.setdefault('lf_model_fp', _lfsd.get('model_fp', 'nan'))
         _tag = 'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c))
         with io.open(os.path.join(_dir, _tag), 'w', encoding='utf-8') as _f:
             for _k in sorted(_kv):
@@ -2297,7 +2347,8 @@ if fidelity == 'LF':
     #   [§19.66] 같은 설계점의 LF 는 재사용한다(잡 재제출 ~3분 절약).
     #   [paper-match] 단, 모델 정의가 바뀐 뒤의 **stale LF ODB** 는 재사용하지 않는다.
     #     sidecar(.model.txt)의 tag 가 현재 경로와 일치할 때만 재사용한다.
-    if os.path.exists(LF_ODB) and lf_odb_is_current(LF_ODB, tag=_LF_MODEL_TAG):
+    if os.path.exists(LF_ODB) and lf_odb_is_current(LF_ODB, tag=_LF_MODEL_TAG,
+                                                    model_fp=_LF_MODEL_FP):
         emit("[LF] 재사용: %s (설계점 %s, sidecar tag=%s) - 잡 재제출 생략"
              % (LF_ODB, point_tag(x_c, d_c), _LF_MODEL_TAG))
     else:
@@ -2312,6 +2363,9 @@ if fidelity == 'LF':
                 'mesh_order': MESH_ORDER, 'thickness': THICKNESS,
                 'cable_prestress': CABLE_PRESTRESS,
                 'clamp_prestress': CLAMP_PRESTRESS,
+                #   [CONFIG] 기계 판독용: 재사용 전에 대조하는 값들(sidecar extra 는 사람용).
+                'model_fp': _LF_MODEL_FP, 'config_sha1': _CFG_SHA1,
+                'seed_div': SEED_DIV, 'sigma0': SIGMA0,
                 'lf_steps': ','.join([s for s in my_model.steps.keys() if s != 'Initial']),
             })
             emit("[LF] sidecar 기록: %s.model.txt (tag=%s)" % (LF_ODB, _LF_MODEL_TAG))

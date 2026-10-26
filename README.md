@@ -95,6 +95,7 @@ python mfbo.py
 *   **주의:** `*IMPERFECTION` 키워드 삽입 로직(삽입 위치 등)은 Abaqus 버전에 따라 민감할 수 있음.
 *   **Imperfection:** `IMPERFECTION_MODE='odb_table'`(기본) → `seeds/modes_xc<tag>.txt` 합성표를 `part.editNode`로 주입한다. `MODE_SOURCE_ODB`/`.fil`은 `odb_direct`/`file` 경로에서만 사용한다.
 *   **u3 정책:** LF는 Initial부터 전막 `u3=0`; HF paper는 3변만 `u3=0`으로 처음부터 자유이며 `Step-GlobalTension`이 최종 상태다. old `disp` HF만 `Step-Postbuckle`을 유지한다.
+*   **config 신원:** `--config` 는 수치·경로·진단 키를 덮어쓰고(`RUN_DIR_NAME` 은 금지), 이 스크립트에 없는 키는 `[CONFIG] !!! unknown: …` 로 남긴다. LF 재사용 가드는 tag + **`model_fp`(모델 정의값 sha1)** 를 대조하며, 점별 txt 에 `config_sha1`/`lf_config_sha1`/`lf_model_fp` 를 기록한다. 따라서 `SEED_DIV`·`MESH_ORDER`·`THICKNESS`·프리텐션을 config 로 바꾸면 옛 LF ODB 를 재사용하지 않는다.
 *   **HF imperfection 민감도:** HF가 처음부터 자유이므로 `IMPERFECTION_AMPL_T=0.1`과 `0.5`에서 `hf`/`u_z,ave`/`DN`이 달라지는지 확인한다(달라지면 초기조건 의존성).
 *   **R-13 진단:** `BASE_PROBE=True`(live). 짝 LF ODB를 첫 후보로 읽고, 없으면 skip한다. 디버깅은 `SOLARSAIL_BASE_ODB`; MFBO 스윕에서는 `False`로 끌 수 있다. 고정 `Buckle_Analysis.odb`는 포인트 태그가 없어 쓰지 않는다.
 
