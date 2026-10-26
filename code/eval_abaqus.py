@@ -227,10 +227,15 @@ def get_lf(odb_path):
             lf2_energy_density = 0.0
             
         #LF3: Stress Anisotropy Ratio
+        #   [2026-10-26] sigma_1 문턱을 절대값(1e-7 Pa)에서 **상대값**(peak 의 5%)로 바꾼다.
+        #     절대 문턱이면 sigma_1 -> 0 인 요소에서 |sigma_2/sigma_1| 이 폭발하고, 메쉬를
+        #     정련할수록 그런 요소가 늘어 lf3 가 메쉬에 종속된다(실측 10,100요소 51.68 ->
+        #     40,200요소 161.55, +213%). sigma_2 와 같은 상대 규칙으로 맞춘다.
         max_c = np.max(np.abs(sig_2)) if len(sig_2) > 0 else 0
-        if max_c > 1e-9:
-            # 유의미한 압축 응력이 있는 곳에서만 계산 (Peak의 5% 이상)
-            mask_aniso = (np.abs(sig_2) > 0.05 * max_c) & (sig_1 > 1e-7)
+        max_t = np.max(np.abs(sig_1)) if len(sig_1) > 0 else 0
+        if max_c > 1e-9 and max_t > 1e-9:
+            mask_aniso = ((np.abs(sig_2) > 0.05 * max_c)
+                          & (np.abs(sig_1) > 0.05 * max_t))
             if np.any(mask_aniso):
                 lf3_anisotropy = np.mean(np.abs(sig_2[mask_aniso] / sig_1[mask_aniso]))
             else:

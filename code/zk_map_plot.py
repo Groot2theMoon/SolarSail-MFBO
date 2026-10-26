@@ -305,22 +305,38 @@ def _fig5(meta, data, z, outdir, dpi):
     if not np.any(m):
         print('[plot] fig5 skipped: no finite loss_e')
         return
-    s = np.sort(loss[m])[::-1]
+    #   [2026-10-26] x축을 **면적 기준**으로 바꾼다. 요소 개수 기준은 메쉬를 정련하면
+    #     같은 fold 띠가 4배 많은 요소를 차지해 비중이 자동으로 희석된다 -> 메쉬 간
+    #     비교가 불가능하다. 면적(evol_ref) 기준이 메쉬 불변 지표다.
+    idx = np.flatnonzero(m)
+    order = idx[np.argsort(-loss[idx])]
+    s = loss[order]
     total = float(np.sum(s))
     if total <= 0.0:
         print('[plot] fig5 skipped: zero total loss')
         return
     cum = np.cumsum(s) / total * 100.0
-    frac = np.arange(1, s.size + 1, dtype=np.float64) / s.size * 100.0
+    w = np.asarray(data['evol_ref'], dtype=np.float64)[order]
+    w = np.maximum(w, 0.0)
+    if float(np.sum(w)) > 0.0:
+        frac = np.cumsum(w) / float(np.sum(w)) * 100.0
+        xlabel = 'top X% of AREA (sorted by loss_e)'
+    else:                                   # 면적 가중이 없으면 요소 기준 폴백
+        frac = np.arange(1, s.size + 1, dtype=np.float64) / s.size * 100.0
+        xlabel = 'top X% elements sorted by loss_e'
     fig, ax = plt.subplots(figsize=(7.0, 4.2))
-    ax.plot(frac, cum, 'k-', lw=1.6)
+    ax.plot(frac, cum, 'k-', lw=1.6, label='area-weighted (mesh-invariant)')
+    _el = np.arange(1, s.size + 1, dtype=np.float64) / s.size * 100.0
+    ax.plot(_el, cum, ':', color='0.55', lw=1.0, label='element count (mesh-dependent)')
     for q in (1.0, 5.0, 20.0):
-        i = max(0, min(s.size - 1, int(round(q / 100.0 * s.size)) - 1))
+        i = int(np.searchsorted(frac, q))
+        i = max(0, min(s.size - 1, i))
         ax.plot([frac[i]], [cum[i]], 'o', color='#d62728', ms=4)
-        ax.annotate('top %.0f%% -> %.1f%% of hf' % (q, cum[i]),
+        ax.annotate('top %.0f%% area -> %.1f%% of hf' % (q, cum[i]),
                     xy=(frac[i], cum[i]), xytext=(8, -12),
                     textcoords='offset points', fontsize=8)
-    ax.set_xlabel('top X% elements sorted by loss_e')
+    ax.legend(loc='lower right', fontsize=7, frameon=False)
+    ax.set_xlabel(xlabel)
     ax.set_ylabel('cumulative loss [% of hf]')
     ax.set_xlim(0, 100)
     ax.set_ylim(0, 100)

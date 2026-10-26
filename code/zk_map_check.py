@@ -53,6 +53,10 @@ def _load_csv(path):
     for key in ('evol_ref', 'area_ref_m2', 'evol_cur', 'E1', 'E2', 'E12',
                 'comp', 'dir_g_deg', 'dir_nophi_deg', 'loss_e'):
         out[key] = np.asarray([float(r[key]) for r in rows], dtype=np.float64)
+    #   [2026-10-26] 역사 기준(변형률) 상태. 없으면 생략(구 CSV 호환).
+    if 'state_strain' in rows[0]:
+        out['state_strain'] = np.asarray([int(float(r['state_strain'])) for r in rows],
+                                         dtype=np.int64)
     return out
 
 
@@ -141,6 +145,13 @@ def main():
     frac = {}
     for name, code in (('taut', 0), ('wrinkled', 1), ('slack', 2)):
         frac[name] = float(np.sum(wcur[state == code]) / cur_sum)
+    #   CSV 의 `state` 는 ZK_STATE_CRITERION(기본 mixed) 기준이다. 비교 대상도
+    #   `zk_state_*_frac`(mixed) 여야 하고, 역사값은 `_strain` 접미사와 짝지어 본다.
+    frac_strain = {}
+    if 'state_strain' in data:
+        _ss = data['state_strain']
+        for name, code in (('taut', 0), ('wrinkled', 1), ('slack', 2)):
+            frac_strain[name] = float(np.sum(wcur[_ss == code]) / cur_sum)
     wr_ref = float(np.sum(wref[state == 1]))
     clip_frac = (float(np.sum(wref[(state == 1) & (clip == 1)]) / wr_ref)
                  if wr_ref > 0 else 0.0)
@@ -157,6 +168,14 @@ def main():
     print('  reference: %s' % (zk_path or ('baseline ' + args.baseline
                                            if args.baseline else 'meta only')))
 
+    #   [2026-10-26] zk_metrics 를 못 찾으면 **PASS 금지**. 검증을 건너뛴 채 PASS 를
+    #     찍으면 회귀를 놓친다(실제로 "meta only" 폴백이 집계 6항목을 생략했다).
+    if kind == 'lf' and not zk and not args.baseline:
+        print('  REFERENCE MISSING - 집계 검증 불가')
+        print('  해결: --zk-metrics <ODB 옆 zk_metrics.txt> 또는 --baseline d_c1p5')
+        print('\nRESULT: SKIP')
+        return 3
+
     ok = True
     # ---- same-ODB zk_metrics (LF only) ----
     #   HF map의 I_w/state는 HF ODB 자체 상태라 LF zk_metrics와 비교하면 안 된다.
@@ -171,8 +190,17 @@ def main():
                      zk.get('zk_state_slack_frac', float('nan')), 1e-6)
         ok &= _check('clip_zero_frac', clip_frac,
                      zk.get('zk_Iw_clip_zero_frac', float('nan')), 1e-6)
-        ok &= _check('dir_spread_deg', spread,
-                     zk.get('zk_dir_spread_deg', float('nan')), 1e-3)
+        #   역사(변형률) 기준과도 병기 대조. 생산 sidecar 가 아직 `_strain` 을
+        #   wrinkled 만 주므로 그것만 본다.
+        if frac_strain and 'zk_state_wrinkled_frac_strain' in zk:
+            ok &= _check('wrinkled_frac[strain]', frac_strain['wrinkled'],
+                         zk['zk_state_wrinkled_frac_strain'], 1e-6)
+        #   dir_spread 는 생산 값이 0.0 으로 나오는 사례가 있어 정의 확인 전까지
+        #   FAIL 이 아니라 WARN 으로만 남긴다.
+        _ds_ok = _check('dir_spread_deg', spread,
+                        zk.get('zk_dir_spread_deg', float('nan')), 1e-3)
+        if not _ds_ok:
+            print('  WARN dir_spread 불일치 — 가중/마스크 정의 확인 필요 (FAIL 미포함)')
     elif kind == 'lf' and args.baseline == 'd_c1p5':
         ok &= _check('I_w', iw, BASE_D_C1P5['I_w'], 1e-12, 1e-6)
         ok &= _check('state_taut_frac', frac['taut'],

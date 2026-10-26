@@ -27,7 +27,8 @@ import json
 import numpy as np
 from odbAccess import openOdb
 
-from eval_abaqus import (A0, R0, IDEAL_THRUST_COEFF, U_SUN, ZK_NU,
+from eval_abaqus import (A0, R0, IDEAL_THRUST_COEFF, U_SUN, ZK_NU, ZK_EPS,
+                         ZK_STATE_CRITERION,
                          LF_STEP_PREFERENCE, HF_STEP_PREFERENCE,
                          _zk_reference_evol, _zk_get_e_field)
 
@@ -150,8 +151,34 @@ def elem_strains(frame, inst):
     return labels, (arr[:, 0] / cnt, arr[:, 1] / cnt, arr[:, 2] / cnt), fname
 
 
-def principal_and_states(e11, e22, e12, field_name):
-    """주성분 -> (LE 면) Green-Lagrange 변환 -> taut/wrinkled/slack 마스크."""
+def state_masks_strain(e1, e2):
+    """변형률 기준 상태 마스크(2024판). eval_abaqus 의 mask_*_s 와 같은 식."""
+    m_taut = (e2 > ZK_EPS)
+    m_sl = (e1 <= -ZK_EPS)
+    m_wr = ~(m_taut | m_sl)
+    return m_taut, m_wr, m_sl
+
+
+def state_masks_mixed(e1, e2):
+    """[B3] 혼합 기준: slack 은 변형률, taut<->wrinkled 는 응력(e2 + nu*e1).
+
+    eval_abaqus.ZK_STATE_CRITERION == 'mixed' 와 **같은 식**이다. 여기서 따로
+    정의하면 조용히 어긋나므로(실제로 0.7865 vs 0.5516 사고), 두 곳이 같은
+    규칙을 쓰도록 이름을 맞춰 둔다.
+    """
+    m_taut_s, m_wr_s, m_sl_s = state_masks_strain(e1, e2)
+    m_sl = m_sl_s
+    m_taut = (e2 + ZK_NU * e1) > ZK_EPS
+    m_wr = ~(m_taut | m_sl)
+    return m_taut, m_wr, m_sl
+
+
+def principal_and_states(e11, e22, e12, field_name, criterion=None):
+    """주성분 -> (LE 면) Green-Lagrange 변환 -> taut/wrinkled/slack 마스크.
+
+    criterion: None 이면 eval_abaqus.ZK_STATE_CRITERION(기본 'mixed').
+               'strain' 을 주면 2024판 정의.
+    """
     mean_e = 0.5 * (e11 + e22)
     rad = np.sqrt((0.5 * (e11 - e22)) ** 2 + e12 ** 2)
     e1 = mean_e + rad
@@ -160,9 +187,11 @@ def principal_and_states(e11, e22, e12, field_name):
     if field_name == 'LE':
         e1 = 0.5 * np.expm1(2.0 * e1)
         e2 = 0.5 * np.expm1(2.0 * e2)
-    m_taut = (e2 > 0.0)
-    m_wr = (e1 > 0.0) & (e2 <= 0.0)
-    m_sl = (e1 <= 0.0)
+    _crit = criterion or ZK_STATE_CRITERION
+    if _crit == 'mixed':
+        m_taut, m_wr, m_sl = state_masks_mixed(e1, e2)
+    else:
+        m_taut, m_wr, m_sl = state_masks_strain(e1, e2)
     return e1, e2, m_taut, m_wr, m_sl
 
 

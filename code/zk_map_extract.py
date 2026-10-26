@@ -35,7 +35,8 @@ from eval_abaqus import (LF_STEP_PREFERENCE, HF_STEP_PREFERENCE, ZK_NU,
                          _zk_element_local_angles, _zk_weighted_percentile)
 from hf_by_state import (pick_step, get_instance, element_connectivity,
                          node_coords, elem_areas_normals, elem_strains,
-                         principal_and_states, iw_metrics, element_losses)
+                         principal_and_states, state_masks_strain,
+                         iw_metrics, element_losses)
 
 
 def _evol_map(frame, inst):
@@ -206,6 +207,14 @@ def main():
         state[m_taut] = 0
         state[m_wr] = 1
         state[m_sl] = 2
+        #   [2026-10-26] `state` 는 ZK_STATE_CRITERION(기본 mixed) 을 따른다.
+        #     역사값(변형률 기준)은 `state_strain` 으로 병기한다. 둘을 섞어 검증하면
+        #     taut/wrinkled frac 이 0.79 vs 0.55 로 갈라져 오탐 FAIL 이 난다(실측).
+        _ts, _ws, _ss = state_masks_strain(e1, e2)
+        state_strain = np.full(n, -1, dtype=np.int64)
+        state_strain[_ts] = 0
+        state_strain[_ws] = 1
+        state_strain[_ss] = 2
 
         wr = np.maximum(np.abs(e2) - ZK_NU * e1, 0.0)
         sl = np.abs(e2) + ZK_NU * np.abs(e1)
@@ -246,7 +255,8 @@ def main():
 
         # ---- CSV ----
         cols = ['elem', 'cx', 'cy', 'cz', 'evol_ref', 'area_ref_m2',
-                'evol_cur', 'state', 'E1', 'E2', 'E12', 'comp', 'clip',
+                'evol_cur', 'state', 'state_strain', 'E1', 'E2', 'E12',
+                'comp', 'clip',
                 'dir_g_deg', 'dir_nophi_deg', 'loss_e']
         csv_path = prefix + '.csv'
         with open(csv_path, 'w', newline='') as fh:
@@ -258,7 +268,7 @@ def main():
                     '%0.12e' % centers[i, 0], '%0.12e' % centers[i, 1],
                     '%0.12e' % centers[i, 2],
                     '%0.12e' % wref[i], '%0.12e' % areas_ref[i],
-                    '%0.12e' % wcur[i], int(state[i]),
+                    '%0.12e' % wcur[i], int(state[i]), int(state_strain[i]),
                     '%0.12e' % e1[i], '%0.12e' % e2[i], '%0.12e' % e12[i],
                     '%0.12e' % comp[i], int(clip[i]),
                     '%0.12e' % dir_g[i], '%0.12e' % dir_nophi[i],
