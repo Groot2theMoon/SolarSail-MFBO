@@ -236,8 +236,10 @@ def main():
         sl_num = float(np.sum(wref[m_sl] * comp[m_sl]))
         iw_wr_share = (wr_num / iw_num) if iw_num > 0 else 0.0
         iw_sl_share = (sl_num / iw_num) if iw_num > 0 else 0.0
-        wr_area = float(np.sum(wref[m_wr]))
-        clip_frac = (float(np.sum(wref[m_wr & (comp <= 0.0)])) / wr_area
+        #   [2026-10-26] clip 은 변형률-wrinkled 기준(생산 정의). mixed 로 세면 0 이 된다.
+        #     요약 줄이 CSV/생산값과 어긋나면 로그를 읽는 사람이 혼동한다.
+        wr_area = float(np.sum(wref[_ws]))
+        clip_frac = (float(np.sum(wref[_ws & (comp <= 0.0)])) / wr_area
                      if wr_area > 0 else 0.0)
 
         frac_taut = float(np.sum(wcur[m_taut]) / wcur_sum)
