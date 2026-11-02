@@ -1,13 +1,11 @@
 {
-  "_comment": "Explicit test config: ~10x element count vs SEED_DIV=200. No env vars.",
+  "_comment": "Explicit test config (baseline mesh, SEED_DIV=200). The buckle base state (mode source) and the HF operating point are intentionally SPLIT - see check_model_consistency.py:66. Buckle disp comes from run_abaqus_buckle.py MODE_PRESTRESS=1e-4; DISP_GLOBAL is deliberately absent so that run_abaqus.py keeps its own operating point (165e-6, run_abaqus.py:234). Adding DISP_GLOBAL here overrides BOTH scripts.",
   "SEED_DIV": 200.0,
-  "MODE_PRESTRESS": 1.5e-5,
-  "DISP_GLOBAL": 1.5e-5,
   "MESH_ORDER": 1,
   "N_EIG_BUCKLE": 4,
   "BUCKLE_VECTORS": 200,
   "RUN": {
-    "x_c": 0.7,
+    "x_c": 0.2,
     "d_c": 0.0001,
     "fidelities": ["LF", "HF"],
     "make_seed": true,
