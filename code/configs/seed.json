@@ -1,0 +1,18 @@
+{
+  "_comment": "Explicit test config: ~10x element count vs SEED_DIV=200. No env vars.",
+  "SEED_DIV": 200.0,
+  "MODE_PRESTRESS": 1.5e-5,
+  "DISP_GLOBAL": 1.5e-5,
+  "MESH_ORDER": 1,
+  "N_EIG_BUCKLE": 4,
+  "BUCKLE_VECTORS": 200,
+  "RUN": {
+    "x_c": 0.7,
+    "d_c": 0.0001,
+    "fidelities": ["LF", "HF"],
+    "make_seed": true,
+    "force_seed": true,
+    "buckle": false,
+    "clean_lf": true
+  }
+}
