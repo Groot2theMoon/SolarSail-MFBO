@@ -58,8 +58,13 @@ FINGERPRINT_KEYS = ('BASE', 'HEIGHT', 'THK', 'SIGMA0', 'PRETENSION_MODE', 'DISP_
                     'ELEM_CODE_QUAD', 'ELEM_CODE_TRI', 'SEED_DIV')
 
 
-def model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
+def source_model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
     """모드 소스 스크립트에서 모델/모드 정의 상수만 뽑아 sha1 지문(16자)을 만든다.
+
+    [2026-11-02] 이름 변경: 이 파일 아래쪽의 `model_fingerprint(values)`(dict -> 12자) 가
+    같은 이름으로 재정의되어 이 함수를 **가리고 있었다**. 그 결과 `buckle_fingerprint` 는
+    TypeError, `model_fingerprint_line` 은 AttributeError 로 죽었다. 소스 스크립트용은
+    `source_` 접두사로 분리한다.
 
     반환: (지문 or None, {상수: 값}). 소스를 못 읽거나 상수를 하나도 못 찾으면 (None, {}).
     """
@@ -91,7 +96,7 @@ def model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
 
 def model_fingerprint_line(source_path):
     """모드표 헤더에 넣을 '# FINGERPRINT sha1=... src=...' 줄. 못 만들면 None."""
-    digest, _vals = model_fingerprint(source_path)
+    digest, _vals = source_model_fingerprint(source_path)
     if not digest:
         return None
     return '%s sha1=%s src=%s' % (FINGERPRINT_PREFIX, digest, os.path.basename(source_path))
@@ -504,7 +509,7 @@ def seed_table_path(seeds_dir, x_c, d_c, env=None):
 
 def buckle_fingerprint(script_path, keys=BUCKLE_FINGERPRINT_KEYS):
     """buckle 스크립트의 모델 상수 지문(16자). 못 읽으면 None."""
-    return model_fingerprint(script_path, keys)[0]
+    return source_model_fingerprint(script_path, keys)[0]
 
 
 def point_tag(x_c, d_c):
