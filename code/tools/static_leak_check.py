@@ -195,12 +195,19 @@ def selftest():
 
 def main(argv):
     here = os.path.dirname(os.path.abspath(__file__))
+    code = os.path.dirname(here)                                         # [P1] tools/ -> code/
     if len(argv) > 1 and argv[1] == 'selftest':
         return selftest()
     if len(argv) > 1:
         paths = argv[1:]
     else:
-        paths = [os.path.join(here, t) for t in TARGETS if os.path.exists(os.path.join(here, t))]
+        #   [P1] run_abaqus_cable.py 는 tools/ 로 옮겼다 — 두 디렉터리를 모두 본다.
+        paths = []
+        for _d in (code, here):
+            for t in TARGETS:
+                p = os.path.join(_d, t)
+                if os.path.exists(p) and p not in paths:
+                    paths.append(p)
     if not paths:
         print('usage: python3 static_leak_check.py [<script.py> ...] | selftest')
         return 2

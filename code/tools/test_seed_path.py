@@ -14,7 +14,8 @@ import subprocess
 import sys
 import tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tools/ -> code/
+sys.path.insert(0, _CODE)
 import aba_imperfection as A                                                   # noqa: E402
 
 FAIL = []
@@ -118,7 +119,7 @@ def main():
              "t=A.load_mode_table(r'%s',(1,));print(sorted(t.keys()),len(t[1]))" % _p)
     _r = subprocess.run([sys.executable, '-c', _code], capture_output=True, text=True,
                         env=dict(os.environ, LC_ALL='C', LANG='C', PYTHONUTF8='0'),
-                        cwd=os.path.dirname(os.path.abspath(__file__)))
+                        cwd=_CODE)
     check('locale=C 에서 UTF-8 모드표 읽기', _r.returncode == 0 and '[1] 2' in (_r.stdout or ''),
           (_r.stderr or '')[-140:])
 
@@ -157,7 +158,7 @@ def main():
     check("[§19.76] d_c 1e-04 vs 0 충돌 없음",
           A.seed_table_name(0.5, 1.0e-4) != A.seed_table_name(0.5, 0.0),
           A.seed_table_name(0.5, 1.0e-4))
-    _dir = os.path.dirname(os.path.abspath(__file__))
+    _dir = _CODE
     _bs = io.open(os.path.join(_dir, 'run_abaqus_buckle.py'), encoding='utf-8').read()
     _ms = io.open(os.path.join(_dir, 'make_seed.py'), encoding='utf-8').read()
     # ---- [§19.77] d_c 무관성: 같은 x_c, 다른 d_c -> 같은 표 이름 + 같은 지문 ----
@@ -189,7 +190,7 @@ def main():
     check("구 고정명과 충돌 없음", A.lf_odb_name(0.5, 0.5) != 'LF_Analysis.odb')
 
     print("--- 6b) run_abaqus.py 는 execfile 안전해야 (__file__ 금지) ---")
-    _here = os.path.dirname(os.path.abspath(__file__))
+    _here = _CODE
     _lines = io.open(os.path.join(_here, 'run_abaqus.py'), encoding='utf-8').read().split('\n')
     _i_def = next((k for k, l in enumerate(_lines) if l.startswith('def _resolve_here')), -1)
     _i_here = next((k for k, l in enumerate(_lines) if l.startswith('_HERE = ')), -1)
@@ -198,7 +199,7 @@ def main():
     check('abspath(__file__) 는 _resolve_here 안에만', not _bad, _bad)
 
     print("--- 6) run_abaqus.py 의 aba_imperfection import 이름 실재성 ---")
-    here = os.path.dirname(os.path.abspath(__file__))
+    here = _CODE
     raw = io.open(os.path.join(here, 'run_abaqus.py'), encoding='utf-8').read()
     m = re.search(r'from aba_imperfection import \((.*?)\)', raw, re.S)
     check('run_abaqus.py import 블록 발견', bool(m))

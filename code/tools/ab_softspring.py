@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tools/ -> code/
 SRC = os.path.join(HERE, 'run_abaqus.py')
 PAT = re.compile(rb'(?m)^(RELEASE_EDGE_U3 = )(True|False)(\r?\n)')
 

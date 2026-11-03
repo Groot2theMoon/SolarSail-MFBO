@@ -46,7 +46,7 @@ import subprocess
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tools/ -> code/
 BUCKLE = os.path.join(HERE, 'run_abaqus_buckle.py')
 OUTDIR = os.path.join(HERE, 'sweep_out')
 

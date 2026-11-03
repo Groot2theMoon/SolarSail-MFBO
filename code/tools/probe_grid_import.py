@@ -25,6 +25,12 @@ import io as _io
 import sys
 
 from abaqus import mdb                                     # noqa: F401
+
+#   [P1] tools/ 로 옮겼다 — aba_grid_mesh 는 부모(code/)에 있다.
+_CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CODE not in sys.path:
+    sys.path.insert(0, _CODE)
+
 import aba_grid_mesh
 
 _REPORT = 'grid_probe_report.txt'   # 출력이 사라져도(CAE noExit 함정) 여기서 숫자를 회수한다

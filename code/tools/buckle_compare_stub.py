@@ -34,8 +34,9 @@ import subprocess
 import sys
 import tempfile
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-CMP = os.path.join(HERE, 'buckle_compare.py')
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tools/ -> code/
+_TOOLS = os.path.dirname(os.path.abspath(__file__))
+CMP = os.path.join(_TOOLS, 'buckle_compare.py')
 
 FAIL = []
 N = [0]

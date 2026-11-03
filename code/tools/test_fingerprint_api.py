@@ -17,7 +17,8 @@ import ast
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+_CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tools/ -> code/
+sys.path.insert(0, _CODE)
 import aba_imperfection as A                                                   # noqa: E402
 
 FAIL = []
@@ -34,7 +35,7 @@ def check(name, cond, detail=None):
 
 
 def main():
-    here = os.path.dirname(os.path.abspath(__file__))
+    here = _CODE          # [P1] tools/ -> code/ (검사 대상은 부모에 있다)
     src = os.path.join(here, 'aba_imperfection.py')
     buckle = os.path.join(here, 'run_abaqus_buckle.py')
 

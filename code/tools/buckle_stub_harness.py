@@ -34,7 +34,7 @@ import re
 import sys
 import types
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tools/ -> code/
 SRC = os.path.join(HERE, 'run_abaqus_buckle.py')
 CUT_MARKER = 'print("=" * 78)'          # 실행 블록의 시작(소스에 두 번 나온다 -> 첫 번째에서 자른다)
 

@@ -21,11 +21,17 @@
     - hf 정의/정규화는 eval_abaqus.calc_thrust_loss 와 동일하게 맞춘다
       (분자=변형 면적, 분모=미변형 기준 면적, IDEAL=A0+2R0).
 """
+import os
 import sys
 import json
 
 import numpy as np
 from odbAccess import openOdb
+
+#   [P1] tools/ 로 옮겼다 — 런타임 모듈(eval_abaqus)은 부모(code/)에 있다.
+_CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CODE not in sys.path:
+    sys.path.insert(0, _CODE)
 
 from eval_abaqus import (A0, R0, IDEAL_THRUST_COEFF, U_SUN, ZK_NU, ZK_EPS,
                          ZK_STATE_CRITERION,

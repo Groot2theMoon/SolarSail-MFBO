@@ -41,7 +41,7 @@ import subprocess
 import sys
 import time
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tools/ -> code/
 BUCKLE = os.path.join(HERE, 'buckle')
 OUT_CSV = os.path.join(BUCKLE, 'sweep_xc_results.csv')
 

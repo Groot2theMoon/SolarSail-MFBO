@@ -44,7 +44,7 @@ import shutil
 import subprocess
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tools/ -> code/
 sys.path.insert(0, HERE)
 import aba_imperfection as A                                                # noqa: E402
 

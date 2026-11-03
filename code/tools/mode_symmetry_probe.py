@@ -36,6 +36,11 @@ import os
 import sys
 from collections import defaultdict
 
+#   [P1] tools/ 로 옮겼다 — 런타임 모듈(buckle_mode_report)은 부모(code/)에 있다.
+_CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _CODE not in sys.path:
+    sys.path.insert(0, _CODE)
+
 MIRROR_AXIS_X = 10.0     # 모델 좌우대칭축 (BASE/2). 미러는 x -> 2*axis - x, y 는 그대로.
 MIRROR_TOL_M = 5.0e-3    # 미러쌍 매칭 허용오차 [m]. 자유 메쉬는 정확히 맞지 않으므로 넉넉히.
 U3_EPS = 1.0e-30         # sidedness 분모 보호
