@@ -30,7 +30,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import aba_imperfection as A                                                # noqa: E402
 
-KV = re.compile(r'centre_mean_pa=([-\d.eE+]+)\s+centre_minp_pa=([-\d.eE+]+)')
+KV = re.compile(r'centre_mean_pa=([-\d.eE+]+)\s+centre_minp_pa=([-\d.eE+]+)'
+                r'(?:\s+centre_mises_pa=([-\d.eE+]+))?')
 
 
 def build_config(base, disp, x_c, d_c, out_path):
@@ -108,9 +109,13 @@ def main(argv=None):
             print('[PROBE] !!! 프로브 파싱 실패 rc=%d' % rc)
             continue
         mean_pa, minp_pa = float(m.group(1)), float(m.group(2))
+        mises_pa = float(m.group(3)) if m.group(3) else float('nan')
         rows.append({'disp_um': disp * 1e6, 'centre_mean_pa': mean_pa,
-                     'centre_minp_pa': minp_pa, 'ratio_to_7000': minp_pa / 7000.0})
-        print('[PROBE]   mean=%.1f Pa  minP=%.1f Pa  (%.3f x 7000)' % (mean_pa, minp_pa, minp_pa / 7000.0))
+                     'centre_minp_pa': minp_pa, 'centre_mises_pa': mises_pa,
+                     'ratio_mises_1psi': mises_pa / 6895.0 if mises_pa == mises_pa else float('nan'),
+                     'ratio_to_7000': minp_pa / 7000.0})
+        print('[PROBE]   mean=%.1f  minP=%.1f  Mises=%.1f Pa  (Mises %.3f x 1 psi)'
+              % (mean_pa, minp_pa, mises_pa, mises_pa / 6895.0))
 
     if a.dry_run:
         print('\n[PROBE] dry-run 종료 — config 만 생성했다:', os.path.basename(tmp))
@@ -121,7 +126,8 @@ def main(argv=None):
         new = not os.path.exists(csv_path)
         with io.open(csv_path, 'a', encoding='utf-8', newline='') as f:
             w = csv.DictWriter(f, fieldnames=['x_c', 'd_c', 'disp_um', 'centre_mean_pa',
-                                              'centre_minp_pa', 'ratio_to_7000'])
+                                              'centre_minp_pa', 'centre_mises_pa',
+                                              'ratio_mises_1psi', 'ratio_to_7000'])
             if new:
                 w.writeheader()
             for r in rows:
@@ -133,16 +139,24 @@ def main(argv=None):
         den = sum(r['disp_um'] ** 2 for r in rows)
         k = num / den if den else 0.0
         print('[PROBE] ---- 요약 ----')
-        print('  %10s %14s %14s %10s' % ('disp[um]', 'mean[Pa]', 'minP[Pa]', 'minP/7000'))
+        print('  %10s %12s %12s %12s %10s' % ('disp[um]', 'mean[Pa]', 'minP[Pa]', 'Mises[Pa]', 'M/1psi'))
         for r in rows:
-            print('  %10.1f %14.1f %14.1f %10.3f'
-                  % (r['disp_um'], r['centre_mean_pa'], r['centre_minp_pa'], r['ratio_to_7000']))
+            print('  %10.1f %12.1f %12.1f %12.1f %10.3f'
+                  % (r['disp_um'], r['centre_mean_pa'], r['centre_minp_pa'],
+                     r['centre_mises_pa'], r['ratio_mises_1psi']))
         if k > 0:
-            print('  선형 기울기 k = %.4f Pa/um  -> 7000 Pa 는 DISP_GLOBAL ≈ %.1f um'
+            print('  선형 기울기(minP) k = %.4f Pa/um  -> 7000 Pa 는 DISP_GLOBAL ≈ %.1f um'
                   % (k, 7000.0 / k))
-            r0 = rows[0]
-            print('  첫 점 기준 선형 외삽: %.1f um' % (r0['disp_um'] * 7000.0 / r0['centre_minp_pa']))
-        print('  판정: minP/7000 이 disp 에 비례하면 선형 / 포화하면 비선형(주름)')
+        #   Boni2016 의 정의(von Mises 1 psi = 6895 Pa)로도 같은 역산을 한다.
+        num_m = sum(r['disp_um'] * r['centre_mises_pa'] for r in rows
+                    if r['centre_mises_pa'] == r['centre_mises_pa'])
+        den_m = sum(r['disp_um'] ** 2 for r in rows
+                    if r['centre_mises_pa'] == r['centre_mises_pa'])
+        if den_m:
+            km = num_m / den_m
+            print('  선형 기울기(Mises) k = %.4f Pa/um  -> 1 psi(6895 Pa) 는 DISP_GLOBAL ≈ %.1f um'
+                  % (km, 6895.0 / km))
+        print('  판정: M/1psi 가 disp 에 비례하면 선형 / 포화하면 비선형(주름)')
 
     if a.restore:
         print('\n[PROBE] 기준 운용점 복원: DISP_GLOBAL=%.1f um' % (a.restore * 1e6))

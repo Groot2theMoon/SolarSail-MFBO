@@ -140,6 +140,23 @@ def _aggregate(rows):
     return (len(rows), w_comp_mean / wsum, w_comp_min / wsum, mean_acc / wsum, s1mx, s2mn)
 
 
+def _mises(s11, s22, s12):
+    """평면응력 von Mises. Boni2016 의 운용점 정의(중앙 von Mises ≈ 1 psi)와 직접 비교하려면 필요하다."""
+    return math.sqrt(max(0.0, s11 * s11 - s11 * s22 + s22 * s22 + 3.0 * s12 * s12))
+
+
+def _aggregate_mises(rows):
+    """면적가중 von Mises 평균. 가중치가 없으면 _aggregate 와 같은 규칙으로 균등 가중."""
+    wsum = sum(r[3] for r in rows)
+    if wsum <= 0.0:
+        rows = [(r[0], r[1], r[2], 1.0) for r in rows]
+        wsum = float(len(rows))
+    acc = 0.0
+    for s11, s22, s12, w in rows:
+        acc += _mises(s11, s22, s12) * w
+    return acc / wsum
+
+
 def _fmt(lab, n, cm, cmin, mavg, s1mx, s2mn):
     return ("  %-20s n=%6d  면적비(mean<0)=%6.4f  면적비(minP<0)=%6.4f  "
             "평균면내=%+10.4g  maxP=%+10.4g  minP=%+10.4g"
@@ -303,6 +320,7 @@ def main():
         #   [§19.97] 끝의 요약/KV 줄에 쓸 값 보관소(None = 읽지 못함 -> 'nan').
         _v_centre_mean = None    # 중앙 영역 면적가중 평균 면내응력 [Pa]
         _v_centre_minp = None    # 중앙 영역 최소주응력(가장 압축적인 min principal) [Pa]
+        _v_centre_mises = None   # 중앙 영역 면적가중 von Mises [Pa] — Boni2016 운용점(1 psi)과 직접 비교
         _v_frac_meanneg = None   # 전막 면적가중 면내평균<0 비율
         _v_frac_minpneg = None   # 전막 면적가중 minP<0 비율
         _v_uz_max = None         # 부호 있는 u3 최대값 [m]
@@ -445,6 +463,7 @@ def main():
             #     모두 남긴다 - 어느 쪽이 논문의 양인지 미확정(§19.94)이라 한쪽만 저장하면 오독된다.
             _v_centre_mean = mavg_c
             _v_centre_minp = minp_c
+            _v_centre_mises = _aggregate_mises(sel_all)
             print(_PFX + " >>> CENTRE 헤드라인: 중심 (%.3g, %.3g) 반경 %.3g m / n=%d / "
                   "평균 면내응력=%+.4g Pa" % (CENTRE_XY[0], CENTRE_XY[1], R_CENTRE,
                                               len(sel_all), mavg_c))
@@ -458,8 +477,15 @@ def main():
                   % (mavg_c / TARGET_STRESS))
             print(_PFX + " >>> 논문 대조용(최소주응력): 7000 Pa 대비 중앙 최소주응력 배율 = %.3f"
                   % (minp_c / TARGET_STRESS))
-            print(_PFX + " >>> (미확정) 7000 Pa 의 대상이 평균 면내응력인지 최소주응력인지는 "
-                  "Galhofo2022 Fig.11/본문 대조 전까지 단정하지 않는다.")
+            print(_PFX + " >>> 논문 대조용(von Mises): 6895 Pa(1 psi) 대비 중앙 von Mises 배율 = %.3f"
+                  % (_v_centre_mises / 6895.0))
+            #   [2026-11-03] 원 정의 확인: Boni2016 = Galhofo2022 의 [36] 이고, 그 원문은
+            #     "the von Mises stress at the center of each solar sector is about 1 psi or 6895 Pa"
+            #     라고 적는다. 즉 운용점의 정본은 **von Mises**다. Galhofo 는 "7000 Pa [36]" 로
+            #     인용하면서 별도 문장에서 최소주응력을 언급해 혼동을 만들었다 -> 세 후보를 병기한다.
+            print(_PFX + " >>> (정의) 1차 문헌 Boni2016: 중앙 von Mises = 1 psi(6895 Pa). "
+                  "Galhofo2022 의 '7000 Pa [36]' 은 이 값을 인용한 것이고, 최소주응력 문장은 "
+                  "주름 지도용 별도 서술이다.")
         elif mid is not None:
             print(_PFX + " >>> 헤드라인: 면내평균<0 비율=%.4f  minP<0 비율=%.4f" % (cm, cmin))
 
@@ -556,13 +582,15 @@ def main():
         #      (CSV 열은 늘리지 않는다 - 스키마 고정, §19.91).
         #   읽지 못한 항목은 'nan' 이다(0 으로 채우지 않는다) - 이유는 위 경고줄/호출부 로그에 남는다.
         print(_PFX + (' >>> 요약(스텝=%s): 중앙 평균 면내응력=%s Pa / 중앙 최소주응력=%s Pa / '
+                      '중앙 von Mises=%s Pa / '
                       '면내평균<0 비율=%s / minP<0 면적비=%s / u_z,max=%s m / u_z,ave=%s m'
                       % (step_name, _fnum(_v_centre_mean, '%.4g'), _fnum(_v_centre_minp, '%.4g'),
+                         _fnum(_v_centre_mises, '%.4g'),
                          _fnum(_v_frac_meanneg, '%.4f'), _fnum(_v_frac_minpneg, '%.4f'),
                          _fnum(_v_uz_max, '%.4g'), _fnum(_v_uz_ave, '%.4g'))))
-        print(_PFX + (' >>> KV: centre_mean_pa=%s centre_minp_pa=%s area_frac_neg=%s '
-                      'minp_frac_neg=%s uz_max_m=%s uz_ave_m=%s'
-                      % (_fnum(_v_centre_mean), _fnum(_v_centre_minp),
+        print(_PFX + (' >>> KV: centre_mean_pa=%s centre_minp_pa=%s centre_mises_pa=%s '
+                      'area_frac_neg=%s minp_frac_neg=%s uz_max_m=%s uz_ave_m=%s'
+                      % (_fnum(_v_centre_mean), _fnum(_v_centre_minp), _fnum(_v_centre_mises),
                          _fnum(_v_frac_meanneg, '%.6f'), _fnum(_v_frac_minpneg, '%.6f'),
                          _fnum(_v_uz_max), _fnum(_v_uz_ave))))
         return 0
