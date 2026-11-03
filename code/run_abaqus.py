@@ -575,6 +575,9 @@ _LF_MODEL_FP = model_fingerprint({
     'PAPER_MATCH': globals().get('PAPER_MATCH'),
     'LOAD_MODE': globals().get('LOAD_MODE'),
     'LF_HOLD_U3_ALL': _LF_HOLD_U3_ALL,
+    #   [2026-11-03] DISP_GLOBAL 누락 -> 운용점을 바꿔도 model_fp 가 같아 옛 LF ODB 가
+    #     조용히 재사용됐다(파일명에도 disp 가 없다). 운용점은 모델 정의값이므로 포함한다.
+    'DISP_GLOBAL': globals().get('DISP_GLOBAL'),
 })
 emit('[CONFIG] lf_model_fp=%s config_sha1=%s lf_tag=%s'
      % (_LF_MODEL_FP, _CFG_SHA1, _LF_MODEL_TAG))
