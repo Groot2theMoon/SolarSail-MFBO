@@ -153,9 +153,10 @@ def main(argv=None):
         else:
             cmd = ['abaqus', 'cae', 'noGUI=run_abaqus.py', '--',
                    'HF', '%g' % a.x_c, '%g' % a.d_c, '--config', a.config]
-            print('[AB] $', ' '.join(cmd))
+            cmdline = subprocess.list2cmdline(cmd)   # abaqus 는 .bat -> shell=True 필요
+            print('[AB] $', cmdline)
             with io.open(log, 'w', encoding='utf-8', errors='replace') as lf:
-                p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE,
+                p = subprocess.Popen(cmdline, shell=True, cwd=HERE, stdout=subprocess.PIPE,
                                      stderr=subprocess.STDOUT, universal_newlines=True)
                 assert p.stdout is not None
                 for line in p.stdout:

@@ -52,10 +52,13 @@ def build_config(base, disp, x_c, d_c, out_path):
 
 
 def run(cmd, dry):
-    print('  $', ' '.join(cmd))
+    #   Windows 에서 `abaqus` 는 abaqus.bat 이라 shell=False 로는 WinError 2 가 난다.
+    #   저장소의 run_analysis.py / make_seed.py 와 같은 규칙(shell=True + 문자열)을 쓴다.
+    line = subprocess.list2cmdline(cmd) if isinstance(cmd, (list, tuple)) else cmd
+    print('  $', line)
     if dry:
         return 0, ''
-    p = subprocess.Popen(cmd, cwd=HERE, stdout=subprocess.PIPE,
+    p = subprocess.Popen(line, shell=True, cwd=HERE, stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, universal_newlines=True)
     assert p.stdout is not None
     out = []
