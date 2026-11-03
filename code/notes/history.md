@@ -4813,3 +4813,70 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   `cd code`  ( `run_abaqus.py` 의 `RELEASE_EDGE_U3 = True`, `EDGE_SPRING_ALPHA = 1.0e-3` )
   HF 재실행 -> 로그에 `[GUARD] 허용목록=['S4','S3','Spring1','SPRINGA']  RELEASE_EDGE_U3=True
   (스프링 기대 개수 400 ...)` 와 `'Spring1': 400` 이 보이면 통과다.
+
+### 19.113 동결 + 회귀 게이트 `refactor_gate.py` — P0 (2026-11-03)
+
+[왜]
+  `run_abaqus.py` 2893줄을 쪼개려면 "덱과 결과가 한 글자도 변하지 않았다"를 **기계로** 증명해야 한다.
+  2894줄짜리 덱을 사람이 눈으로 비교하는 방식은 성립하지 않는다. 그래서 코드를 만지기 전에 게이트를 먼저 만든다.
+
+[무엇]
+  - tag `pre-refactor-2026-11-03` = 61파일 / 26223줄 (이 시점의 원본).
+  - `code/refactor_gate.py` (신규, 591줄). 표준 라이브러리만, py2.7/3 공용(Abaqus 내장 파이썬에서 돈다).
+  - `code/baseline/p0/source_manifest.txt` = 파일별 sha256 + 줄 수.
+  - `code/baseline/README.md` = Abaqus 머신에서의 캡처/대조 명령.
+
+[게이트 정의 — 세 개, 판정은 전부 종료코드]
+  G1 deck    `*.inp` -> `**` 주석·`*Heading` 자유텍스트·빈 줄 제거, `\`->`/`, 절대경로 -> `@PATH@/<basename>` -> sha256.
+             **숫자는 반올림하지 않는다.** 반올림 허용은 "조용한 모델 변경"을 통과시키므로 게이트가 아니다.
+  G2 results `results_*.txt` 의 `key=value` 를 키 단위 비교(오차 0). `timestamp` 만 제외.
+  G3 probe   프로브 로그의 `key=value` **다중집합** 비교(같은 키 반복 허용). 표기만 다른 값(0.5/0.500, 1e-3/0.001)은 동일 취급.
+
+[검증 — 이 워크스테이션에서 실제 실행]
+  - `python refactor_gate.py selftest` -> **PASS 11/11**.
+    (job name/날짜/경로/CRLF 변경은 동일, 증분값·stabilize 변경은 다름, lf1 1e-9 변화 감지, 키 누락 감지,
+     정규화가 데이터 줄과 경로 basename 을 지우지 않았는지 확인)
+  - e2e: `capture` -> `check` PASS(exit 0) -> `stabilize=0.003 -> 0.005` 로 바꾸면 exit 1 + unified diff,
+    `lf1` 을 1e-7 바꾸면 exit 1 + `lf1 changed baseline=0.25 now=0.2500001`.
+  - 부분 검사(요청하지 않은 게이트)는 "건너뜀"으로 표시하고 실패로 세지 않는다.
+
+[제약 — 이 머신에는 Abaqus/SIMULIA 가 없다]
+  P0 의 "LF/HF 1런 -> baseline 캡처"는 **Abaqus 머신에서** 해야 한다. 절차는 `code/baseline/README.md`:
+      abaqus cae noGUI=run_abaqus.py -- LF 0.5 0.5
+      abaqus cae noGUI=run_abaqus.py -- HF 0.5 0.5
+      python refactor_gate.py capture --label p0 --deck "aba/*.inp" --results "results/results_*.txt" --probe "hf_run_log.txt"
+  이 캡처 전에는 P2 이후(함수 이동·상수 단일화·분기 삭제)를 **시작하지 않는다** — 게이트가 없으면
+  "덱이 그대로인가"를 판정할 수 없고, 그 상태의 이동은 조용한 모델 변경과 구별되지 않는다.
+
+### 19.114 파일 격리 — `code/` 는 실행 경로만 남긴다 (P1, 2026-11-03)
+
+[무엇]
+  `code/` 61파일 26223줄 -> **21파일 13390줄**. 41개를 `git mv` 로 내렸다(내용 수정 없음, 경로만).
+  - `attic/` 10파일 5727줄 = **은퇴/이미 깨진** 구현. 동결(경로 보정 없음). `attic/README.md` 에 이유 표.
+  - `tools/` 31파일 7728줄 = **지금도 도는** 계측·검증 장비. `tools/README.md` 에 목록.
+  실행 경로(reachability 폐포) = **17파일 11426줄**, 이동 전과 동일하다(런타임 코드는 한 줄도 안 바뀌었다).
+
+[경로 규칙 — 이동이 자산 경로를 바꾸지 않게]
+  옮긴 스크립트의 `HERE` 를 **부모(`code/`)** 로 바꿨다. 이들이 읽고 쓰는 것(`aba/`·`results/`·`configs/`·
+  `sweep_out/`·`buckle/`·`harness_baseline/`)이 전부 `code/` 아래에 있으므로, 출력 위치가 이동 전과 같아진다.
+  부모 모듈을 import 하는 곳은 `_CODE` 부트스트랩을 둔다.
+
+[attic/tools 경계 — 추측이 아니라 실측]
+  tag `pre-refactor-2026-11-03` 에서 각 스텁을 실제로 돌려 갈랐다:
+    통과 -> tools: `buckle_stub_harness.py seed 0.5`(exit 0) · `buckle_compare_stub.py`(24 checks PASS)
+    실패 -> attic: `seed_family_stub.py`(`NameError: SEED_FAMILY_NAME`) · `pull_top_stub.py`(배선 FAIL) ·
+                  `eval_lf_stub.py`(FAIL) · `slope_stats_stub.py`(106/110 FAIL)
+  `torque_stats`/`eval_abaqus_avg` 계열은 지표 자체가 폐기됐으므로(attic) 통과 여부와 무관하게 내렸다.
+
+[검증 — 라이선스 0]
+  - **import 0**: `code/*.py` 를 AST 로 훑어 `tools/`·`attic/` 모듈을 import 하는 곳이 **없음**을 확인.
+  - 61파일 전부 AST parse OK (이동 후 문법 오류 0).
+  - `tools/static_leak_check.py selftest` OK / 전체 실행 시 대상 4파일을 `code/`+`tools/` 양쪽에서 찾는다.
+  - `buckle_compare_stub.py` PASS 24 / `buckle_stub_harness.py seed 0.5` exit 0 /
+    `mode_symmetry_probe.py selftest` 12/12 / `test_fingerprint_api.py` 10/10 /
+    `test_seed_path.py` 47/49 — **2건 실패는 이동 전 tag 에서도 동일**(47/49, 같은 테스트명. Windows 콘솔 인코딩 건).
+  - 기존 결함 2건(이번 변경과 무관): `static_leak_check.py` 가 `run_abaqus.py` 의 `sets['All']`(절점집합)을
+    R3 로 오탐한다 — 격자 경로는 `All`(절점) 과 `All_Elem`(요소) 을 **둘 다** 만든다(`run_abaqus.py:1739`).
+
+[다음]
+  P2(함수 이동)는 `baseline/p0` 캡처가 끝난 뒤에만. 지금 상태로 옮기면 게이트 없이 수치 경로를 만지는 것이다.
