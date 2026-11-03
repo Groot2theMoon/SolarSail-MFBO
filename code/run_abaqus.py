@@ -189,8 +189,9 @@ CLAMP_EXCL_R = 0.0   # m — 0.0 이면 제외 노드가 없어 All_Edges_NoClam
 #   False = 종전 그대로(u3=0). 덱/로그 바이트 동일 유지.
 RELEASE_EDGE_U3 = False
 #   스프링 강성 = ALPHA * (σt)_ref,  σt = 7 kPa * 5 µm = 0.035 N/m (막 장력/단위폭 = 스프링 [N/m])
+EDGE_SPRING_SIGMA_T_REF = 7.0e3 * 5.0e-6   # 0.035 N/m = 7 kPa × 5 µm (막 장력/단위폭 = 스프링 [N/m])
 EDGE_SPRING_ALPHA = 1.0e-3     # 1e-3(거의 자유) ~ 1(자연 강성) 스윕용
-EDGE_SPRING_K = EDGE_SPRING_ALPHA * 0.035
+EDGE_SPRING_K = EDGE_SPRING_ALPHA * EDGE_SPRING_SIGMA_T_REF
 
 # 케이블 파라미터 (Galhofo reference)
 CABLE_RADIUS = 5.0e-4 # m
@@ -2196,6 +2197,11 @@ else:
         region=a.sets['All_Edges_NoClamp'],
         u3=0
     )
+    #   [2026-11-03] False 분기도 반드시 로그를 남긴다. 종전에는 True 일 때만 emit 해서
+    #     로그만으로는 "구속이 걸렸다"는 사실을 확인할 수 없었다(부재 = 기본값 추론에 의존).
+    emit("[BC] RELEASE_EDGE_U3=False -> BC_Edges_Only_Z 유지 (세 자유변 u3=0, "
+         "n=%d, step=%s). 델타n 은 발산정리로 0 이 된다."
+         % (len(a.sets['All_Edges_NoClamp'].nodes), 'Initial' if _PAPER_PATH else 'Step-Buckle'))
 
 #   [2026-10-12 §19.66] LF ODB 는 **설계점별 이름**이다(LF_Analysis_xc<NNN>_dc<NNN>.odb).
 #     고정 이름은 이전 설계점의 LF 가 이번 점의 지표로 둔갑할 수 있었다(짝 오염).

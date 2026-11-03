@@ -194,8 +194,9 @@ CLAMP_ZONE_R = 1.0     # |u3| 무게중심이 클램프 부착점에서 이 거�
 #   False = 종전 그대로(u3=0). 덱/로그 바이트 동일 유지.
 RELEASE_EDGE_U3 = False
 #   스프링 강성 = ALPHA * (σt)_ref,  σt = 7 kPa * 5 µm = 0.035 N/m (막 장력/단위폭 = 스프링 [N/m])
+EDGE_SPRING_SIGMA_T_REF = 7.0e3 * 5.0e-6   # 0.035 N/m = 7 kPa × 5 µm (막 장력/단위폭)
 EDGE_SPRING_ALPHA = 1.0e-3     # 1e-3(거의 자유) ~ 1(자연 강성) 스윕용
-EDGE_SPRING_K = EDGE_SPRING_ALPHA * 0.035
+EDGE_SPRING_K = EDGE_SPRING_ALPHA * EDGE_SPRING_SIGMA_T_REF
 
 #   [2026-10-21] PULL_TOP/TOP_PULL_* 는 제거했다. 3-tendon 소스는 CASE='paper'(paper3) 하나다.
 
@@ -981,6 +982,10 @@ def build_model(disp):
                 region=a.sets['All_Edges_NoClamp'],
                 u3=0
             )
+            #   [2026-11-03] False 분기도 로그를 남긴다(모드 소스가 어느 BC 였는지 추적).
+            print("%s [BC] RELEASE_EDGE_U3=False -> BC_Edges_Only_Z 유지 "
+                  "(자유변 u3=0, n=%d, step=%s)"
+                  % (TAG, len(_keep_labels), step_name))
 
     #   자유경계 u3=0 을 Initial에서 건다(패치 반경 내 노드는 이미 제외 — 이중구속 방지).
     #   => 스텝 간 구속집합이 동일해지고, LIVE 는 prescribed 변위 패턴 하나만 남는다.
