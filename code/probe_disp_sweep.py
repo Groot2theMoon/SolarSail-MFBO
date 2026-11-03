@@ -72,7 +72,9 @@ def main(argv=None):
     ap.add_argument('--d_c', type=float, default=1e-4)
     ap.add_argument('--config', default=os.path.join('configs', 'seed.json'))
     ap.add_argument('--disps', type=float, nargs='+',
-                    default=[1.65e-4, 3.3e-4, 4.95e-4, 6.6e-4])
+                    default=[0.5e-4, 0.75e-4, 1.0e-4, 1.25e-4],
+                    help='기본값은 1 psi(6895 Pa)를 감싸도록 잡았다 — '
+                         '165 um 실측 Mises 10.83 kPa = 1.57 x 1 psi 이므로 목표는 ~105 um')
     ap.add_argument('--restore', type=float, default=1.65e-4,
                     help='스윕 후 되돌릴 DISP_GLOBAL [m] (0 이면 생략)')
     ap.add_argument('--dry-run', action='store_true')
