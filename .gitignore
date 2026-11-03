@@ -56,4 +56,5 @@ venv/
 # 생성물 (스크립트가 만드는 임시 config/백업 — 커밋 금지)
 # ---------------------------------------------------------------
 code/configs/_probe_disp.json
+code/configs/_probe_prestress.json
 code/results/probe_backup_*.txt

@@ -230,8 +230,13 @@ sqrt2 = 1.414
 # ---- 사전 장력(prestrain) 캘리브레이션 ----
 # 사전 장력 크기. base state 장력을 키워 시스템행렬 부정정(음수 고유값) 완화를 시도한다.
 # 1.0 = 기존값. 값을 바꾸려면 이 상수를 직접 수정한다(구 MFBO_PRETENSION_SCALE 환경변수는 제거됨).
-PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m
-# PRETENSION_SCALE=10 -> 면내응력 2122 Pa = 목표 7000 Pa 의 0.303배. 운용점 조정은 DISP_GLOBAL 로 한다(§8).
+PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5 m (구 disp 경로 전용)
+#   [2026-11-03] 아래 DISP_GLOBAL 은 **구 disp 경로(LOAD_MODE='disp') 전용**이다.
+#     현재 기본값 PAPER_MATCH=True -> LOAD_MODE='cable_stress' 에서는 `_DISP_PRE=0`(:545)이라
+#     꼭짓점 변위를 구동하지 않고, `CLAMP_PULL=DISP_GLOBAL*d_c`(:1654)도 disp 분기에서만 쓰인다.
+#     즉 이 경로의 운용점 노브는 **CABLE_PRESTRESS**(케이블 초기응력)다 — DISP_GLOBAL 을 바꿔도
+#     막 응력은 변하지 않는다(2026-11-03 `probe_prestress_sweep.py` 로 확인).
+#     옛 주석 "2122 Pa @ 5e-5 m, 운용점 조정은 DISP_GLOBAL" 은 disp 경로 기준이다.
 DISP_GLOBAL = 165e-6
 # 좌굴 스텝 perturbation — K_delta 를 만든다. 너무 작으면 고유값 분리가 나빠져 추출이 실패한다(§8b).
 PERTURBATION = 0.01
