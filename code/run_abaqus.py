@@ -87,8 +87,7 @@ _CFG_HASH = _AC.config_hash(_CFG)
 # ===== SETTINGS =====
 #   [§19.110] 실행/모델 설정값은 전부 이 블록에 있다. 값을 고칠 때는 여기만 본다.
 #     종전에는 설정이 2259줄 본문에 흩어져 있었다 - NUMCPUS 97 / N_EIG 836 / MODE_SOURCE 840 /
-#     STABILIZE_LADDER 862 / NO_CLAMP(정의 1028 + 인라인 재대입 1421) / PULL_TOP 1032 /
-#     TOP_PULL_SCALE 1039 / SIGMA0 1429 / DISP_GLOBAL 1205 / GLOBAL_FINAL 1210 /
+#     STABILIZE_LADDER 862 / NO_CLAMP(정의 1028 + 인라인 재대입 1421) / PULL_TOP/TOP_PULL_SCALE(§19.121 제거) / SIGMA0 1429 / DISP_GLOBAL 1205 / GLOBAL_FINAL 1210 /
 #     _EIGENSOLVER 1523 / BUCKLE_ODB 1703. 값/주석/**그룹 내 정의 순서는 그대로** 두고
 #     위치만 모았다(값 변경 0건 -> 생성 덱과 콘솔 로그가 종전과 바이트 동일해야 한다).
 #   이 아래의 파생부는 이 값을 읽어 계산한다 (손대지 않는다):
@@ -106,7 +105,7 @@ _CFG_HASH = _AC.config_hash(_CFG)
 #   False = 종전 MFBO 기준선: 지정변위 구동, 1차 S4/S3, 안정화 사다리(0.005~0.05).
 #   !! PAPER_MATCH=True 는 **시드표 재생성**이 필요하다:
 #        make_seed.py 로 modes_seed.txt 를 2차 격자에서 다시 만든 뒤 HF 를 돌린다.
-#      표가 1차 라벨이면 seed_family_gate 가 HF 제출 전에 중단한다.
+#      표가 1차 라벨이면 seed_gate 가 HF 제출 전에 중단한다.
 #   PAPER_MATCH / PAPER_MESH_ORDER 는 core/constants.py 소관이다(§19.119).
 MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
 LOAD_MODE = 'cable_stress' if PAPER_MATCH else 'disp'   # 'disp' | 'cable_stress'
@@ -132,17 +131,6 @@ USE_COMPOSITE_MODE_TABLE = True
 # ---- ① 실행 모드/스위치 ----
 BASE_PROBE = True                # R-13/CT 라이브. MFBO에서는 False로 끌 수 있다.
 EIG_RECORD = True                # 좌굴 고유치 이력 기록 (coalescence_check.py record)
-RUN_SELF_BUCKLE_JOB = False  # 자기(클램프) 좌굴 잡을 끈다 (2026-09-24). 이유는 측정된 실패 경로다:
-                             #   이 잡은 _EIGENSOLVER='LANCZOS' 로 제출되는데(아래), 이 모델의 좌굴 base state 는
-                             #   이미 분기하중을 넘은 부정정 상태다(시스템 음수 고유값 실측 56~88개). 매뉴얼이 열거한
-                             #   LANCZOS 금지 조건 중 'preloaded above the bifurcation load' 에 정확히 해당하므로
-                             #   ***ERROR: THE LANCZOS SOLVER CANNOT BE USED FOR BUCKLING ANALYSIS 로 거부된다.
-                             #   run_job_safely 는 ABORTED 를 보면 sys.exit(1) 하므로, 이 잡이 켜져 있으면
-                             #   HF_Postbuckle 이 제출되기도 전에 스크립트가 끝난다(제출 순서: LF 840 -> Buckle 862 -> HF 1010).
-                             # SUBSPACE 로 바꿔도 클램프 모델은 좌굴모드 0개로 죽어 같은 경로다. 모드 추출은 이제
-                             #   ODB 모드표 경로(run_abaqus_mode.py -> modes_ClampFree_Buckle.txt)가 담당하므로
-                             #   이 진단 잡은 불필요하다. 클램프 base state 증거가 다시 필요하면 True 로 되돌리되
-                             #   그때는 _EIGENSOLVER 와 제출 순서를 함께 손봐야 한다.
 #   [§19.104] NO_CLAMP 상수를 이 블록으로 올렸다(값/의미 불변 - 종전에는 클램프 RP 조립부에 있었고,
 #     모드표 결정보다 **뒤**라 여기서 볼 수 없었다). True = 클램프 생략 baseline(run_abaqus_cable 대조).
 NO_CLAMP = not PAPER_INCLUDE_CLAMPS
@@ -150,17 +138,6 @@ NO_CLAMP = not PAPER_INCLUDE_CLAMPS
 if PAPER_MATCH and not NO_CLAMP and not PAPER_INCLUDE_CLAMPS:
     raise RuntimeError('PAPER_MATCH=True 의 논문 재현은 NO_CLAMP=True 를 요구합니다. '
                        '실제 클램프 모델은 PAPER_INCLUDE_CLAMPS=True 로 켜십시오.')
-#   [§19.105] PULL_TOP: True = 윗 꼭짓점(Top)도 케이블 방향 지정변위로 당긴다(Galhofo 2022 3-tendon 정합).
-#     False(기본) = 종전 그대로 Top 완전 고정 - 기존 런 재현성이 우선이다(BC/스텝 호출 바이트 동일).
-#     NO_CLAMP 와 **독립**이다: 네 조합(PULL_TOP x NO_CLAMP) 모두 유효하고, 클램프 유무와 서로 간섭하지 않는다.
-PULL_TOP = False
-#   [§19.109] TOP_PULL_SCALE: 세 당김의 힘 평형 보정 계수 - **Top 지정변위에만** 곱한다.
-#     케이블 힘 F = E*A*u/L 이므로 대칭 3-tendon 의 평형은 F_top = 2*sin(theta)*F_bot,
-#     즉 u_top = 2*sin(theta)*(LEN_TOP/LEN_BOT)*u_bot (theta = angle_deg = 28.6 deg).
-#     1.0 (기본) = 종전과 동일(보정 없음, 덱/로그 바이트 동일). 0.389 = 힘 평형 조건.
-#     유도: 2*sin(28.6 deg)*0.280/0.689 = 0.389 (길이를 무시한 0.9574 는 틀린 값이다).
-#     Right/Left/클램프 변위에는 곱하지 않는다(세 당김 중 Top 만 평형 보정 대상).
-TOP_PULL_SCALE = 1.0
 # 실행 모드.
 #   'auto'  : 덱 생성 -> riks_patch_input.py 로 *Controls 주입 -> 제출 -> 결과 추출까지 한 번에.
 #             mfbo.py 가 이 경로로 HF 를 부른다(덱 생성만 하면 RESULTS: 가 없어 실패로 읽힌다).
@@ -242,12 +219,6 @@ angle_deg = 28.6
 angle_rad = np.deg2rad(angle_deg)
 cos_val = float(np.cos(angle_rad))
 sin_val = float(np.sin(angle_rad))
-#   [§19.105] Top 케이블 방향 코사인. 케이블은 connect_cable('Cable_Top', ..., V1, (0.0, 1.0, 0.0)) 로
-#     +y 축에 놓인다 -> 방향 (u1, u2) = (0, +1). Right/Left 와 **같은 대입식**을 쓰기 위해
-#     (u1 = v*cos, u2 = -v*sin) 규약에 맞춘 값이 top_cos=0.0, top_sin=-1.0 이다(즉 u2 = +v).
-top_cos = 0.0
-top_sin = -1.0
-
 # ---- ⑤ 좌굴/임퍼펙션 ----
 N_EIG = 4          # 임퍼펙션에 쓸 좌굴모드 수 (*IMPERFECTION / *NODE FILE)
 # 2-모델 레시피 - 모드는 클램프-프리 모델에서 뽑아 클램프 모델에 임퍼펙션으로 주입한다(§5).
@@ -294,7 +265,6 @@ IMPERFECTION_MODE = 'odb_table'   # 'odb_direct'(기본) | 'odb_table' | 'file'
 MODE_SOURCE_ODB = os.path.join('..', 'ClampFree_Buckle.odb')    # 'odb_direct' 가 읽는 ODB
 MODE_SOURCE_STEP_NAME = 'Step-Buckle'                           # 그 ODB 안의 좌굴 스텝 이름
 MODE_INSTANCE = 'MEMBRANE-1'                                    # 막 인스턴스 이름
-SEED_FAMILY_NAME = 'modes_seed.txt'   # seed 가족 표(꼭짓점 케이블만, x_c 무관, 모드 4개)
 # A: 추출 요청 고유값 수. base state 가 부정정이면 줄이는 것이 subspace 수렴에 유리하다(§8a).
 N_EIG_BUCKLE = 100
 # subspace 반복의 기저 벡터 수 (구 MFBO_VECTORS 환경변수는 2026-09-21 제거됨)
@@ -312,7 +282,7 @@ BUCKLE_VECTORS = 250
 _EIGENSOLVER = "LANCZOS"         # "SUBSPACE" 로 바꾸면 좌굴 추출 재시도
 
 # ---- ⑦ 경로/식별자 ----
-#   SEEDS_DIR / SEED_FAMILY_TABLE 은 여기 없다 - _HERE 와 aba_imperfection.SEED_DIR_NAME 의
+#   SEEDS_DIR 은 여기 없다 - _HERE 와 aba_imperfection.SEED_DIR_NAME 의
 #   파생이라 import 뒤(모드표 선택 블록)에서 계산한다. LF_ODB/LF_JOB 도 (x_c,d_c) 파생이다.
 # 산출물 디렉터리 = code/aba. mfbo.py 의 RUN_DIR_NAME 과 같은 값이어야 한다.
 RUN_DIR_NAME = "aba"
@@ -325,6 +295,11 @@ HF_ODB = HF_JOB + '.odb'
 #     RUN_DIR_NAME: mfbo.py 가 "aba" 를 하드코딩한다 -> 바꾸면 mfbo 가 ODB 를 못 찾는다.
 _CFG_FORBIDDEN = ('RUN_DIR_NAME',)
 _CFG_APPLY = _AC.apply_globals(globals(), _CFG, forbidden=_CFG_FORBIDDEN)
+#   [P4] 제거된 모델 분기 - 설정으로 켜면 조용히 다른 모델이 되므로 즉시 중단한다(§19.121).
+if NO_CLAMP:
+    raise RuntimeError('NO_CLAMP 클램프-프리 HF 모델은 제거됐다 - tools/run_abaqus_cable.py 를 쓰라.')
+if not USE_GRID_MESH:
+    raise RuntimeError('USE_GRID_MESH=False 자유메쉬 경로는 제거됐다(§19.121).')
 #   config 신원(sha1). LF sidecar 와 점별 results txt 에 남겨 "이 점이 어느 config 였나"를 추적한다.
 _CFG_SHA1 = _AC.config_hash(_CFG)
 
@@ -880,101 +855,19 @@ def _available_mode_numbers(path):
     return sorted(nums)
 
 
-# =====================================================================
-# [§19.104] 임퍼펙션 표 선택 - 클램프 없는 baseline 은 **순수 seed 가족**만 쓴다
-#   발견된 오염(2026-10-16 실런): `NO_CLAMP=True`(클램프 없는 모델)인데 임퍼펙션은 합성표
-#   `modes_xc<x>.txt` 였고 그 내용이 `modes_seed.txt[1,2] + modes_clamp_xc0p5_dc0.txt[1,2]` 였다.
-#   클램프 케이스의 좌굴모드는 클램프 없는 모델의 모드가 아니므로 **오염**이다(과거 로그의
-#   "성공한 모드가 클램프 근처에만 몰린다"도 같은 원인으로 읽힌다).
-#   근거: 2026-10-01 문헌(Galhofo) 재현 성공값(u_z,ave 97.7 t vs 논문 91.1 t = 1.072배)은
-#   **합성표(2+2) 도입 전**의 값이다 -> 그 성공은 seed 가족만으로 얻어졌다. Galhofo 도 "케이블
-#   없는 only membrane 으로 모드를 뽑아 실제 모델에 주입"했다 -> seed 가족 사용이 문헌 방식과 일치.
-#   그래서 NO_CLAMP=True 는 (a) 합성표 대신 seed 가족 표를 쓰고 (b) 그 표의 상위 4모드를 쓴다.
-#   NO_CLAMP=False 경로(합성표 + 설계점 지문 게이트)는 종전과 **동일**하다.
-# =====================================================================
-
-
-def seed_family_gate(table_path, max_modes):
-    """[§19.104] 클램프 없는 baseline 이 쓸 **순수 seed 가족 표**인지 검증한다.
-
-    반환 (ok, 사유, 요약dict). 요약은 실패해도 채워서 '무엇을 쓰려 했는지'를 로그에 남긴다.
-      ① 파일이 있는가  ② 파일명이 seed 가족 표인가(합성표/클램프표 차단)
-      ③ 헤더에 합성/클램프 흔적이 없는가  ④ 모드가 max_modes 개 이상인가
-    stdlib 전용이라 Abaqus 없이 단위시험할 수 있다(code/seed_family_stub.py).
-    """
-    summary = {'table': table_path, 'modes': [], 'source': '?', 'header': ''}
-    if not table_path or not os.path.exists(table_path):
-        return False, 'seed 가족 표 파일이 없음: %s' % table_path, summary
-    if os.path.basename(table_path) != SEED_FAMILY_NAME:
-        return False, ('seed 가족 표가 아니다(합성표/클램프표): %s (기대 %s)'
-                       % (os.path.basename(table_path), SEED_FAMILY_NAME)), summary
-    nums = _available_mode_numbers(table_path)
-    summary['modes'] = nums[:max_modes]
-    summary['source'] = mode_table_info(table_path).get('source', '?')
-    try:
-        hdr = []
-        with open(table_path, 'r', encoding='utf-8', errors='replace') as f:
-            for line in f:
-                if not line.startswith('#'):
-                    break
-                hdr.append(line)
-        summary['header'] = ''.join(hdr).strip()
-    except Exception as e:
-        return False, '표 헤더를 읽지 못함(%s: %s)' % (type(e).__name__, e), summary
-    bad = [t for t in ('modes_clamp', 'combined', 'clamp_sha') if t in summary['header'].lower()]
-    if bad:
-        return False, ('표 헤더에 클램프/합성 흔적 %s -> 오염(seed 가족이 아니다)' % bad), summary
-    #   [paper-match] 2차 격자(MESH_ORDER=2)는 노드 라벨이 1차와 다르다. 표의 source ODB 이름에
-    #     'grid2' 가 없으면 1차 격자에서 뽑은 표이므로 주입하면 안 된다(조용한 오염 차단).
-    if MESH_ORDER == 2:
-        _src = str(summary.get('source', ''))
-        if 'grid2' not in os.path.basename(_src):
-            return False, ('MESH_ORDER=2 인데 시드표 source 가 grid2 가 아니다: %s '
-                           '-> make_seed.py 로 2차 격자 모드를 다시 뽑아라' % _src), summary
-    if len(nums) < max_modes:
-        return False, ('모드 부족: %d개(모드 %s) < %d개 필요(상위 %d개를 주입한다)'
-                       % (len(nums), nums, max_modes, max_modes)), summary
-    return True, 'OK', summary
-
-
 #   [2026-10-12] 설계점별 시드표 - 기본은 결정적 경로(seeds/modes_xc<NNN>.txt),
 #     실험은 env SOLARSAIL_MODE_TABLE 로 덮는다. 종전 상수 '..\modes_2p2.txt' 는 x_c=0.5 산출물
 #     하나만 가리켜, MFBO(x_c 스윕)에서 조용히 같은 시드를 재사용했다(계획 Q1=a / Q2=a).
 SEEDS_DIR = os.path.join(_HERE, SEED_DIR_NAME)   # [§19.73] cae noGUI 는 execfile 이라 __file__ 이 없다
-SEED_FAMILY_TABLE = os.path.join(SEEDS_DIR, SEED_FAMILY_NAME)   # [§19.104] 순수 seed 가족 표
 _MODE_TABLE_ENV = os.environ.get('SOLARSAIL_MODE_TABLE')
-if NO_CLAMP and not USE_COMPOSITE_MODE_TABLE:
-    # 순수 seed 가족 표(클램프 모드 배제) - 종전 §19.104 경로.
-    MODE_TABLE = SEED_FAMILY_TABLE
-else:
-    # [paper-match] 기본: seed + clamp_only **합성표**. 클램프가 없는 HF 라도 모드 형상 기저에는
-    #   두 가족을 함께 쓴다(사용자 결정 2026-10-20). 지문 게이트(seed_gate)가 설계점/소스 드리프트를 막는다.
-    MODE_TABLE = seed_table_path(SEEDS_DIR, x_c, d_c, env=_MODE_TABLE_ENV)
+# [paper-match] 기본: seed + clamp_only **합성표**. 클램프가 없는 HF 라도 모드 형상 기저에는
+#   두 가족을 함께 쓴다(사용자 결정 2026-10-20). 지문 게이트(seed_gate)가 설계점/소스 드리프트를 막는다.
+MODE_TABLE = seed_table_path(SEEDS_DIR, x_c, d_c, env=_MODE_TABLE_ENV)
 
 
 if IMPERFECTION_MODE == 'odb_table':
     #   [§19.104] 클램프 없는 baseline -> 순수 seed 가족 표. 여기서 검증/로그를 끝낸다:
     #     표가 없거나 모드가 부족하면 **크게 찍고 중단**한다(조용히 합성표로 되돌아가면 오염이 재발).
-    if NO_CLAMP and not USE_COMPOSITE_MODE_TABLE:
-        _sf_ok, _sf_why, _sf = seed_family_gate(MODE_TABLE, IMPERFECTION_MAX_MODES)
-        emit("[SEED] NO_CLAMP=True -> 순수 seed 가족 사용(clamp 모드 제외) / "
-             "table=%s / modes=%s / source=%s / x_c=%g d_c=%g"
-             % (_sf.get('table', MODE_TABLE), _sf.get('modes', []), _sf.get('source', '?'),
-                x_c, d_c))
-        emit("[SEED] seed 가족 판정: %s (%s)" % ('OK' if _sf_ok else '거부', _sf_why))
-        if not _sf_ok:
-            emit("!!! ERROR: NO_CLAMP=True baseline 은 순수 seed 가족 표가 필요합니다 -> 중단: %s"
-                 % _sf_why)
-            emit("[ERROR-EN] NO_CLAMP baseline requires the pure seed-family mode table"
-                 " -> aborting BEFORE HF job submit.")
-            emit("    기대 파일: %s" % SEED_FAMILY_TABLE)
-            emit("    재생성: python3 make_seed.py --x_c %g --d_c %g   ([1/3] 단계가 seed 가족 표를 만든다)"
-                 % (x_c, d_c))
-            sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
-            sys.exit(1)
-        # 표가 가진 모드 중 상위 IMPERFECTION_MAX_MODES 개([1,2,3,4] 규약). 클램프 모드는
-        #   seed 가족 표에 없으므로 구조적으로 섞일 수 없다.
-        IMPERFECTION_MODES = tuple(_sf['modes'])
     # 모드표가 정본이다: 표에 있는 모드만 주입할 수 있으므로 상수를 표에 맞춰 조정한다.
     _avail = _available_mode_numbers(MODE_TABLE)
     if _avail:
@@ -1000,34 +893,30 @@ if IMPERFECTION_MODE == 'odb_table':
     #     판정: ① 표가 이 x_c/d_c 에서 나왔는가 ② 만든 뒤 buckle 소스가 바뀌지 않았는가
     #           ③ 소스 모드표가 그 뒤 바뀌지 않았는가.
     #     로직은 aba_imperfection.seed_gate(stdlib) - 단위시험 code/test_seed_path.py.
-    #   [§19.104] 이 게이트는 **합성표 전용**이다(합성표 헤더의 x_c/fingerprint 를 본다). 클램프
-    #     없는 baseline 의 순수 seed 가족 표에는 그 헤더가 없으므로 여기서는 검증하지 않고,
-    #     위 seed_family_gate 가 대신한다(검증 없는 통과가 아니라 대상이 다르다).
-    if NO_CLAMP and not USE_COMPOSITE_MODE_TABLE:
-        emit("[SEED] 합성 지문 게이트 생략 (NO_CLAMP=True 순수 seed 가족 표, §19.104)")
-    else:
-        _buckle_script = os.path.join(_HERE, BUCKLE_SCRIPT_NAME)
-        #   [P3] 공통 상수는 core/constants.py 로 이동했다 -> 지문은 (상수, 스크립트) 순으로 스캔.
-        _buckle_sources = (os.path.join(_HERE, 'core', 'constants.py'), _buckle_script)
-        _gate_ok, _gate_why, _sinfo = seed_gate(x_c, d_c, MODE_TABLE, _buckle_sources)
-        emit("[SEED] x_c=%.4g d_c=%.4g table=%s" % (x_c, d_c, MODE_TABLE))
-        emit("[SEED] 모드 %s / source_seed=%s / source_clamp=%s / 지문=%s"
-             % (sorted(_mode_table.keys()), _sinfo.get('seed', '?'), _sinfo.get('clamp', '?'),
-                _sinfo.get('fingerprint', '?')))
-        if not _gate_ok:
-            emit("!!! ERROR: 시드표 게이트 실패 - %s" % _gate_why)
-            emit("[ERROR-EN] seed table gate failed -> aborting BEFORE HF job submit.")
-            emit("    재생성: python3 make_seed.py --x_c %g --d_c %g --force" % (x_c, d_c))
-            try:
-                with open('mode_table_check.txt', 'w') as _fpc:
-                    _fpc.write('GATE FAIL\n%s\ntable=%s\ntime=%s\n'
-                               % (_gate_why, os.path.abspath(MODE_TABLE),
-                                  time.strftime('%Y-%m-%d %H:%M:%S')))
-            except Exception:
-                pass
-            sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
-            sys.exit(1)
-        emit("[SEED] 게이트 OK - 이 표는 이 설계점·이 buckle 소스와 일치한다")
+    #   [P4] 클램프-프리(NO_CLAMP) 분기와 그 순수 seed 가족 게이트는 제거됐다(§19.121).
+    #     HF 는 항상 합성표를 쓰고 이 게이트가 설계점/소스 드리프트를 막는다.
+    _buckle_script = os.path.join(_HERE, BUCKLE_SCRIPT_NAME)
+    #   [P3] 공통 상수는 core/constants.py 로 이동했다 -> 지문은 (상수, 스크립트) 순으로 스캔.
+    _buckle_sources = (os.path.join(_HERE, 'core', 'constants.py'), _buckle_script)
+    _gate_ok, _gate_why, _sinfo = seed_gate(x_c, d_c, MODE_TABLE, _buckle_sources)
+    emit("[SEED] x_c=%.4g d_c=%.4g table=%s" % (x_c, d_c, MODE_TABLE))
+    emit("[SEED] 모드 %s / source_seed=%s / source_clamp=%s / 지문=%s"
+         % (sorted(_mode_table.keys()), _sinfo.get('seed', '?'), _sinfo.get('clamp', '?'),
+            _sinfo.get('fingerprint', '?')))
+    if not _gate_ok:
+        emit("!!! ERROR: 시드표 게이트 실패 - %s" % _gate_why)
+        emit("[ERROR-EN] seed table gate failed -> aborting BEFORE HF job submit.")
+        emit("    재생성: python3 make_seed.py --x_c %g --d_c %g --force" % (x_c, d_c))
+        try:
+            with open('mode_table_check.txt', 'w') as _fpc:
+                _fpc.write('GATE FAIL\n%s\ntable=%s\ntime=%s\n'
+                           % (_gate_why, os.path.abspath(MODE_TABLE),
+                              time.strftime('%Y-%m-%d %H:%M:%S')))
+        except Exception:
+            pass
+        sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
+        sys.exit(1)
+    emit("[SEED] 게이트 OK - 이 표는 이 설계점·이 buckle 소스와 일치한다")
 elif IMPERFECTION_MODE == 'odb_direct':
     # (2026-09-28, 사용자 제안) 모드표 txt 를 거치지 않고 ODB 에서 직접 모드를 읽는다.
     #   물리는 odb_table 과 완전히 같다(노드 좌표 섭동). 파일이 하나 줄 뿐이다.
@@ -1248,16 +1137,6 @@ def connect_cable(name, part, coord, vector_dir):
 
     return region_start, region_end
 
-if not USE_GRID_MESH:
-    p.seedPart(size=BASE/SEED_DIV, deviationFactor=0.1)  # 약 1.82만개 (1차 요소)
-    p.setMeshControls(regions=p.faces, elemShape=QUAD_DOMINATED, technique=FREE, algorithm=MEDIAL_AXIS)
-    elemTypeQuad = ElemType(elemCode=ELEM_CODE_QUAD, elemLibrary=STANDARD)
-    elemTypeTri = ElemType(elemCode=ELEM_CODE_TRI, elemLibrary=STANDARD)
-    p.setElementType(regions=(p.faces,), elemTypes=(elemTypeQuad, elemTypeTri))
-    p.generateMesh()
-
-    a.regenerate()
-
 # 의존 인스턴스는 파트 메쉬를 공유한다 -> 어셈블리 쪽에서도 좌표가 같아야 한다(전달 확인).
 # 격자/자유 **두 경로 모두** 메쉬가 준비된 뒤에 한 번만 적용한다(2026-10-08 수정).
 #   이 호출이 없으면 _pert=None 이 되어 로그에 '빈 섭동'만 남고 HF 가 평탄한 막으로 돌아간다.
@@ -1284,25 +1163,21 @@ rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 #   [§19.110] NO_CLAMP 정의는 SETTINGS ① 한 곳이다. 여기 있던 인라인 재대입
 #     (`NO_CLAMP = True`)은 같은 값의 중복이라 지웠다 - 정의(1028줄)와 재대입(1421줄)
 #     사이에 NO_CLAMP 를 쓰는 문장이 없어 유효값은 종전과 동일하다(상수 대조로 확인).
-if NO_CLAMP:
-    emit("[run_abaqus] NO_CLAMP=True : 클램프(cable_CL/CR + 강체패치 + BC) 없이 모델링 (대조 실험)")
-    rp_cl_obj = rp_cr_obj = rp_cl_reg = rp_cr_reg = None
+#   [2026-10-12 §19.58] 0.2 -> 0.21: 거리 0.2 노드에서 부동소수 경계로 좌우 패치 노드 수가
+#   달라져(L6/R7) 클램프 부근 최소 주응력이 비대칭이었다. 0.21 은 8/8 대칭(실측)이고
+#   CLAMP_EXCL_R 과 같아 제외가 패치를 덮는다. 빌드 시점에 대칭을 강제 검사한다.
+rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=PATCH_R_CLAMP)
+rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=PATCH_R_CLAMP)
+_clm = aba_grid_mesh.patch_coords_from_set(a.sets['CL_Nodes'])
+_crm = aba_grid_mesh.patch_coords_from_set(a.sets['CR_Nodes'])
+if _clm is None or _crm is None:
+    print("[대칭] 경고: Set 노드좌표 API 없음 -> 클램프 패치 좌우 대칭 검사 건너뜀(스텁 전용 경고).")
 else:
-    #   [2026-10-12 §19.58] 0.2 -> 0.21: 거리 0.2 노드에서 부동소수 경계로 좌우 패치 노드 수가
-    #   달라져(L6/R7) 클램프 부근 최소 주응력이 비대칭이었다. 0.21 은 8/8 대칭(실측)이고
-    #   CLAMP_EXCL_R 과 같아 제외가 패치를 덮는다. 빌드 시점에 대칭을 강제 검사한다.
-    rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=PATCH_R_CLAMP)
-    rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=PATCH_R_CLAMP)
-    _clm = aba_grid_mesh.patch_coords_from_set(a.sets['CL_Nodes'])
-    _crm = aba_grid_mesh.patch_coords_from_set(a.sets['CR_Nodes'])
-    if _clm is None or _crm is None:
-        print("[대칭] 경고: Set 노드좌표 API 없음 -> 클램프 패치 좌우 대칭 검사 건너뜀(스텁 전용 경고).")
-    else:
-        _okm, _msgm = aba_grid_mesh.patch_nodes_mirror_ok(_clm, _crm)
-        if not _okm:
-            raise RuntimeError("[클램프 패치 대칭] %s - 좌우 클램프 부근 응력이 달라진다(§19.58)."
-                               % _msgm)
-        print("[대칭] 클램프 패치 미러검사 %s" % _msgm)
+    _okm, _msgm = aba_grid_mesh.patch_nodes_mirror_ok(_clm, _crm)
+    if not _okm:
+        raise RuntimeError("[클램프 패치 대칭] %s - 좌우 클램프 부근 응력이 달라진다(§19.58)."
+                           % _msgm)
+    print("[대칭] 클램프 패치 미러검사 %s" % _msgm)
 
 # 케이블 연결
 # V1(Top): 위로 (0, 1)
@@ -1312,12 +1187,9 @@ start_c2, end_c2 = connect_cable('Cable_Right', p_cable_bot_r, V2, (cos_val, -si
 # V3(Left): 좌하향 (-cos, -sin)
 start_c3, end_c3 = connect_cable('Cable_Left', p_cable_bot_l, V3, (-cos_val, -sin_val, 0.0))
 # V_CL : 좌상향 (-1, 1)
-if NO_CLAMP:
-    start_cl = end_cl = start_cr = end_cr = None
-else:
-    start_cl, end_cl = connect_cable('cable_CL', p_cable_cl, V_CL, (-1.0, 1.0, 0.0))
-    # V_CR : 우상향 (1, 1)
-    start_cr, end_cr = connect_cable('cable_CR', p_cable_cr, V_CR, (1.0, 1.0, 0.0))
+start_cl, end_cl = connect_cable('cable_CL', p_cable_cl, V_CL, (-1.0, 1.0, 0.0))
+# V_CR : 우상향 (1, 1)
+start_cr, end_cr = connect_cable('cable_CR', p_cable_cr, V_CR, (1.0, 1.0, 0.0))
 
 a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
 a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
@@ -1467,18 +1339,12 @@ if _HOLD_U3_ALL:
     )
 
 # 구속조건 생성
-#   [§19.105] BC_Anchor 는 케이블 '바깥 끝'(end_c1)의 구속이다. 종전에는 u1~ur3 완전 고정이었다.
-#     PULL_TOP=True 면 이 점도 케이블 방향 지정변위(Disp_Control_Top)를 받아야 하므로 면내 u1/u2 를 푼다.
-#     남기는 것은 u3(면외) + ur1~ur3(회전): 평면성과 강체 면외/회전을 막고, 면내 강체운동은
-#     Top/Right/Left 세 점(비공선)의 u1=u2=0(Initial, Disp_Control_*)이 이미 막는다 -> 특이행렬 아님.
-if PULL_TOP:
-    my_model.DisplacementBC(name='BC_Anchor', createStepName='Initial', region=end_c1,
-                            u3=0, ur1=0, ur2=0, ur3=0
-                            )
-else:
-    my_model.DisplacementBC(name='BC_Anchor', createStepName='Initial', region=end_c1, 
-                            u1=0, u2=0, u3=0, ur1=0, ur2=0, ur3=0
-                            )
+#   [§19.105] BC_Anchor 는 케이블 '바깥 끝'(end_c1)의 구속이다.
+#     [P4] PULL_TOP 분기는 제거됐다(§19.121). Top 은 u1~ur3 완전 고정이다 - 면내 강체운동은
+#     Top/Right/Left 세 점(비공선)의 u1=u2=0(Initial, Disp_Control_*)이 함께 막는다.
+my_model.DisplacementBC(name='BC_Anchor', createStepName='Initial', region=end_c1,
+                        u1=0, u2=0, u3=0, ur1=0, ur2=0, ur3=0
+                        )
 my_model.DisplacementBC(name='BC_Right', createStepName='Initial', region=end_c2, u3=0, ur1=0, ur2=0, ur3=0)
 my_model.DisplacementBC(name='BC_Left', createStepName='Initial', region=end_c3, u3=0, ur1=0, ur2=0, ur3=0)
 if not NO_CLAMP:
@@ -1491,12 +1357,6 @@ my_model.DisplacementBC(name='Disp_Control_Right', createStepName='Initial', reg
 my_model.DisplacementBC(name='Disp_Control_Left',createStepName='Initial', region=end_c3, 
     u1=0, u2=0
 )
-if PULL_TOP:
-    #   [§19.105] Right/Left 와 완전히 같은 패턴: Initial 에서 u1=u2=0, 스텝에서 케이블 방향 지정변위.
-    #     하중은 지정 변위만 쓴다(CLOAD 없음). 방향은 위 top_cos/top_sin (+y 축).
-    my_model.DisplacementBC(name='Disp_Control_Top', createStepName='Initial', region=end_c1, 
-        u1=0, u2=0
-    )
 if not NO_CLAMP:
     my_model.DisplacementBC(name='Disp_Control_CL', createStepName='Initial', region=end_cl, 
         u1=0, u2=0
@@ -1516,23 +1376,6 @@ my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(stepName='Step-
     u1=-_DISP_PRE * cos_val,
     u2=-_DISP_PRE * sin_val
 )
-if PULL_TOP:
-    #   [§19.105] Top Cable: 상향(+y) 당기기 - Right/Left 와 같은 대입식.
-    my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(stepName='Step-GlobalTension', 
-        u1=_DISP_PRE * top_cos * TOP_PULL_SCALE,
-        u2=-_DISP_PRE * top_sin * TOP_PULL_SCALE
-    )
-    emit("[BC] PULL_TOP=True -> Top 꼭짓점도 케이블 방향 변위(프리텐션 %.6g m / 최종 %.6g m), BC_Anchor 는 u3 만"
-         % (DISP_GLOBAL, GLOBAL_FINAL))
-    if TOP_PULL_SCALE != 1.0:
-        #   [§19.109] 1.0 이 아니면 실제 적용값을 1줄 더 남긴다(1.0 은 종전 로그와 바이트 동일).
-        emit("[BC] PULL_TOP=True TOP_PULL_SCALE=%.6g -> Top(u1=%.6e,u2=%.6e)"
-             % (TOP_PULL_SCALE,
-                DISP_GLOBAL * top_cos * TOP_PULL_SCALE,
-                -DISP_GLOBAL * top_sin * TOP_PULL_SCALE))
-    emit("   [BC] 케이블 방향 (u1=v*cos, u2=-v*sin): Top cos=%.6f sin=%.6f / Right cos=%.6f sin=%.6f / Left cos=%.6f sin=%.6f"
-         % (top_cos, top_sin, cos_val, sin_val, -cos_val, sin_val))
-
 #   [2026-10-20] cable_stress 경로는 클램프 프리텐션을 초기응력으로 준다 -> 변위 당김 없음.
 #     종전 MFBO 기준선(LOAD_MODE='disp')만 아래 변위 당김을 유지한다.
 if not NO_CLAMP and LOAD_MODE == 'disp':
@@ -1550,13 +1393,6 @@ my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(stepName='Step-
     u1=-PERTURBATION * cos_val,
     u2=-PERTURBATION * sin_val
 )
-if PULL_TOP:
-    #   [§19.105] 좌굴 perturbation 도 세 꼭짓점에 같은 크기로 준다(한 점만 다른 크기면
-    #     좌굴 base state 가 비대칭이 되어 모드가 인위적 비대칭을 담는다).
-    my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(stepName='Step-Buckle', 
-        u1=PERTURBATION * top_cos * TOP_PULL_SCALE,
-        u2=-PERTURBATION * top_sin * TOP_PULL_SCALE
-    )
 if not NO_CLAMP:
     my_model.boundaryConditions['Disp_Control_CL'].setValuesInStep(stepName='Step-Buckle', 
         u1=-(CLAMP_PERT / sqrt2),
@@ -1726,13 +1562,6 @@ if fidelity == 'LF':
                 u1=sign * _DISP_FINAL * cos_val,
                 u2=-_DISP_FINAL * sin_val
             )
-        if PULL_TOP:
-            #   [§19.105] 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 _DISP_FINAL.
-            my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
-                stepName='Step-HighTension',
-                u1=_DISP_FINAL * top_cos * TOP_PULL_SCALE,
-                u2=-_DISP_FINAL * top_sin * TOP_PULL_SCALE
-            )
         for name, sign in ([] if NO_CLAMP else [('Disp_Control_CL', -1), ('Disp_Control_CR', 1)]):
             my_model.boundaryConditions[name].setValuesInStep(
                 stepName='Step-HighTension',
@@ -1839,12 +1668,8 @@ elif fidelity == 'HF':
         sigma12=0.0, sigma13=0.0, sigma23=0.0
     )
 
-    if RUN_SELF_BUCKLE_JOB:
-        # 자기(클램프) 좌굴 잡: 모드 소스가 아니라 '클램프 base state 증거 + 실패 진단'용이다.
-        #   (모드 추출은 MODE_SOURCE='cable' 경로가 담당 -> 클램프 모델은 CONVERGED=0.)
-        run_job_safely('Buckle_Analysis', model_name=BUCKLE_MODEL)   # P0-2: 500 Pa 상태에서 좌굴모드 산출
-    else:
-        emit("[IMPERFECTION] 자기 좌굴 잡 건너뜀 (RUN_SELF_BUCKLE_JOB=False)")
+    #   [P4] RUN_SELF_BUCKLE_JOB 은 폐기됐다(항상 False). 로그 문구는 G3 기준선과 동일하게 유지한다.
+    emit("[IMPERFECTION] 자기 좌굴 잡 건너뜀 (RUN_SELF_BUCKLE_JOB=False)")
 
     # 좌굴 모드 병합(coalescence) 진단용 고유치 기록
     #   - 이유: Buckle_Analysis.dat 는 '다음 설계점'의 좌굴 잡이 시작될 때 삭제되므로
@@ -2125,14 +1950,6 @@ elif fidelity == 'HF':
             stepName='Step-Postbuckle',
             u1=sign * _DISP_FINAL * cos_val,
             u2=-_DISP_FINAL * sin_val
-        )
-
-    if PULL_TOP:
-        #   [§19.105] 포스트버클 최종 하중도 세 꼭짓점 동일 - Top 은 +y 방향 GLOBAL_FINAL.
-        my_model.boundaryConditions['Disp_Control_Top'].setValuesInStep(
-            stepName='Step-Postbuckle',
-            u1=_DISP_FINAL * top_cos * TOP_PULL_SCALE,
-            u2=-_DISP_FINAL * top_sin * TOP_PULL_SCALE
         )
 
     #   [2026-10-20] cable_stress 경로는 클램프 초기응력 -> Postbuckle 변위 없음.
