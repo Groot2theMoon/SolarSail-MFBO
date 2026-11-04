@@ -13,6 +13,20 @@ import os
 import subprocess
 import time
 import numpy as np
+
+#   [P3] 이 오라클도 HF/좌굴과 **같은 모델 상수**를 써야 비교가 성립한다.
+#   tools/ 에서 실행되므로 code/ 를 sys.path 에 넣는다(cwd=code 또는 code/aba 전제).
+for _cp in (os.getcwd(), os.path.dirname(os.getcwd()),
+            os.path.dirname(os.path.dirname(os.getcwd()))):
+    if os.path.exists(os.path.join(_cp, 'core', 'constants.py')):
+        if _cp not in sys.path:
+            sys.path.insert(0, _cp)
+        break
+from core.constants import (BASE, HEIGHT, ELEM_CODE_QUAD, ELEM_CODE_TRI,  # noqa: E402
+                            SEED_DIV, THICKNESS, CLAMP_CABLE_LEN,
+                            CABLE_RADIUS, LEN_TOP, LEN_BOT,
+                            PERTURBATION, PAPER_MATCH, PAPER_MESH_ORDER,
+                            INSTANCE_NAME, NUMCPUS)
  
 print("DEBUG: All sys.argv: " + str(sys.argv))
 
@@ -61,22 +75,14 @@ def run_job_safely(job_name):
 
 
 MODEL_NAME = 'SailModel_Triangle'
-INSTANCE_NAME = 'MEMBRANE-1'
 
-BASE = 20.0   # m
-HEIGHT = 10.0 # m
-#   [2026-10-08] SEED_DIV 누출 수정: 자유메쉬 분기(size=BASE/SEED_DIV)에서 쓰는데
-#   이 파일에는 정의가 없었다(USE_GRID_MESH=True 라 지금은 죽은 코드). 좌굴/HF/mode 와 같은 값.
-SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
-# [수정] 두께를 5um로 설정하여 초기 강성 확보 (논문 2.5um는 수렴 매우 어려움)
-THICKNESS = 5.0e-6 
+#   BASE/HEIGHT/SEED_DIV/THICKNESS/CABLE_RADIUS/LEN_TOP/LEN_BOT/INSTANCE_NAME 은
+#   core/constants.py 가 단일 출처다(§19.119). 이 오라클이 HF/좌굴과 다른 값을 쓰면
+#   비교 자체가 오염되므로 **일부러 독립값을 두지 않는다**.
 TARGET_STRESS = 7000.0 # Pa
 
-# 케이블 파라미터 (논문 참조)
-CABLE_RADIUS = 5.0e-4 # m
+# 케이블 단면적은 파생값이라 여기 남긴다(반지름은 상수 모듈).
 CABLE_AREA = np.pi * (CABLE_RADIUS**2)
-LEN_TOP = 0.280 # m
-LEN_BOT = 0.689 # m
 
 # 좌표 정의
 V1 = (BASE/2.0, HEIGHT, 0.0) # Top

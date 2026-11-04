@@ -70,8 +70,39 @@ def used_modules(code):
     return set(re.findall(r'(?<![\w.])([a-z_][a-z0-9_]*)\.', code)) & set(MODS)
 
 
+_FROM_OPEN_RE = re.compile(r'^\s*from\s+[\w.]+\s+import\s*\(')
+
+
+def join_from_imports(code):
+    """`from x import (` 로 시작하는 멀티라인 import 를 한 줄로 합친다.
+
+    [2026-11-04] P3 에서 `from core.constants import (BASE, HEIGHT, ...)` 가 여러 줄이 되자
+    `imported_names()` 가 첫 줄만 읽어 나머지 이름을 '임포트 안 됨'으로 오판했다(오탐 10건).
+    괄호가 닫힐 때까지 이어 붙이고 괄호를 공백으로 바꾼다(이름 분해는 split(',') 가 한다).
+    """
+    lines, buf = [], None
+    for line in code.splitlines():
+        if buf is not None:
+            buf += ' ' + line.strip()
+            if ')' in line:
+                lines.append(buf.replace('(', ' ').replace(')', ' '))
+                buf = None
+            continue
+        if _FROM_OPEN_RE.match(line):
+            buf = line
+            if ')' in line:
+                lines.append(buf.replace('(', ' ').replace(')', ' '))
+                buf = None
+            continue
+        lines.append(line)
+    if buf is not None:
+        lines.append(buf.replace('(', ' ').replace(')', ' '))
+    return '\n'.join(lines)
+
+
 def imported_names(code):
     out = set()
+    code = join_from_imports(code)
     for m in IMPORT_RE.finditer(code):
         for part in m.group(1).split(','):
             out.add(part.strip().split(' as ')[-1].strip())
