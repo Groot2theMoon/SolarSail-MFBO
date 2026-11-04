@@ -158,9 +158,25 @@ def parse_probe(path):
     return rows
 
 
+def _basename_if_abs_path(v):
+    """절대경로 값이면 basename, 아니면 None.
+
+    [2026-11-04] baseline 은 임시 사본에서, check 는 정본 체크아웃에서 돌 수 있다.
+    절대경로(`r13_ct_odb`, `table`, `cwd`)는 **실행 위치**이지 모델 정의가 아니므로
+    basename 만 비교한다(G1 이 덱 경로를 정규화하는 것과 같은 이유).
+    """
+    s = str(v).strip()
+    if re.match(r'^(?:[A-Za-z]:[\\/]|\\\\)', s):
+        return os.path.basename(s.replace('\\', '/'))
+    return None
+
+
 def _same_value(a, b):
     if a == b:
         return True
+    pa, pb = _basename_if_abs_path(a), _basename_if_abs_path(b)
+    if pa is not None and pb is not None:
+        return pa.lower() == pb.lower()
     fa, fb = _num(a), _num(b)
     if fa is not None and fb is not None:
         if fa == fb:
@@ -554,6 +570,19 @@ def cmd_selftest(args):
     ok = got == ['hf']
     print('  %s  volatile 키 제외(timestamp/mtime) -> %s'
           % ('PASS' if ok else 'FAIL', got))
+    if not ok:
+        fails += 1
+    ok = not diff_kv([('table', 'C:\\work\\a\\code\\seeds\\modes_xc0p2.txt'), ('hf', '1e-3')],
+                     [('table', 'D:/other/checkout/code/seeds/modes_xc0p2.txt'), ('hf', '1e-3')])
+    print('  %s  절대경로는 basename 으로 비교(다른 루트 -> 동일) -> %s'
+          % ('PASS' if ok else 'FAIL',
+             diff_kv([('table', 'C:\\work\\a\\code\\seeds\\modes_xc0p2.txt')],
+                     [('table', 'D:/other/checkout/code/seeds/modes_xc0p2.txt')])))
+    if not ok:
+        fails += 1
+    ok = bool(diff_kv([('table', 'C:\\a\\modes_xc0p2.txt')],
+                      [('table', 'C:\\a\\modes_xc0p3.txt')]))
+    print('  %s  다른 basename 은 감지 -> %s' % ('PASS' if ok else 'FAIL', ok))
     if not ok:
         fails += 1
     ok = not diff_kv([('r13_ct_odb_mtime', '2026-11-04 15:50:59'), ('hf', '1e-3')],
