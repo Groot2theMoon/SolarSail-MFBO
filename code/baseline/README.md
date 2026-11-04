@@ -9,6 +9,16 @@
 | G2 results | `results/results_*.txt` (`key=value`) | 상대 1e-5 이내, `timestamp`/`r13_ct_odb_mtime` 제외 |
 | G3 probe | `hf_run_log.txt` 의 `key=value` 쌍 | 다중집합 동일 |
 
+## 기준선 목록
+
+| label | 운용점 | 용도 |
+|:---|:---|:---|
+| `p0` | `CABLE_PRESTRESS=2.69e7` | 2026-11-04 이전 리팩토링 회귀 기준. **역사적 기록** |
+| `p5` | `CABLE_PRESTRESS=1.71e7` (중심 von Mises 1 psi) | 2026-11-04 이후 **모든 비교의 기준** |
+
+운용점은 §19.122 의 5점 LF 스윕(14–23 MPa, 단조)으로 확정했다. 이후 `check` 는 `--label p5` 를 쓴다.
+`p0` 대조는 운용점이 달라 실패하는 것이 정상이다.
+
 ## P0 캡처 절차 (Abaqus 머신에서 1회)
 
 운용점은 **x_c=0.2, d_c=0.0001** 이다(2026-11-03 실런과 같은 점). `--config` 를 주지 않는다 =

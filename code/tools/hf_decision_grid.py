@@ -152,7 +152,9 @@ def analyze(rows, k=5):
                      spearman(ra, rp)))
     rand_overlap = sum(s[0] for s in sims) / len(sims)
     rand_rho = sum(s[1] for s in sims) / len(sims)
-    if overlap <= max(1, k - 2) and rho < 0.7:
+    if len(pts) < len(X_C) * len(D_C):
+        verdict = 'INTERIM (n=%d < %d) - do not judge yet' % (len(pts), len(X_C) * len(D_C))
+    elif overlap <= max(1, k - 2) and rho < 0.7:
         verdict = 'PASS (hf is decisive: selection changes)'
     elif overlap >= k - 1 and rho >= 0.8:
         verdict = 'FAIL (hf is not decisive at this scale: selection is stable)'
@@ -194,12 +196,22 @@ def main(argv=None):
     else:
         pairs = [(x, d) for x in X_C for d in D_C]
 
+    pj = os.path.join(OUTDIR, 'points.json')
+    merged = {}
+    if os.path.exists(pj):
+        with io.open(pj, encoding='utf-8') as f:
+            for r in json.load(f):
+                if r.get('tag'):
+                    merged[r['tag']] = r
     rows = []
     if not a.analyze_only:
         for x, d in pairs:
-            rows.append(collect_point(x, d, a.resume))
-        with io.open(os.path.join(OUTDIR, 'points.json'), 'w', encoding='utf-8') as f:
-            f.write(json.dumps(rows, ensure_ascii=False, indent=1))
+            r = collect_point(x, d, a.resume)
+            rows.append(r)
+            if r.get('tag'):
+                merged[r['tag']] = r
+        with io.open(pj, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(list(merged.values()), ensure_ascii=False, indent=1))
         cols = ['x_c', 'd_c', 'tag', 'hf', 'slope_backward_area_pct',
                 'zk_state_wrinkled_frac', 'slope_mean_neg_frac', 'dn_deg',
                 'energy_verdict', 'stabilize_used', 't_lf_s', 't_hf_s', 'error']
@@ -207,13 +219,9 @@ def main(argv=None):
                      newline='') as f:
             w = csv.DictWriter(f, fieldnames=cols, extrasaction='ignore')
             w.writeheader()
-            for r in rows:
+            for r in merged.values():
                 w.writerow(r)
-
-    pj = os.path.join(OUTDIR, 'points.json')
-    if os.path.exists(pj) and (a.analyze_only or not rows):
-        with io.open(pj, encoding='utf-8') as f:
-            rows = json.load(f)
+    rows = list(merged.values())
     res = analyze(rows, a.k)
     if res:
         with io.open(os.path.join(OUTDIR, 'analysis.json'), 'w', encoding='utf-8') as f:
