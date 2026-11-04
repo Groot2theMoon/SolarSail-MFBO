@@ -1,0 +1,13 @@
+{
+  "CABLE_PRESTRESS": 26900000.0,
+  "_comment": "Temporary cross run: 2.69e7 Pa with the 2026-11-04 regenerated seed tables. Isolates tension vs imperfection in the p0->p5 comparison. Do not use as a baseline config.",
+  "RUN": {
+    "x_c": 0.2,
+    "d_c": 0.0001,
+    "fidelities": ["LF", "HF"],
+    "make_seed": false,
+    "force_seed": false,
+    "buckle": false,
+    "clean_lf": true
+  }
+}

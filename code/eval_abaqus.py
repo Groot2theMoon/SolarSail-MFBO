@@ -912,8 +912,13 @@ def write_zk_metrics(zk, odb_path):
         print('[ZK] zk_metrics.txt write failed: %s' % e)
 
 
+#   [2026-11-04] 토크 기준점 = 삼각형 돛의 **원형 도심**(V1(10,10), V2(20,0), V3(0,0)).
+#     변형 후 도심을 쓰면 주름 때문에 기준이 움직여 설계 간 비교가 흔들린다.
+_TORQUE_CENTRE = np.array([10.0, 10.0 / 3.0, 0.0])
+
+
 def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=None,
-                     flip_normals=True, extra_out=None):
+                     flip_normals=True, extra_out=None, diag=None):
     """
     메쉬의 각 요소 법선 벡터를 계산하고,
     SRP 모델을 적용하여 실제 추력 벡터를 적분, 이상적 추력과의 차이를 계산함.
@@ -935,6 +940,8 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
     
     loss_sum = 0.0
     ideal_area_sum = 0.0
+    torque_z = 0.0
+    force_xy = np.zeros(2, dtype=np.float64)
 
     # 4절점 요소 (Quad) 필터링
     quad_conns = [c for c in connectivity if len(c) == 4]
@@ -967,8 +974,13 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         cos_theta = np.clip(np.dot(normals, -U_SUN), 0.0, 1.0)
         f_abs = A0 * cos_theta[:, np.newaxis] * areas[:, np.newaxis] * U_SUN
         f_refl = 2.0 * R0 * (cos_theta**2)[:, np.newaxis] * areas[:, np.newaxis] * (-normals)
-        actual_thrust = np.dot(np.sum(f_abs + f_refl, axis=0), U_SUN)
-        
+        _ftot = f_abs + f_refl
+        actual_thrust = np.dot(np.sum(_ftot, axis=0), U_SUN)
+        #   [2026-11-04] cp/cm 오프셋용 z-모멘트: 요소 중심 × 요소 힘.
+        _cent = 0.25 * (v0 + v1 + v2 + v3) - _TORQUE_CENTRE
+        torque_z += float(np.sum(_cent[:, 0] * _ftot[:, 1] - _cent[:, 1] * _ftot[:, 0]))
+        force_xy += np.sum(_ftot[:, :2], axis=0)
+
         loss_sum += (np.sum(areas) * IDEAL_THRUST_COEFF - actual_thrust)
         ideal_area_sum += np.sum(areas)
 
@@ -1000,8 +1012,12 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         cos_theta = np.clip(np.dot(normals, -U_SUN), 0.0, 1.0)
         f_abs = A0 * cos_theta[:, np.newaxis] * areas[:, np.newaxis] * U_SUN
         f_refl = 2.0 * R0 * (cos_theta**2)[:, np.newaxis] * areas[:, np.newaxis] * (-normals)
-        actual_thrust = np.dot(np.sum(f_abs + f_refl, axis=0), U_SUN)
-        
+        _ftot = f_abs + f_refl
+        actual_thrust = np.dot(np.sum(_ftot, axis=0), U_SUN)
+        _cent = (v0 + v1 + v2) / 3.0 - _TORQUE_CENTRE
+        torque_z += float(np.sum(_cent[:, 0] * _ftot[:, 1] - _cent[:, 1] * _ftot[:, 0]))
+        force_xy += np.sum(_ftot[:, :2], axis=0)
+
         loss_sum += (np.sum(areas) * IDEAL_THRUST_COEFF - actual_thrust)
         ideal_area_sum += np.sum(areas)
 
@@ -1016,7 +1032,14 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
     #     설계 간 비교가 정합해진다. area_ref 를 못 구하면 종전 동작으로 폴백한다.
     _den_area = area_ref if (area_ref and area_ref > 0.0) else ideal_area_sum
     if _den_area > 0.0 and IDEAL_THRUST_COEFF > 0.0:
-        return float(max(loss_sum, 0.0) / (_den_area * IDEAL_THRUST_COEFF))
+        _signed = loss_sum / (_den_area * IDEAL_THRUST_COEFF)
+        if diag is not None:
+            #   [2026-11-04] hf 는 max(...,0) 로 **센서링**된다(음수=이득). 원값과 토크를 함께 남긴다.
+            _fxy = float(np.hypot(force_xy[0], force_xy[1]))
+            diag['hf_signed'] = _signed
+            diag['torque_z_nm'] = torque_z
+            diag['cp_offset_m'] = (torque_z / _fxy) if _fxy > 0.0 else float('nan')
+        return float(max(_signed, 0.0))
     return float(max(loss_sum, 1e-12))
 
 def get_hf(odb_path):
@@ -1093,8 +1116,9 @@ def get_hf(odb_path):
         #   [§19.90] 뒤집기 편향 실측: 같은 프레임을 뒤집기 ON/OFF 두 번 적분한다.
         #     진짜 n_z<0 요소의 면적비가 편향을 결정한다 → 가정하지 않고 매 런 기록.
         _st = {'n_total': 0, 'n_backward': 0, 'area_total': 0.0, 'area_backward': 0.0}
+        _diag = {}
         hf_metric = calc_thrust_loss(last_frame, instance, connectivity, max_label,
-                                     area_ref=_area_ref, extra_out=_st)
+                                     area_ref=_area_ref, extra_out=_st, diag=_diag)
         hf_true = calc_thrust_loss(last_frame, instance, connectivity, max_label,
                                    area_ref=_area_ref, flip_normals=False)
         _fb = (100.0 * _st['area_backward'] / _st['area_total']
@@ -1103,6 +1127,10 @@ def get_hf(odb_path):
         print("[HF] flip bias: backward area=%.4f%% (%d/%d elem) hf_flip=%.6e "
               "hf_true=%.6e delta=%.3f%%"
               % (_fb, _st['n_backward'], _st['n_total'], hf_metric, hf_true, _dl))
+        #   [2026-11-04] 센서링 전 손실과 토크/압력중심 오프셋.
+        print("[HF] signed: hf_signed=%.6e torque_z=%.6e N*m cp_offset=%.6e m"
+              % (_diag.get('hf_signed', float('nan')), _diag.get('torque_z_nm', float('nan')),
+                 _diag.get('cp_offset_m', float('nan'))))
         try:
             with open('flip_bias.txt', 'w') as _bf:
                 _bf.write("backward_area_pct=%.6f\n" % _fb)
@@ -1111,6 +1139,9 @@ def get_hf(odb_path):
                 _bf.write("hf_flip=%.10e\n" % hf_metric)
                 _bf.write("hf_true_normal=%.10e\n" % hf_true)
                 _bf.write("delta_pct=%.6f\n" % _dl)
+                _bf.write("hf_signed=%.10e\n" % _diag.get('hf_signed', float('nan')))
+                _bf.write("torque_z_nm=%.10e\n" % _diag.get('torque_z_nm', float('nan')))
+                _bf.write("cp_offset_m=%.10e\n" % _diag.get('cp_offset_m', float('nan')))
         except Exception as _be:
             print("[HF] flip_bias.txt write failed: %s" % _be)
         
