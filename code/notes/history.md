@@ -4915,3 +4915,24 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [5. 태그]
   - `git ls-remote --tags origin` 에 `pre-refactor-2026-11-03` 이 **이미 있다**(로컬/원격 동일 커밋).
     추가 push 불필요. `--follow-tags` 는 경량 태그를 건너뛰므로 앞으로도 `git push origin --tags` 를 쓴다.
+
+[6. LF 재사용 가드 — "같은 런을 한 번 더"가 실제 재해석이 아니었다 (실측 2026-11-04)]
+  - 두 번째 LF 런이 **7.8초**에 끝났다. 로그: `[LF] 재사용: LF_Analysis_xc0p2_dc0p0001.odb
+    (설계점 ..., sidecar tag=globaltension-v3-e2-c1-u1) - 잡 재제출 생략`.
+  - 결과: 덱도 다시 쓰지 않고(INP mtime 불변) G1 이 낡은 파일을 비교한다. 게다가 LF 런의 아카이브
+    꼬리가 `results_*.txt` 에 key 를 **append** 해서, 두 번째 런 뒤에는 같은 키가 두 번 들어간다.
+  - 조치: 측정 사이클마다 `aba\LF_Analysis_*.odb` + `.odb.model.txt` + `results\results_*.txt` 를 지운다.
+    절차는 `baseline/README.md` 에 넣었다. HF 는 매 런 제출되고 stale 산출물을 스스로 지운다.
+  - 이 항목 이전의 첫 캡처는 **깨끗한 상태에서 시작**했으므로(ODB/결과 없음) 유효하다.
+
+[7. 노이즈 바닥 실측과 허용오차 (2026-11-04, labpc)]
+  - 첫 사이클 캡처 후, LF ODB 를 지워 **실제 재해석**하고 check:
+    G1 3/3 바이트 동일 / G2 51키 불일치 / G3 12kv 불일치.
+  - 최대 상대차 **1.44e-6**(slope_f2_p95, p95 통계라 표본 민감), hf 는 1.5e-9.
+    `r13_ct_odb_mtime` 은 값이 아니라 파일 수정시각이라 항상 달랐다.
+  - 조치: `REL_TOL=1e-5`(실측 최대의 약 7배), `r13_ct_odb_mtime` 을 VOLATILE_KEYS 에 추가.
+    volatile 키는 **양쪽**(baseline/now)에서 제거해, 예전 규칙으로 만든 baseline 과도 호환된다.
+    같은 diff 재검 -> **PASS** (G1 바이트 동일, G2 149키, G3 161kv).
+  - G1 은 계속 `sha256` 오차 0 이다. 숫자 허용오차는 G2/G3 에만 적용된다.
+  - selftest 를 11 -> 13 checks 로 확장: 잡음(8e-9) 무시 / 1e-3 상대 변화 감지 /
+    volatile 제외 / 구 baseline mtime 키가 missing 으로 뜨지 않음. **PASS 13/13**.

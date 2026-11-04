@@ -1,0 +1,22 @@
+{
+ "captured": "2026-11-04 16:01:32",
+ "files": {
+  "deck": {
+   "HF_Postbuckle_u3free.inp": "3a509aa69f22955e8e040924d71b1b0b0b51b509fe52cd9f7eac66e46709510c",
+   "LF_Analysis_xc0p2_dc0p0001.inp": "5993edcc06b1b670062aa4a3cebc3953c3a1211f9ef9159c552ee5dc0e20e727",
+   "grid_Membrane.inp": "44bd1ef8cd7fd2fb352ec0e7a52ed1eb52897bb3555e322eeff4dfd2b8e69b36"
+  },
+  "probe": {
+   "hf_run_log.txt": 161
+  },
+  "results": {
+   "results_xc0p2_dc0p0001.txt": 149
+  }
+ },
+ "gate": {
+  "G1": 3,
+  "G2": 1,
+  "G3": 1
+ },
+ "label": "p0"
+}

@@ -8,7 +8,7 @@
 
 세 게이트
     G1 deck    : *.inp -> 정규화 텍스트 -> sha256.        (job name / 날짜 / 절대경로 제거)
-    G2 results : results_*.txt -> key=value -> 값 단위 비교. (오차 0, timestamp 제외)
+    G2 results : results_*.txt -> key=value -> 값 단위 비교. (상대 1e-5, timestamp/mtime 제외)
     G3 probe   : 프로브 로그 -> key=value 다중집합 비교.   (base_state_probe 등)
 
 사용 (리팩토링 **전**에 capture, **후**에 check — 같은 인자로)
@@ -45,7 +45,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BASELINE_DIR = os.path.join(HERE, 'baseline')
 
 # 결과 txt 에서 매 런마다 달라지는 키. 값 비교에서 뺀다(키 자체는 존재해야 한다).
-VOLATILE_KEYS = ('timestamp',)
+#   r13_ct_odb_mtime: ODB 파일 수정시각 — 런할 때마다 다르다(2026-11-04 실측).
+VOLATILE_KEYS = ('timestamp', 'r13_ct_odb_mtime')
+
+# G2/G3 숫자 비교 상대오차. 2026-11-04 실측(같은 코드·같은 기계로 LF+HF를 **재해석**):
+#   최대 상대차 1.44e-6 (slope_f2_p95), hf 는 1.5e-9. 절대오차 0 을 요구하면 재현 불가능한 FAIL.
+#   G1(덱 정규화 sha256)은 그대로 오차 0 이고, 이 허용오차는 **해석기 잡음**만 흡수한다.
+#   1e-5 = 실측 최대의 약 7배. 이보다 큰 변화는 모델/코드 변경으로 본다.
+REL_TOL = 1.0e-5
 
 # ---------------------------------------------------------------------------
 # G1 — 덱 정규화
@@ -115,9 +122,14 @@ _KV_ANY = re.compile(r'([A-Za-z_][\w./\-]*)=([^\s,;]+)')
 
 
 def _num(v):
-    """'1e-3' / ' 0.001 ' -> float. 숫자가 아니면 None."""
+    """'1e-3' / ' 0.001 ' / '(-3.4e-12' -> float. 숫자가 아니면 None.
+
+    괄호·쉼표는 프로브 로그가 값을 `n_eq=(-3.45e-12 ...` 처럼 잘라 담기 때문이다.
+    날짜(`2026-11-04 15:50:59`)는 숫자로 읽히지 않는다 — 그런 키는 VOLATILE_KEYS 에 둔다.
+    """
+    s = str(v).strip().strip('()[]{},;')
     try:
-        return float(v)
+        return float(s)
     except (TypeError, ValueError):
         return None
 
@@ -151,7 +163,10 @@ def _same_value(a, b):
         return True
     fa, fb = _num(a), _num(b)
     if fa is not None and fb is not None:
-        return fa == fb          # 오차 0. 반올림 없음.
+        if fa == fb:
+            return True
+        scale = max(abs(fa), abs(fb))
+        return scale > 0 and abs(fa - fb) / scale <= REL_TOL
     return False
 
 
@@ -159,10 +174,14 @@ def diff_kv(old, new, label_old='baseline', label_new='now'):
     """[(key, kind, old, new)] — kind: 'changed' | 'missing' | 'added' | 'multiplicity'."""
     problems = []
     od, nd = {}, {}
+    #   volatile 키는 **양쪽**에서 뺀다. baseline 파일이 예전 volatile 규칙으로 만들어졌어도
+    #   (예: r13_ct_odb_mtime 이 들어 있는 p0) 값 비교에서 문제가 되지 않게 한다.
     for k, v in old:
-        od.setdefault(k, []).append(v)
+        if k not in VOLATILE_KEYS:
+            od.setdefault(k, []).append(v)
     for k, v in new:
-        nd.setdefault(k, []).append(v)
+        if k not in VOLATILE_KEYS:
+            nd.setdefault(k, []).append(v)
     for k in sorted(set(od) | set(nd)):
         ov, nv = od.get(k, []), nd.get(k, [])
         if not nv:
@@ -471,6 +490,7 @@ def _selftest_deck_variants():
 
 
 def cmd_selftest(args):
+    import tempfile
     fails = 0
     print('[selftest] G1 deck 정규화')
     base_norm, _ = normalize_deck(_DECK_A)
@@ -502,11 +522,20 @@ def cmd_selftest(args):
           % ('PASS' if not diff_kv(old, same) else 'FAIL'))
     if diff_kv(old, same):
         fails += 1
+    #   잡음(상대 1e-5 이하)은 통과해야 한다 — 2026-11-04 실측 최대 1.44e-6.
+    noise = [('x_c', '0.5'), ('d_c', '0.5'), ('fidelity', 'LF'),
+             ('lf1', '0.123456790'), ('lf2', 'nan'), ('hf', '1e-3')]
+    ok = not diff_kv(old, noise)
+    print('  %s  잡음 수준 변화(8e-9) 무시 -> %s'
+          % ('PASS' if ok else 'FAIL', diff_kv(old, noise)))
+    if not ok:
+        fails += 1
+    #   허용오차보다 큰 변화는 잡아야 한다.
     changed = [('x_c', '0.5'), ('d_c', '0.5'), ('fidelity', 'LF'),
-               ('lf1', '0.123456790'), ('lf2', 'nan'), ('hf', '1e-3')]
+               ('lf1', '0.123456789'), ('lf2', 'nan'), ('hf', '1.001e-3')]
     p = diff_kv(old, changed)
-    ok = (len(p) == 1 and p[0][0] == 'lf1' and p[0][1] == 'changed')
-    print('  %s  lf1 1e-9 변화 감지 -> %s' % ('PASS' if ok else 'FAIL', p))
+    ok = (len(p) == 1 and p[0][0] == 'hf' and p[0][1] == 'changed')
+    print('  %s  1e-3 상대 변화 감지 -> %s' % ('PASS' if ok else 'FAIL', p))
     if not ok:
         fails += 1
     p = diff_kv(old, [r for r in old if r[0] != 'hf'])
@@ -514,12 +543,32 @@ def cmd_selftest(args):
     print('  %s  키 누락 감지 -> %s' % ('PASS' if ok else 'FAIL', p))
     if not ok:
         fails += 1
+    #   매 런 달라지는 키(timestamp / r13_ct_odb_mtime)는 값 비교에서 빠져야 한다.
+    vtxt = ('timestamp = 2026-11-04 15:53:30\n'
+            'r13_ct_odb_mtime=2026-11-04 15:50:59\n'
+            'hf = 1.4004869753695398e-06\n')
+    vpath = os.path.join(tempfile.mkdtemp(prefix='rgate_'), 'v.txt')
+    with io.open(vpath, 'w', encoding='utf-8') as f:
+        f.write(vtxt)
+    got = [k for k, _ in parse_results(vpath)]
+    ok = got == ['hf']
+    print('  %s  volatile 키 제외(timestamp/mtime) -> %s'
+          % ('PASS' if ok else 'FAIL', got))
+    if not ok:
+        fails += 1
+    ok = not diff_kv([('r13_ct_odb_mtime', '2026-11-04 15:50:59'), ('hf', '1e-3')],
+                     [('hf', '1e-3')])
+    print('  %s  구 baseline 의 mtime 키가 missing 으로 뜨지 않음 -> %s'
+          % ('PASS' if ok else 'FAIL', diff_kv(
+              [('r13_ct_odb_mtime', '2026-11-04 15:50:59'), ('hf', '1e-3')],
+              [('hf', '1e-3')])))
+    if not ok:
+        fails += 1
 
     print('[selftest] G3 probe')
     ptxt_a = ('>>> mean_comp=1.234 span=0.5\n>>> RF max=3.5e-05 node=77\n')
     ptxt_b = ('>>> mean_comp=1.234 span=0.500\n>>> RF max=0.000035 node=77\n')
     ptxt_c = ('>>> mean_comp=1.235 span=0.5\n>>> RF max=3.5e-05 node=77\n')
-    import tempfile
     tmp = tempfile.mkdtemp(prefix='rgate_')
     pa, pb, pc = [os.path.join(tmp, n) for n in ('a.log', 'b.log', 'c.log')]
     for path, txt in ((pa, ptxt_a), (pb, ptxt_b), (pc, ptxt_c)):
