@@ -1,0 +1,26 @@
+{
+ "n": 25,
+ "k": 5,
+ "rho": 0.35483992339850684,
+ "rho2": 0.12591137123745821,
+ "delta_rho2": 0.8740886287625418,
+ "top_overlap": 0,
+ "mean_abs_drank": 6.053333333333334,
+ "random_overlap": 0.974,
+ "random_rho": -0.0037169230769230773,
+ "verdict": "PASS (hf is decisive: selection changes)",
+ "topA": [
+  "xc0p5_dc0p0556",
+  "xc0p5_dc0p1",
+  "xc0p7_dc0p0001",
+  "xc0p7_dc0p01",
+  "xc0p7_dc0p0556"
+ ],
+ "topB": [
+  "xc0p2_dc0p01",
+  "xc0p2_dc0p0556",
+  "xc0p2_dc0p1",
+  "xc0p5_dc0p0001",
+  "xc0p5_dc0p01"
+ ]
+}

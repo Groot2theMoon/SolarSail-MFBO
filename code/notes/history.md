@@ -5138,3 +5138,38 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [다음]
   남은 축은 `IMPERFECTION_MODE` 대안(`odb_direct`/`file`)과 `LOAD_MODE='disp'`(baseline)이다.
   전자는 기본 `odb_table` 만 쓰지만 config 로 켤 수 있어, 지우려면 사용자 결정이 필요하다.
+
+### 19.122 운용점 확정 + hf 결정변수 검정 (2026-11-04)
+
+[Step 1 - 1 psi 운용점]
+  - `probe_prestress_sweep.py` 로 x_c=0.2, d_c=1e-4 에서 CABLE_PRESTRESS 14–23 MPa 5점 LF.
+  - 결과(중심 von Mises): 5661 / 6561 / 7463 / 8364 / 9266 Pa @ 14 / 16.25 / 18.5 / 20.75 / 23 MPa.
+    단조 증가, 수렴 실패 없음. 원점통과 선형 기울기 k=0.0004 -> **1 psi 교차점 1.71e7 Pa**.
+  - 채택: `CABLE_PRESTRESS = 1.71e7` (종전 2.69e7 의 1/1.571). `probe_prestress_sweep` 의
+    `--restore` 기본값도 1.71e7 로 바꿨다.
+  - 새 기준선 **p5**: x_c=0.2, d_c=1e-4, LF+HF 재해석 -> `hf=8.687535282590055e-07`.
+    `p0`(2.69e7)는 역사적 기록으로 남긴다 - 운용점이 달라 p0 대조는 실패하는 것이 정상이다.
+
+[Step 2 - 5x5 HF 격자 (x_c x d_c)]
+  - 격자: x_c = 0.1/0.2/0.5/0.7/0.8, d_c = 1e-4/0.01/0.0556/0.1/0.5, 총 25점.
+  - 시드표: 기존 표는 buckle 지문/소스표 드리프트로 5점 중 0.2만 유효했다 ->
+    `make_seed.py` 로 0.1/0.5/0.7/0.8 재생성, `modes_seed.txt` 재생성 뒤 합성표 3개 재합성.
+    최종 5점 전부 `seed_gate=(True,'OK')`.
+  - 실행: 점마다 LF -> HF. 25점 합계 약 1.9시간(점당 3.5–6분). **실패 0점**, 전부 energy_verdict=OK.
+  - 도구: `tools/hf_decision_grid.py` (--resume, points.csv/analysis.json 생성).
+  - 판정 지표:
+    A = hf 오름차순. B = 비-hf 구조지표 3종(`slope_backward_area_pct`, `zk_state_wrinkled_frac`,
+        `slope_mean_neg_frac`) 순위 평균. k=5.
+  - 결과: **rho(A,B)=0.355, delta_rho2=0.874, top-5 겹침 0/5 (무작위 기준 0.97),
+    평균 |Δrank|=6.05 -> PASS: 이 스케일에서 hf 는 결정변수다.**
+    topA = {x0.5 dc0.0556, x0.5 dc0.1, x0.7 dc0.0001, x0.7 dc0.01, x0.7 dc0.0556}
+    topB = {x0.2 dc0.01, x0.2 dc0.0556, x0.2 dc0.1, x0.5 dc0.0001, x0.5 dc0.01}
+
+[데이터 한계 - Step 3 전에 확인할 것]
+  - **B 가 사실상 단일 지표로 퇴화했다**: `slope_backward_area_pct` 는 25점 전부 0,
+    `slope_mean_neg_frac` 는 23/25가 0. 즉 B 순위는 `zk_state_wrinkled_frac` 하나가 결정했다.
+  - `dn_deg` 는 25점 전부 0 (자세 채널이 BC 로 닫힘) -> 결정 지표로 쓸 수 없다.
+  - A 의 상위 2점은 hf≈0 (x0.5 dc0.0556 = 6.5e-14, dc0.1 = 0.0). `hf_flip`/`hf_true`/예측값이
+    모두 0 으로 일관되지만(파싱 오류 아님), d_c 에 대해 비단조(4.6e-7 -> 3.1e-7 -> ~0 -> 1.4e-6)다.
+    Step 3 전에 이 두 점의 flip_bias/ODB 를 직접 확인해 "0 손실"인지 "상쇄"인지 판정해야 한다.
+  - 격자 요약은 `results/decision_grid/points.csv` / `analysis.json` 에 커밋한다.
