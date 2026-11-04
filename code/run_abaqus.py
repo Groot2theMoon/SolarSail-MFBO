@@ -74,6 +74,9 @@ for _cp in (os.getcwd(), os.path.dirname(os.getcwd()),
             sys.path.insert(0, _cp)
         break
 import analysis_config as _AC
+#   [P3] HF/좌굴이 공유하는 모델 상수의 단일 출처. code/ 는 위 루프에서 sys.path 에 들어왔다.
+from core.constants import (BASE, HEIGHT, ELEM_CODE_QUAD, ELEM_CODE_TRI,  # noqa: E402
+                            SEED_DIV, THICKNESS, CLAMP_CABLE_LEN)
 _CLI_REST, _CLI_CONFIG, _CLI_CASE = _AC.split_cli(sys.argv[1:])
 _CFG = _AC.load_config(_CLI_CONFIG)
 _CFG_HASH = _AC.config_hash(_CFG)
@@ -167,14 +170,8 @@ RUN_MODE = 'auto'
 MODEL_NAME = 'SailModel_Triangle'
 INSTANCE_NAME = 'MEMBRANE-1'
 
-BASE = 20.0   # m
-HEIGHT = 10.0 # m
-# 막 요소는 1차(S4/S3) 유지 - 2차는 base state 를 더 나쁘게 만들어 기각됐다(§4).
-#   요소코드는 모드 소스와 같아야 한다(*IMPERFECTION 이 노드 라벨로 주입된다).
-ELEM_CODE_QUAD = S4         # [2026-10-04] 막(M3D4/M3D3) 실험 철회 -> 1차 셸 복귀.
-ELEM_CODE_TRI = S3          # [2026-10-04] 위와 같은 이유로 3절점 1차 셸 복귀
-SEED_DIV = 200.0           # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
-THICKNESS = 5.0e-6 # F2: 2.5e-6 -> 5.0e-6 (cable 변형, 2.5um는 수렴 매우 어려움)
+#   BASE/HEIGHT/ELEM_CODE_*/SEED_DIV/THICKNESS/CLAMP_CABLE_LEN 은 core/constants.py 가 단일 출처다
+#   (§19.118). 막 요소는 1차(S4/S3) 유지 - 2차는 base state 를 더 나쁘게 만들어 기각됐다(§4).
 TARGET_STRESS = 7000.0 # Pa   # R-13: 목표 운용점 - 실제 도달 응력 미검증(측정 필요)
 
 CLAMP_EXCL_R = 0.0   # m - 0.0 이면 제외 노드가 없어 All_Edges_NoClamp == All_Edges 다.
@@ -199,7 +196,7 @@ CABLE_AREA = np.pi * (CABLE_RADIUS**2)
 LEN_TOP = 0.280 # m
 LEN_BOT = 0.689 # m
 
-CLAMP_CABLE_LEN = 0.5 # m
+#   CLAMP_CABLE_LEN 은 core/constants.py 에서 import 한다.
 
 # 좌표 정의
 V1 = (BASE/2.0, HEIGHT, 0.0) # Top
@@ -1011,7 +1008,9 @@ if IMPERFECTION_MODE == 'odb_table':
         emit("[SEED] 합성 지문 게이트 생략 (NO_CLAMP=True 순수 seed 가족 표, §19.104)")
     else:
         _buckle_script = os.path.join(_HERE, BUCKLE_SCRIPT_NAME)
-        _gate_ok, _gate_why, _sinfo = seed_gate(x_c, d_c, MODE_TABLE, _buckle_script)
+        #   [P3] 공통 상수는 core/constants.py 로 이동했다 -> 지문은 (상수, 스크립트) 순으로 스캔.
+        _buckle_sources = (os.path.join(_HERE, 'core', 'constants.py'), _buckle_script)
+        _gate_ok, _gate_why, _sinfo = seed_gate(x_c, d_c, MODE_TABLE, _buckle_sources)
         emit("[SEED] x_c=%.4g d_c=%.4g table=%s" % (x_c, d_c, MODE_TABLE))
         emit("[SEED] 모드 %s / source_seed=%s / source_clamp=%s / 지문=%s"
              % (sorted(_mode_table.keys()), _sinfo.get('seed', '?'), _sinfo.get('clamp', '?'),

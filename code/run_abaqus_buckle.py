@@ -55,6 +55,9 @@ for _cp in (os.getcwd(), os.path.dirname(os.getcwd()),
             sys.path.insert(0, _cp)
         break
 import analysis_config as _AC
+#   [P3] HF/좌굴이 공유하는 모델 상수의 단일 출처. code/ 는 위 루프에서 sys.path 에 들어왔다.
+from core.constants import (BASE, HEIGHT, ELEM_CODE_QUAD, ELEM_CODE_TRI,  # noqa: E402
+                            SEED_DIV, THICKNESS, CLAMP_CABLE_LEN)
 _CLI_REST, _CLI_CONFIG, _CLI_CASE = _AC.split_cli(sys.argv[1:])
 _CFG = _AC.load_config(_CLI_CONFIG)
 _CFG_HASH = _AC.config_hash(_CFG)
@@ -91,19 +94,14 @@ MODE_PRESTRESS = 0.0001       # 2026-10-20: 대칭 10모드 확인된 운용점 
 CASE = _CLI_CASE or _CFG.get('CASE', 'paper')   # 'paper' | 'seed' | 'clamp_only'
 
 # ---- ② 형상/격자 ----
-BASE = 20.0   # m
-HEIGHT = 10.0 # m
-ELEM_CODE_QUAD = S4         # 1차 셸(S4/S3). 막 계열(M3D4/M3D3)은 기각 - 재시도 금지(notes §4·§24).
-ELEM_CODE_TRI = S3          # 위와 같은 이유로 3절점 1차 셸
+#   BASE/HEIGHT/ELEM_CODE_*/SEED_DIV/THICKNESS/CLAMP_CABLE_LEN 은 core/constants.py 가 단일 출처다
+#   (§19.118). 요소 코드: 1차 셸(S4/S3). 막 계열(M3D4/M3D3)은 기각(notes §4·§24).
 
 # ---- 메쉬 종류 ----
 #   [2026-10-21 리팩토링] 자유 메쉬 경로는 제거했다. 균일 격자(aba_grid_mesh.import_grid_part,
 #   S4 9900 + S3 200 = 10100 요소, 노드 10201)만 쓴다 - 논문 Table A.1 토폴로지 일치,
 #   좌우대칭이라 한쪽에만 모드가 생기지 않는다.
 _ALL_ELEM = 'All_Elem'
-
-SEED_DIV = 200.0 
-THICKNESS = 5.0e-6
 
 CLAMP_EXCL_R = 0.21   # m - 클램프 패치 노드를 경계 u3 구속에서 뺀다.
 #   CLAMP_EXCL_R > 0 인 이유: 클램프 패치 노드는 Coupling 으로 RP(u3=0)에 묶여 있어, 같은
@@ -125,7 +123,7 @@ CABLE_RADIUS = 5.0e-4 # m
 CABLE_AREA = np.pi * (CABLE_RADIUS**2)
 LEN_TOP = 0.280 # m
 LEN_BOT = 0.689 # m
-CLAMP_CABLE_LEN = 0.5 # m - 클램프 케이블 길이(HF 와 같아야 한다 - 검사기 HF↔buckle 계약).
+#   CLAMP_CABLE_LEN 은 core/constants.py 에서 import 한다(HF 와 같은 값 - 검사기 계약).
 #   PRETENSION_MODE 는 **CASE 표가 소유**한다(아래 _ROUTE 에서 파생). 자유 상수로 두지 않는다.
 #   clamp_only 에 paper3(3점 2:1)를 물리면 BC_Anchor_Top 이 앵커에서 구동으로 바뀌어
 #   base state 가 깨진다(실측: 2회 연속 job 중단). 케이스가 자기 pretension 을 들고 있어야

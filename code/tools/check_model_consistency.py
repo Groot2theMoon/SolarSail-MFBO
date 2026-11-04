@@ -37,14 +37,13 @@ if HERE not in sys.path:
 #   그래서 run_abaqus.py 의 모델 정의(요소/메쉬/결합)를 바꿔도 검사기가 PASS 를 냈다(가짜 초록불).
 NEW = os.path.join(HERE, 'run_abaqus.py')
 BUCKLE = os.path.join(HERE, 'run_abaqus_buckle.py')
+CONSTANTS = os.path.join(HERE, 'core', 'constants.py')
 
 # 모델 정의에 해당하는 줄들. HF 쪽과 좌굴 쪽에서 '문자 그대로' 같아야 한다.
 # (제외: HF/LF 전용 하중·감쇠·스텝·추출 관련. 그것들은 좌굴 모델에 없어야 정상이다.)
 SHARED = [
     # ---- 형상 ----
-    "BASE = 20.0",
-    "HEIGHT = 10.0",
-    "THICKNESS = 5.0e-6",
+    #   BASE/HEIGHT/THICKNESS 는 core/constants.py 로 이동했다(§19.118) -> SHARED_CONST 에서 검사.
     "V1 = (BASE/2.0, HEIGHT, 0.0)",
     "V2 = (BASE, 0.0, 0.0)",
     "V3 = (0.0, 0.0, 0.0)",
@@ -59,9 +58,7 @@ SHARED = [
     #     자유 메쉬 분기를 제거했으므로 그 분기의 문자열(s.Line/p.BaseShell/p.seedPart/
     #     p.setMeshControls/p.setElementType)은 SHARED 에서 뺐다.
     #     격자 임포트 호출은 세 스크립트가 같은 helper 를 쓰므로 별도 문자열 검사는 하지 않는다.
-    "ELEM_CODE_QUAD = S4",
-    "ELEM_CODE_TRI = S3",
-    "SEED_DIV = 200.0",
+    #   ELEM_CODE_*/SEED_DIV 도 core/constants.py 소관이다.
     # ---- 클램프/정점 강체 패치 ----
     "radius=0.2",
     "u1=ON, u2=ON, u3=ON, ur1=ON, ur2=ON, ur3=ON",
@@ -79,6 +76,18 @@ SHARED = [
     # ---- 초기응력 ----
     "sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0,",
     # ---- 클램프 케이블 (buckle 이식 부품 - HF 에만 있던 것을 옮겼다) ----
+    #   CLAMP_CABLE_LEN 은 core/constants.py 소관이다.
+]
+
+# 단일 출처(core/constants.py)에서 검사하는 항목. 두 스크립트가 **같은 모듈을 import** 하므로
+# 여기 값이 맞으면 HF↔buckle 정의가 같다(문자열이 두 곳에 흩어져 있을 이유가 없다).
+SHARED_CONST = [
+    "BASE = 20.0",
+    "HEIGHT = 10.0",
+    "THICKNESS = 5.0e-6",
+    "ELEM_CODE_QUAD = S4",
+    "ELEM_CODE_TRI = S3",
+    "SEED_DIV = 200.0",
     "CLAMP_CABLE_LEN = 0.5",
 ]
 
@@ -164,8 +173,8 @@ def norm(s):
 
 
 def main():
-    if not (os.path.exists(NEW) and os.path.exists(BUCKLE)):
-        print("!!! 파일을 찾을 수 없습니다: %s / %s" % (NEW, BUCKLE))
+    if not (os.path.exists(NEW) and os.path.exists(BUCKLE) and os.path.exists(CONSTANTS)):
+        print("!!! 파일을 찾을 수 없습니다: %s / %s / %s" % (NEW, BUCKLE, CONSTANTS))
         return 1
     a = code_only(NEW)
     b = code_only(BUCKLE)
@@ -183,6 +192,21 @@ def main():
             bad.append(k)
         print("  %-4s HF=%-6s buckle=%-6s  %s"
               % ('OK' if (ia and ib) else '!!!', ia, ib, k[:60]))
+
+    # ---- 공통 상수는 단일 출처에서 검사한다 (§19.118) ----
+    print()
+    print("--- 공통 상수 단일 출처 (core/constants.py) ---")
+    badc = []
+    _ccode = code_only(CONSTANTS)
+    for k in SHARED_CONST:
+        ok = norm(k) in _ccode
+        print("  %-4s constants   %s" % ('OK' if ok else '!!!', k))
+        if not ok:
+            badc.append(k)
+    _imp = ('fromcore.constantsimport' in a) and ('fromcore.constantsimport' in b)
+    print("  %-4s 두 스크립트가 core.constants 를 import" % ('OK' if _imp else '!!!'))
+    if not _imp:
+        badc.append('core.constants import 누락')
 
     print("--- 좌굴 스크립트 <-> 모드 소스 비교: [§19.64 은퇴] ---")
     print("    (buckle 은 HF 임퍼펙션 씨드 전용 - mode 스크립트와 상수를 묶지 않는다."
@@ -279,14 +303,14 @@ def main():
 
     print()
     print("=" * 74)
-    if bad or bad2 or bad3 or bad7:
+    if bad or bad2 or bad3 or bad7 or badc:
         print("RESULT: !!! 불일치 (HF↔buckle 위반 %d / buckle 역할위반 %d / 디렉터리 위반 %d"
-              " / CASE 계약 위반 %d)"
-              % (len(bad), len(bad2), len(bad3), len(bad7)))
+              " / CASE 계약 위반 %d / 공통상수 위반 %d)"
+              % (len(bad), len(bad2), len(bad3), len(bad7), len(badc)))
         print("        한쪽을 고쳤으면 다른 쪽도 같이 고쳐라.")
         return 1
-    print("RESULT: PASS - HF↔buckle %d 항목 일치, 역할 분리 위반 0건"
-          " (모드 소스는 §19.64 로 은퇴)" % len(SHARED))
+    print("RESULT: PASS - HF↔buckle %d 항목 + 공통상수 %d 항목 일치, 역할 분리 위반 0건"
+          " (모드 소스는 §19.64 로 은퇴)" % (len(SHARED), len(SHARED_CONST)))
     print("=" * 74)
     return 0
 

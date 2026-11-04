@@ -49,6 +49,9 @@ CFG = {}
 CFG_PATH = None
 
 BUCKLE_SCRIPT = os.path.join(HERE, A.BUCKLE_SCRIPT_NAME)
+#   [P3] 공통 상수는 core/constants.py 에 있다. 지문/시드 게이트는 (상수, 스크립트)를 함께 본다.
+CONSTANTS = os.path.join(HERE, 'core', 'constants.py')
+BUCKLE_FP_SOURCES = (CONSTANTS, BUCKLE_SCRIPT)
 SEEDS_DIR = os.path.join(HERE, A.SEED_DIR_NAME)
 RUN_DIR = os.path.join(HERE, 'buckle')
 BUCKLE_MODES = 4          # seed 가족에서 뽑는 모드 수(상위 2개만 합성에 쓴다)
@@ -148,7 +151,12 @@ def expected_membrane_nodes():
     1st order: seed_div=200 -> 10,201 / 632 -> 100,489 / 2000 -> 1,002,001.
     2nd order is counted through aba_grid_mesh._second_order.
     """
-    txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
+    #   [P3] BASE/HEIGHT/SEED_DIV 는 core/constants.py 로 이동했다 -> 상수 파일을 먼저 본다.
+    _texts = []
+    for _p in (CONSTANTS, BUCKLE_SCRIPT):
+        if os.path.exists(_p):
+            _texts.append(io.open(_p, encoding='utf-8', errors='replace').read())
+    txt = '\n'.join(_texts)
 
     def _c(name, default):
         if name in CFG and CFG[name] is not None:
@@ -364,7 +372,7 @@ def main(argv=None):
 
     # ---- 3) 합성 + 헤더 ----
     print("\n[3/3] 합성 2+2 + 설계점 헤더")
-    _fp, _hdr = A.seed_header_lines(a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_SCRIPT),
+    _fp, _hdr = A.seed_header_lines(a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_FP_SOURCES),
                                     seed_tbl, '1,2', clamp_tbl, '1,2')
     if not a.force and os.path.exists(out_tbl):
         _cur = A.read_seed_header(out_tbl)
@@ -377,7 +385,7 @@ def main(argv=None):
         print("  $ abaqus python combine_mode_tables.py \"%s\" 1.0:\"%s\":1,2 1.0:\"%s\":1,2"
               % (out_tbl, _rel_d(seed_tbl), _rel_d(clamp_tbl)))
         print("  [header] %s" % (A.seed_header_lines(
-            a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_SCRIPT),
+            a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_FP_SOURCES),
             seed_tbl, '1,2', clamp_tbl, '1,2')[1],))
         print("\n[make_seed] dry-run 종료 - 파일을 만들지 않았다.")
         return 0
@@ -386,14 +394,14 @@ def main(argv=None):
                % (out_tbl, _rel(seed_tbl), _rel(clamp_tbl)), False, cwd=HERE)
     _need(out_tbl, '합성 시드표')
 
-    fp, hdr = A.seed_header_lines(a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_SCRIPT),
+    fp, hdr = A.seed_header_lines(a.x_c, a.d_c, A.buckle_fingerprint(BUCKLE_FP_SOURCES),
                                   seed_tbl, '1,2', clamp_tbl, '1,2')
     body = io.open(out_tbl, encoding='utf-8').read()
     #   combine 이 쓴 헤더/데이터 위에 우리 헤더를 **맨 앞**에 얹는다(리더는 'MODE ' 를 만나면 멈춘다).
     io.open(out_tbl, 'w', encoding='utf-8').write('\n'.join(hdr) + '\n' + body)
 
     # ---- 4) 검증 + meta ----
-    ok, why, info = A.seed_gate(a.x_c, a.d_c, out_tbl, BUCKLE_SCRIPT)
+    ok, why, info = A.seed_gate(a.x_c, a.d_c, out_tbl, BUCKLE_FP_SOURCES)
     tbl = A.load_mode_table(out_tbl, (1, 2, 3, 4))
     nodes = sorted(set(len(v) for v in tbl.values()))
     _exp_nodes = expected_membrane_nodes()

@@ -71,6 +71,9 @@ def source_model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
     #   같은 키가 두 번 대입될 수 있다(실측: run_abaqus_buckle.py 의 CLAMP_EXCL_R —
     #   기본값 0.21 과 CLI override). 예전 지문은 **모든 대입**을 파일 순서로 해싱했다.
     #   keys 튜플에 그 키를 두 번 넣으면 "대입 순서"를 그대로 재현할 수 있다.
+    #   [P3] 상수가 core/constants.py 로 이동했으므로 **여러 소스**를 순서대로 스캔한다.
+    #   같은 키의 대입 순서는 소스 순서 -> 파일 내 순서다. 단일 파일이면 종전과 동일하다.
+    sources = list(source_path) if isinstance(source_path, (list, tuple)) else [source_path]
     occ = {}
     try:
         # [2026-10-05] encoding 을 반드시 명시한다. 이 파일에는 한글 주석이 있고, Windows 의
@@ -78,17 +81,18 @@ def source_model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
         #   `except Exception: return None, {}` 가 그것을 **조용히 삼켜** 지문이 항상 사라졌다
         #   (실측: 모드 소스 로그에 '[MODE] 재사용 지문 없음(생략)').
         #   지문은 '모드표가 다른 모델에서 만들어졌다'를 잡는 유일한 장치이므로 조용히 꺼지면 안 된다.
-        try:
-            fh = open(source_path, 'r', encoding='utf-8', errors='replace')
-        except TypeError:                      # encoding 인자를 모르는 파이썬 폴백
-            fh = open(source_path, 'r', encoding='utf-8', errors='replace')
-        with fh as f:
-            for line in f.read().splitlines():
-                code = line.split('#')[0].strip()
-                for k in dict.fromkeys(keys):      # 중복 키는 한 번만 검사
-                    m = re.match(r'^%s\s*=\s*(.+)$' % re.escape(k), code)
-                    if m:
-                        occ.setdefault(k, []).append(m.group(1).strip())
+        for _src in sources:
+            try:
+                fh = open(_src, 'r', encoding='utf-8', errors='replace')
+            except TypeError:                      # encoding 인자를 모르는 파이썬 폴백
+                fh = open(_src, 'r', encoding='utf-8', errors='replace')
+            with fh as f:
+                for line in f.read().splitlines():
+                    code = line.split('#')[0].strip()
+                    for k in dict.fromkeys(keys):      # 중복 키는 한 번만 검사
+                        m = re.match(r'^%s\s*=\s*(.+)$' % re.escape(k), code)
+                        if m:
+                            occ.setdefault(k, []).append(m.group(1).strip())
     except Exception:
         return None, {}
     if not occ:
