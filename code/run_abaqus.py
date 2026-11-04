@@ -360,7 +360,9 @@ def _resolve_here():
     for c in cand:
         if _ok(c):
             return os.path.abspath(c)
-    emit("!!! WARNING: eval_abaqus.py 위치를 찾지 못했습니다. cwd=%s" % os.getcwd())
+    #   emit 은 이 시점에 아직 import 되지 않는다(ctx 모듈은 _HERE 확정 뒤에 온다).
+    sys.stderr.write("!!! WARNING: eval_abaqus.py 위치를 찾지 못했습니다. cwd=%s\n"
+                     % os.getcwd())
     return os.getcwd()
 
 _HERE = _resolve_here()
@@ -392,102 +394,12 @@ try:
 except Exception:
     pass
 
-_EMIT_PATHS = None
-
-
-def _emit_paths():
-    """로그 파일 후보 경로 전부. __file__ 이 없는 execfile 환경을 전제로 한다."""
-    cand = [globals().get('_HERE'), os.getcwd()]
-    try:
-        if sys.argv and sys.argv[0]:
-            cand.append(os.path.dirname(os.path.abspath(sys.argv[0])))
-    except Exception:
-        pass
-    out, seen = [], set()
-    for d in cand:
-        if not d:
-            continue
-        p = os.path.join(d, 'hf_run_log.txt')
-        if p not in seen:
-            seen.add(p)
-            out.append(p)
-    return out
-
-
-def emit(*a):
-    """콘솔 + hf_run_log.txt(후보 경로 전부) 기록. **어떤 경우에도 예외를 올리지 않는다**."""
-    global _EMIT_PATHS
-    try:
-        msg = ' '.join(str(x) for x in a)
-    except Exception:
-        msg = '<emit: 인자 변환 실패>'
-    try:
-        print(msg)
-        sys.stdout.flush()
-    except Exception:
-        pass
-    try:
-        if _EMIT_PATHS is None:
-            _EMIT_PATHS = _emit_paths()
-        for p in _EMIT_PATHS:
-            try:
-                try:
-                    f = open(p, 'a', encoding='utf-8', errors='replace')
-                except TypeError:          # encoding 인자를 모르는 파이썬이면 폴백
-                    f = open(p, 'a')
-                f.write(msg + '\n')
-                f.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
-
-
-def _first_existing(*cands):
-    """후보 경로 중 처음 존재하는 것을 돌려준다(없으면 None).
-
-    (2026-09-28) HF 는 os.chdir('aba') 로 돌기 때문에 'Buckle_Analysis.odb' 같은 상대 경로가
-    code\aba 에서는 안 찾히고, R-13/N-6 진단이 조용히 건너뛰어졌다(로그: odb=False).
-    소스 잡의 산출물은 code\ 에 있으므로 '..' 후보를 함께 본다.
-    """
-    for c in cands:
-        if c and os.path.exists(c):
-            return c
-    return None
-
-
-def _probe_keep_line(_ls):
-    """[§19.97] R-13 프로브 stdout 필터 - 로그(hf_run_log.txt)에 남길 줄만 True.
-
-    probe 는 40여 줄을 쏟는다(요소 좌표·단면별 통계·압축지도·RF 상위 8개·인스턴스별 max|u3|).
-    로그에 필요한 것은 (i) '>>>' 요약, (ii) ODB 신원/경고 줄, (iii) 중앙 영역 개수,
-    (iv) 스텝 못박기 줄('스텝=...')이다.
-
-    [§19.94] '>>>' 만 통과시키면 신원/경고 줄이 통째로 사라져 stale 판정 자체가 불가능해진다.
-    [§19.97] 스텝 접미사([R-13:CT] / [R-13:GT])를 **떼고** 판정한다 -> 스텝이 늘어도 필터를
-      고칠 필요가 없고, 접미사를 못 떼면 CT 판독이 통째로 로그에서 사라진다(같은 유형의 사고).
-    """
-    tag = _ls
-    if tag.startswith('[R-13:'):
-        _i = tag.find(']')
-        if _i > 0:
-            tag = '[R-13]' + tag[_i + 1:]
-    return ('>>>' in tag) or tag.startswith(('[R-13] ODB 신원', '[R-13] !!!',
-                                             '[R-13] 중앙 영역', '[R-13] 스텝='))
-
-
-def emit_start():
-    """런 시작 표식(파일을 truncate). 호출되면 이 파일이 실행된 것이 증명된다."""
-    global _EMIT_PATHS
-    _EMIT_PATHS = _emit_paths()
-    for p in _EMIT_PATHS:
-        try:
-            with open(p, 'w') as f:
-                f.write('[canary] run_abaqus.py start %s  cwd=%s  argv=%s\n'
-                        % (time.strftime('%Y-%m-%d %H:%M:%S'), os.getcwd(), list(sys.argv)))
-        except Exception:
-            pass
-
+import ctx as _ctx                                                          # noqa: E402
+_ctx.init(_HERE)
+from ctx import emit, emit_start, first_existing as _first_existing, probe_keep_line as _probe_keep_line  # noqa: E402
+from post import (archive_result, archive_slope, archive_dn, archive_zk,   # noqa: E402
+                  r13_ct_keys)
+from solver import run_patcher, job_completed_ok, print_job_diag  # noqa: E402
 
 # [§19.94] 런 시작 시각. R-13 이 읽은 ODB 의 mtime 이 이보다 오래되었으면 '이 런이 만든 파일이
 #   아니다' -> stale 가능 경고를 찍는다(그 숫자를 이 설계점의 base state 로 읽으면 안 된다).
@@ -590,312 +502,6 @@ emit('[CONFIG] lf_model_fp=%s config_sha1=%s lf_tag=%s'
 # P1-3: 잡 제출 전에 지워야 하는 이전 실행 산출물
 _JOB_ARTIFACTS = ('odb', 'fil', 'sta', 'msg', 'lck', 'com', 'prt', 'sim', 'log',
                   'dat', 'res', 'abq', 'ipm', 'mdl', 'stt', 'cid')
-
-def _archive_result(x_c, d_c, fidelity, results_csv, extra=None):
-    """[§19.88] 설계점별 결과 아카이빙.
-
-    왜: HF 잡 이름이 `HF_Postbuckle` 고정이라 다음 런이 **직전 산출물을 지운다**
-    (`run_job_safely` 가 odb/dat/msg 를 제거). 그래서 (0.5,0.3)의 ODB 를 이미 잃었다 —
-    결과를 설계점 이름의 텍스트 + 누적 CSV 로 남겨 스윕 분석이 한 파일로 가능하게 한다.
-
-    남기는 것: RESULTS 4필드(lf1,lf2,lf3,hf) + 사다리가 쓴 stabilize_used/에너지 비/판정 + 시각.
-    """
-    try:
-        import time
-        _dir = os.path.join(_HERE, 'results')
-        if not os.path.isdir(_dir):
-            os.makedirs(_dir)
-        _p = [str(v).strip() for v in (results_csv or '').split(',')]
-        while len(_p) < 4:
-            _p.append('nan')
-        _kv = {'x_c': x_c, 'd_c': d_c, 'fidelity': fidelity,
-               'timestamp': time.strftime('%Y-%m-%d %H:%M:%S'),
-               'lf1': _p[0], 'lf2': _p[1], 'lf3': _p[2], 'hf': _p[3]}
-        _kv.update(extra or {})
-        #   [CONFIG] 이 점이 **어느 config/모델**로 계산됐는지 남긴다. HF 는 짝 LF ODB 를
-        #     재사용할 수 있으므로 "이 런의 config"(_CFG_SHA1)와 "LF ODB sidecar 의 config"를
-        #     따로 적는다(둘이 다르면 재사용이 섞였다는 신호다). CSV 열은 늘리지 않는다.
-        _kv.setdefault('config_sha1', _CFG_SHA1)
-        try:
-            _lfsd = lf_sidecar_read(globals().get('LF_ODB') or '')
-        except Exception:
-            _lfsd = {}
-        _kv.setdefault('lf_config_sha1', _lfsd.get('config_sha1', 'nan'))
-        _kv.setdefault('lf_model_fp', _lfsd.get('model_fp', 'nan'))
-        _tag = 'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c))
-        with io.open(os.path.join(_dir, _tag), 'w', encoding='utf-8') as _f:
-            for _k in sorted(_kv):
-                _f.write('%s=%s\n' % (_k, _kv[_k]))
-        #   [§19.91] 열 스키마를 **고정**한다 — 진단키(stabilize/에너지/flip_bias)도 CSV 에 실제로
-        #     실려야 스윕 분석이 한 파일로 된다(헤더가 1회만 쓰이므로 열 목록은 상수여야 한다).
-        _cols = ['x_c', 'd_c', 'fidelity', 'timestamp', 'stabilize_used',
-                 'allds_allie_last_pct', 'allds_allie_max_pct', 'energy_verdict',
-                 'backward_area_pct', 'backward_elems', 'total_elems',
-                 'hf_flip', 'hf_true_normal', 'delta_pct',
-                 'lf1', 'lf2', 'lf3', 'hf']
-        _csv = os.path.join(_dir, 'all_results.csv')
-        _new = not os.path.exists(_csv)
-        with io.open(_csv, 'a', encoding='utf-8') as _f:
-            if _new:
-                _f.write(','.join(_cols) + '\n')
-            _f.write(','.join(str(_kv.get(_c, '')) for _c in _cols) + '\n')
-        emit("[ARCHIVE] %s + all_results.csv (1행 추가)" % _tag)
-    except Exception as _e:
-        emit("[ARCHIVE] 실패(무시): %s" % _e)
-
-
-def _archive_slope(x_c, d_c):
-    """[§19.102] **성공한 HF 런에서만** 호출: (1) HF ODB 설계점 태깅 복사,
-    (2) slope_stats.compute_stats 를 인프로세스로 돌려 점별 results txt 에 slope_ 접두로 아카이빙.
-
-    모두 예외 안전 - 실패해도 런을 죽이지 않고 경고 1줄만 남긴다. RESULTS 4필드 계약과
-    all_results.csv 열 스키마는 건드리지 않는다(점별 txt append + 별도 JSON 만).
-    스위치: SOLARSAIL_NO_SLOPE=1 -> 전체 생략, SOLARSAIL_NO_ODB_COPY=1 -> ODB 복사만 생략.
-    로그 접두 [SLOPE]/[ODBCOPY] 는 기존 stdout 필터가 버리지 않는 형식이다.
-    """
-    _tag = 'xc%s_dc%s_u3free' % (value_tag(x_c), value_tag(d_c))
-    _src = os.path.join(_RUN, HF_ODB)
-    _src = _src if os.path.exists(_src) else (HF_ODB if os.path.exists(HF_ODB) else None)
-
-    if str(os.environ.get('SOLARSAIL_NO_SLOPE', '')).strip() == '1':
-        emit("[SLOPE] SKIP (SOLARSAIL_NO_SLOPE=1): 설계점 %s slope_stats 아카이빙 생략" % _tag)
-        return
-
-    # ---- (1) ODB 설계점 태깅 복사: results/odb/HF_<tag>.odb (태그 규칙 = value_tag, 기존 관례)
-    _odb_used = _src
-    if str(os.environ.get('SOLARSAIL_NO_ODB_COPY', '')).strip() == '1':
-        emit("[ODBCOPY] SKIP (SOLARSAIL_NO_ODB_COPY=1): 설계점 %s ODB 복사 생략" % _tag)
-    else:
-        try:
-            if _src is None:
-                emit("[ODBCOPY] !!! HF ODB 를 찾지 못했다(%s) - 복사 생략" % HF_ODB)
-            else:
-                _odir = os.path.join(_HERE, 'results', 'odb')
-                if not os.path.isdir(_odir):
-                    os.makedirs(_odir)
-                _dst = os.path.join(_odir, 'HF_%s.odb' % _tag)
-                shutil.copy2(_src, _dst)
-                _odb_used = _dst
-                _sz = os.path.getsize(_dst)
-                emit("[ODBCOPY] %s -> %s (%.2f MB, %d B)"
-                     % (os.path.abspath(_src), os.path.abspath(_dst), _sz / 1048576.0, _sz))
-        except Exception as _e:
-            emit("[ODBCOPY] 실패(무시): %s" % _e)
-
-    # ---- (2) slope_stats 인프로세스 실행 (Abaqus 안이므로 서브프로세스 금지)
-    try:
-        if _odb_used is None:
-            emit("[SLOPE] !!! 읽을 ODB 가 없다(%s) - 통계 생략" % HF_ODB)
-            return
-        if _HERE not in sys.path:
-            sys.path.insert(0, _HERE)
-        import slope_stats
-        _S = slope_stats.compute_stats(_odb_used)
-        if _S is None:
-            emit("[SLOPE] !!! compute_stats 실패(None) - 아카이빙 생략")
-            return
-        # 점별 results txt 에 slope_ 접두 key=value append (RESULTS 4필드 계약은 그대로)
-        _lines = slope_stats.scalar_items(_S, prefix='slope_')
-        _ptxt = os.path.join(_HERE, 'results',
-                             'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c)))
-        with io.open(_ptxt, 'a', encoding='utf-8') as _f:
-            for _l in _lines:
-                _f.write(_l + '\n')
-        emit("[SLOPE] %d개 key(slope_ 접두)를 %s 에 append | f1=%.10e f2=%.10e f3=%.10e f4=%.10e"
-             % (len(_lines), os.path.basename(_ptxt), _S.get('f1_hf_pred'),
-                _S.get('f2_p95'), _S.get('f3_worst_patch'), _S.get('f4_cvar90')))
-        # JSON 은 slope_stats 기존 관례: results/slope_<stem>_<step>.json
-        try:
-            _stem = os.path.splitext(os.path.basename(_odb_used))[0]
-            _jpath = os.path.join(_HERE, 'results', 'slope_%s_%s.json' % (_stem, _S['step']))
-            _rec = slope_stats.build_json_record(_S, _odb_used)
-            slope_stats.write_json_record(_rec, _jpath)
-            emit("[SLOPE] JSON 저장: %s" % os.path.abspath(_jpath))
-        except Exception as _e:
-            emit("[SLOPE] !!! JSON 저장 실패(무시): %s" % _e)
-    except Exception as _e:
-        emit("[SLOPE] 실패(무시, 런은 계속): %s" % _e)
-
-
-def _archive_dn(x_c, d_c, dn_lines):
-    """[19.106] eval_abaqus.py 가 낸 `DN:` 줄을 점별 results txt 에 `dn_` 접두로 append.
-
-    계약 보존:
-      - `RESULTS:` 4필드(lf1,lf2,lf3,hf)는 **읽지도 쓰지도 않는다**.
-      - `all_results.csv` 는 이 함수에서 **열지 않는다**(헤더 1회 규칙 - 열 추가 금지).
-      - 실패해도 런을 죽이지 않는다(경고 1줄). DN 줄이 아예 없으면 조용히 넘기지 않고 경고한다.
-    호출 위치: _archive_result('w') **뒤** (그 함수가 txt 를 다시 쓰므로).
-    """
-    try:
-        _ptxt = os.path.join(_HERE, 'results',
-                             'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c)))
-        if not os.path.exists(_ptxt):
-            emit('[DN] !!! 점별 txt 없음(%s) - dn_ 아카이빙 생략' % os.path.basename(_ptxt))
-            return
-        _kv = {}
-        _fail = None
-        for _ln in (dn_lines or []):
-            _s = str(_ln).strip()
-            if not _s.startswith('DN:'):
-                continue
-            _body = _s[3:].strip()
-            if _body.startswith('FAIL'):
-                _fail = _body
-                continue
-            for _tok in _body.split():
-                if '=' in _tok:
-                    _k, _v = _tok.split('=', 1)
-                    _kv[_k if _k.startswith('dn_') else ('dn_' + _k)] = _v
-
-        if _fail is not None and not _kv:
-            #   계산 불가: 0 으로 뭉개지 않는다(nan + 사유). CSV 는 그대로.
-            with io.open(_ptxt, 'a', encoding='utf-8') as _f:
-                _f.write('dn_deg=nan\n')
-                _f.write('dn_note=%s\n' % _fail)
-            emit('[DN] !!! DN 계산 실패 -> dn_deg=nan (%s)' % _fail)
-            return
-
-        if not _kv:
-            emit('[DN] !!! 줄 없음 (eval_abaqus.py 출력에 DN: 이 없다) - dn_ 아카이빙 생략')
-            return
-
-        _order = ['dn_deg', 'dn_psi_deg', 'dn_n_eq_x', 'dn_n_eq_y', 'dn_n_eq_z',
-                  'dn_n_elem', 'dn_area_ref']
-        _keys = [k for k in _order if k in _kv] + sorted(k for k in _kv if k not in _order)
-        with io.open(_ptxt, 'a', encoding='utf-8') as _f:
-            for _k in _keys:
-                _f.write('%s=%s\n' % (_k, _kv[_k]))
-        emit('[DN] %d개 key(dn_ 접두)를 %s 에 append | dn_deg=%s deg dn_psi_deg=%s '
-             'n_eq=(%s,%s,%s) n_elem=%s'
-             % (len(_keys), os.path.basename(_ptxt), _kv.get('dn_deg', 'nan'),
-                _kv.get('dn_psi_deg', 'nan'), _kv.get('dn_n_eq_x', 'nan'),
-                _kv.get('dn_n_eq_y', 'nan'), _kv.get('dn_n_eq_z', 'nan'),
-                _kv.get('dn_n_elem', 'nan')))
-    except Exception as _e:
-        emit('[DN] 실패(무시, 런은 계속): %s' % _e)
-
-
-def _archive_zk(x_c, d_c, zk_lines, zkiw_lines=None):
-    """[paper-match] eval_abaqus.py 가 낸 `ZK:` 줄을 점별 results txt 에 `zk_` 접두로 append.
-
-    `zk_metrics.txt` sidecar 의 추가 키(`zk_Iw`/기준면적/가중모드)도 함께 append 한다.
-    [A2] `ZKIW:` 줄이 stdout 의 **정본**이다 -> sidecar 병합이 실패해도 값이 남는다.
-
-    계약 보존:
-      - `RESULTS:` 3/4필드는 읽지도 쓰지도 않는다.
-      - `all_results.csv` 는 열지 않는다(헤더 1회 규칙 - 열 추가 금지).
-    호출 위치: _archive_result('w') 뒤 (그 함수가 txt 를 다시 쓰므로).
-    """
-    try:
-        _ptxt = os.path.join(_HERE, 'results',
-                             'results_xc%s_dc%s.txt' % (value_tag(x_c), value_tag(d_c)))
-        if not os.path.exists(_ptxt):
-            emit('[ZK] !!! 점별 txt 없음(%s) - zk_ 아카이빙 생략' % os.path.basename(_ptxt))
-            return
-        _kv = {}
-        _fail = None
-        for _ln in (zk_lines or []):
-            _s = str(_ln).strip()
-            if not _s.startswith('ZK:'):
-                continue
-            _body = _s[3:].strip()
-            if _body.startswith('FAIL'):
-                _fail = _body
-                continue
-            for _tok in _body.split():
-                if '=' in _tok:
-                    _k, _v = _tok.split('=', 1)
-                    if _k == 'state_wrinkled_frac':
-                        _k = 'zk_state_wrinkled_frac'
-                    elif not _k.startswith('zk_'):
-                        _k = 'zk_' + _k
-                    _kv[_k] = _v
-
-        #   [A2] ZKIW: 는 stdout 이 정본이다(sidecar 병합이 실패해도 값이 남는다).
-        #     ZK: 4키와 겹치지 않으므로 그대로 덮어쓴다.
-        for _ln in (zkiw_lines or []):
-            _s = str(_ln).strip()
-            if not _s.startswith('ZKIW:'):
-                continue
-            _body2 = _s[5:].strip()
-            if _body2.startswith('FAIL'):
-                continue
-            for _tok in _body2.split():
-                if '=' not in _tok:
-                    continue
-                _k, _v = _tok.split('=', 1)
-                if not _k.startswith('zk_'):
-                    _k = 'zk_' + _k      #   sidecar 병합과 같은 키 이름(zk_strain_field 등)
-                _kv[_k] = _v
-
-        #   `zk_metrics.txt` sidecar 의 추가 키(`zk_Iw` 등)도 점별 txt 에 남긴다.
-        #     ZK: 줄은 public 4키만 갖고, I_w/기준면적/가중모드는 sidecar 에만 있다.
-        #   [A1] ZK:FAIL 이어도 sidecar 를 병합한다 — 원인 단서(fields/frame_value)가
-        #     거기에만 있고, 다음 런이 zk_metrics.txt 를 덮으면 영구 소실된다.
-        #     stale 차단은 "FAIL 에서는 진단 키만 통과"로 대신한다(값 키는 병합 금지).
-        _FAILDX = ('fields', 'frame_value', 'reason', 'odb')
-        if _fail is not None or _kv:
-            try:
-                _zp = os.path.join(os.getcwd(), 'zk_metrics.txt')
-                if os.path.exists(_zp):
-                    with io.open(_zp, 'r', encoding='utf-8', errors='replace') as _zf:
-                        for _ln in _zf:
-                            _s = _ln.strip()
-                            if not _s or '=' not in _s:
-                                continue
-                            _k, _v = _s.split('=', 1)
-                            if _k == 'status':
-                                continue
-                            if _fail is not None and _k not in _FAILDX:
-                                continue
-                            if _k == 'state_wrinkled_frac':
-                                _k = 'zk_state_wrinkled_frac'
-                            elif _k in ('step', 'frame', 'odb', 'weights', 'note'):
-                                _k = 'zk_' + _k
-                            elif not _k.startswith('zk_'):
-                                _k = 'zk_' + _k
-                            if _k not in _kv:      #   stdout 우선
-                                _kv[_k] = _v
-            except Exception as _e:
-                emit('[ZK] zk_metrics.txt sidecar merge 실패(무시): %s' % _e)
-
-        with io.open(_ptxt, 'a', encoding='utf-8') as _f:
-            if _fail is not None:
-                #   계산 불가: 0 으로 뭉개지 않는다(nan + 사유). CSV 는 그대로.
-                _f.write('zk_state_wrinkled_frac=nan\n')
-                _f.write('zk_note=%s\n' % _fail.replace(' ', '_'))
-                for _k in sorted(_kv):
-                    _f.write('%s=%s\n' % (_k, _kv[_k]))
-                emit('[ZK] !!! ZK 계산 실패 -> zk_state_wrinkled_frac=nan (%s) / 진단키 %d개'
-                     % (_fail, len(_kv)))
-                return
-            if not _kv:
-                emit('[ZK] !!! 줄 없음 (eval_abaqus.py 출력에 ZK: 이 없다) - zk_ 아카이빙 생략')
-                return
-            for _k in sorted(_kv):
-                _f.write('%s=%s\n' % (_k, _kv[_k]))
-        emit('[ZK] %d개 key를 %s 에 append | state_wrinkled_frac=%s dir=%s'
-             % (len(_kv), os.path.basename(_ptxt),
-                _kv.get('zk_state_wrinkled_frac', 'nan'), _kv.get('zk_dir_deg', 'nan')))
-    except Exception as _e:
-        emit('[ZK] 실패(무시, 런은 계속): %s' % _e)
-
-
-def _r13_ct_keys():
-    """[§19.97] 점별 results_*.txt 에 넣을 R-13 Step-ClampTension 판독 키.
-
-    **CSV(all_results.csv) 열은 건드리지 않는다** - 헤더가 1회만 쓰이므로 열을 추가하면 기존 행과
-    어긋난다(§19.91). 그래서 진단값은 점별 txt(key=value)로만 남긴다.
-    읽지 못한 항목은 'nan' + r13_ct_note 에 이유를 남긴다(조용한 0 금지).
-    """
-    _d = {'r13_ct_centre_mean_pa': 'nan', 'r13_ct_centre_minp_pa': 'nan',
-          'r13_ct_area_frac_neg': 'nan', 'r13_ct_minp_frac_neg': 'nan',
-          'r13_ct_uz_max_m': 'nan', 'r13_ct_uz_ave_m': 'nan',
-          'r13_ct_odb': 'nan', 'r13_ct_odb_mtime': 'nan', 'r13_ct_stale': 'nan',
-          'r13_ct_note': 'probe 미실행(BASE_PROBE=False, ODB 없음, 또는 비-HF 경로)'}
-    _d.update(_R13_CT or {})
-    return _d
-
 
 def run_job_safely(job_name, model_name=None, stabilize=None, stabilize_global=None,
                    hard_fail=True, patch_step=None):
@@ -1016,8 +622,8 @@ def run_job_safely(job_name, model_name=None, stabilize=None, stabilize_global=N
         if not _needs_patch:
             emit("[PATCHER] 이 덱에 %s 이 없다 -> 패처 생략(§19.80, LF 경로)"
                  % patch_step)
-        if _needs_patch and not run_patcher(job_name + '.inp', step=patch_step,
-                                             stabilize=stabilize):
+        if _needs_patch and not run_patcher(_HERE, job_name + '.inp', step=patch_step,
+                                            stabilize=stabilize):
             emit("!!! ERROR: 패처 실패 — 패치되지 않은 덱을 제출하지 않는다(§14).")
             emit("RESULTS:FAIL")
             sys.stdout.flush()   # CAE noGUI: sys.exit 앞에서 버퍼 비움
@@ -1194,186 +800,6 @@ def run_job_with_ladder(job_name, model_name=None):
     emit("!!! ERROR: 사다리 소진 (global=%s, post=%s) — 이 설계점은 완주 불가"
          % (STABILIZE_GLOBAL_LADDER, STABILIZE_POST_LADDER))
     return False
-
-
-def run_patcher(deck, step='Step-Postbuckle', ctrl=('--line-search', '--ran=5e-3',
-                                                     '--can=1e-2', '--i0=8', '--ir=10'),
-                stabilize=None):
-    """패치 전 덱에 *Controls 를 주입해 같은 파일명으로 덮어쓴다.
-
-    riks_patch_input.py 는 SRC 를 전부 메모리로 읽은 뒤 DST 를 열어 쓰므로
-    SRC == DST (제자리 덮어쓰기) 가 안전하다. 덕분에 잡 이름/입력 파일명이
-    그대로 유지되어 아래 job.submit() 흐름을 손대지 않아도 된다.
-
-    반환: True(성공) / False(실패 — 호출자가 RESULTS:FAIL 로 끊는다)
-    """
-    #   [§19.85] stabilize 가 주어지면 패치된 덱의 `*Static, stabilize=...` 값만 교체한다.
-    #     (패처 자체의 안정화 기본값에 의존하지 않고 사다리를 돌리기 위한 최소 개입)
-    def _set_stabilize(_p, _v):
-        with open(_p, 'r', encoding='utf-8', errors='replace') as _f:
-            _t = _f.read()
-        _new, _n = re.subn(r'(\*Static,\s*stabilize=)[0-9.eE+-]+', r'\g<1>%g' % _v, _t)
-        if _n != 1:
-            emit("[LADDER] !!! stabilize 치환 실패(패턴 %d건) — 덱을 확인하세요: %s" % (_n, _p))
-            return False
-        with open(_p, 'w', encoding='utf-8') as _f:
-            _f.write(_new)
-        emit("[LADDER] stabilize=%g 로 덱 수정 (%s)" % (_v, os.path.basename(_p)))
-        return True
-
-    _rp = os.path.join(_HERE, 'riks_patch_input.py')
-    if not os.path.exists(_rp):
-        emit("[PATCHER] !!! riks_patch_input.py 없음: %s" % _rp)
-        return False
-    if not os.path.exists(deck):
-        emit("[PATCHER] !!! 덱 없음: %s" % deck)
-        return False
-    # 멱등성: 이미 *Controls 가 들어 있으면 먼저 걷어낸다.
-    #   덱은 보통 run_abaqus.py 가 writeInput 으로 새로 쓰므로 초기화되지만,
-    #   'write' 로 만든 덱을 'auto' 로 다시 돌리면 주입이 두 번 되어
-    #   Abaqus 가 모르는 파라미터를 읽는다. 걷어내고 항상 같은 결과를 만든다.
-    _lines = io.open(deck, 'r', errors='replace').read().splitlines()
-    if any(ln.lstrip().lower().startswith('*controls') for ln in _lines):
-        _keep, _skip = [], False
-        for ln in _lines:
-            _ls = ln.lstrip()
-            if _ls.startswith('*'):
-                # 새 키워드 줄 — *Controls 면 블록 시작, 아니면 블록 종료
-                _skip = _ls.lower().startswith('*controls')
-            if not _skip:
-                _keep.append(ln)
-        io.open(deck, 'w', encoding='ascii', errors='replace',
-                newline='\n').write('\n'.join(_keep) + '\n')
-        emit("[PATCHER] 기존 *Controls %d 줄 제거 (멱등성)"
-             % (len(_lines) - len(_keep)))
-    before = os.path.getsize(deck)
-    #   [2026-10-08] `abaqus python <script>` 가 Windows 에서 **조용히 아무 일도 안 하는**
-    #   사례가 나왔다: exit 0, stdout 없음, 덱 무변경 -> 크기 검사에 걸려 HF 가 멈췄다.
-    #   riks_patch_input.py 는 io/os/sys 만 쓰는 순수 텍스트 변환기라 Abaqus 인터프리터가
-    #   필요 없다. 그래서 런처를 거치지 않고 **이 프로세스 안에서** 실행한다.
-    #   (로컬 검증: 가짜 덱에 *Controls/line search 마커가 실제로 붙고 8줄 -> 15줄)
-    #   실패하면 셸(cmd.exe) 경로로 한 번 더, 그래도 안 되면 손으로 돌릴 명령을 찍어 준다.
-    _MARKERS = ('*Controls', 'line search', 'discontinuous', 'field=displacement')
-
-    def _deck_markers():
-        _t = io.open(deck, 'r', errors='replace').read().lower()
-        return [m for m in _MARKERS if m.lower() in _t]
-
-    def _run_inproc():
-        _argv = [os.path.basename(_rp), deck, deck, step] + list(ctrl)
-        _src = io.open(_rp, 'r', errors='replace').read()
-        _save = list(sys.argv)
-        _o, _e = io.StringIO(), io.StringIO()
-        _so, _se = sys.stdout, sys.stderr
-        sys.argv = _argv
-        sys.stdout, sys.stderr = _o, _e
-        try:
-            exec(compile(_src, _rp, 'exec'), {'__name__': '__main__', '__file__': _rp})
-            return True, _o.getvalue(), _e.getvalue()
-        except SystemExit as _ex:
-            return (not getattr(_ex, 'code', 0)), _o.getvalue(), \
-                _e.getvalue() + ('\nSystemExit(%s)' % getattr(_ex, 'code', None))
-        except Exception:
-            return False, _o.getvalue(), _e.getvalue() + '\n' + traceback.format_exc()
-        finally:
-            sys.argv, sys.stdout, sys.stderr = _save, _so, _se
-
-    _ok, _out, _err = _run_inproc()
-    for _ln in (_out or '').splitlines()[-14:]:
-        emit("[PATCHER] %s" % _ln.strip())
-    for _ln in (_err or '').splitlines()[-14:]:
-        emit("[PATCHER] (stderr) %s" % _ln.strip())
-    emit("[PATCHER] in-process ok=%s / 마커=%s / 크기 %d -> %d"
-         % (_ok, _deck_markers() or '없음', before, os.path.getsize(deck)))
-
-    if not _deck_markers():
-        _abq2 = shutil.which('abaqus') or shutil.which('abaqus.bat') or 'abaqus'
-        _cmd = '"%s" python "%s" "%s" "%s" %s %s' % (
-            _abq2, _rp, deck, deck, step, ' '.join(ctrl))
-        emit("[PATCHER] 재시도(셸): %s" % _cmd)
-        try:
-            _p = subprocess.run(_cmd, shell=True, cwd=os.getcwd(),
-                                capture_output=True, text=True)
-            for _ln in (_p.stdout or '').splitlines()[-10:]:
-                emit("[PATCHER] %s" % _ln.strip())
-            for _ln in (_p.stderr or '').splitlines()[-10:]:
-                emit("[PATCHER] (stderr) %s" % _ln.strip())
-            emit("[PATCHER] 셸 rc=%s / 마커=%s" % (_p.returncode, _deck_markers() or '없음'))
-        except Exception as _e2:
-            emit("[PATCHER] 셸 실행 실패: %s" % _e2)
-
-    if not _deck_markers():
-        emit("[PATCHER] !!! 패치 마커가 덱에 없다 — 손으로 실행해 보세요:")
-        emit('[PATCHER]     abaqus python riks_patch_input.py "%s" "%s" %s %s'
-             % (deck, deck, step, ' '.join(ctrl)))
-        return False
-    emit("[PATCHER] OK — %s 패치 확인 (%.1f KB -> %.1f KB, 마커 %s)"
-         % (deck, before / 1024.0, os.path.getsize(deck) / 1024.0, _deck_markers()))
-    return True
-
-    return True
-
-
-def job_completed_ok(job_name):
-    """R-12: .sta/.msg 에 'HAS COMPLETED SUCCESSFULLY' 가 있는지로 완주를 판정한다.
-
-    odb 파일 존재만 보면 '중도 중단된 odb'를 성공으로 오판한다
-    (2026-09-21 사례: HF_Postbuckle.odb 는 존재하나 Step-Postbuckle 프레임 0개).
-    """
-    for ext in ('sta', 'msg'):
-        fn = '%s.%s' % (job_name, ext)
-        if os.path.exists(fn):
-            with open(fn, 'r', errors='replace') as f:
-                if 'HAS COMPLETED SUCCESSFULLY' in f.read().upper():
-                    return True
-    return False
-
-
-def print_job_diag(job_name):
-    """잡 산출물(.msg/.dat)의 원인 판별용 핵심 줄만 콘솔에 찍는다.
-
-    로그를 통째로 붙여넣지 않아도 (a) 좌굴모드가 나왔는지 (b) 왜 죽었는지를
-    한 화면에서 볼 수 있게 하기 위한 것. 실패해도 해석에는 영향 없음.
-    """
-    keys = ('NEGATIVE EIGENVALUES', 'CONVERGED', 'EIGENVALUES CANNOT BE FOUND',
-            'HAS COMPLETED SUCCESSFULLY', 'THE ANALYSIS HAS BEEN COMPLETED',
-            'misplaced', 'STIFFNESS MATRIX IS SINGULAR', 'TOO MANY ATTEMPTS',
-            #   [2026-10-08] 실제로 '적용된' 솔루션 컨트롤을 로그에 싣는다. 문서:
-            #   "The controls in effect for an analysis are listed in the .dat and .msg files.
-            #    Nondefault controls are marked by ***".  *CONTROLS 블록을 덱에 넣었는데
-            #   효과가 없을 때(라인서치 0회 등) 이 목록이 유일한 판정 근거다.
-            'CONVERGENCE TOLERANCE PARAMETERS', 'CRIT. FOR', 'LINE SEARCH',
-            '***ERROR')
-    for ext in ('msg', 'dat'):
-        fn = '%s.%s' % (job_name, ext)
-        if not os.path.exists(fn):
-            emit("[DIAG:%s] %s 없음" % (job_name, fn))
-            continue
-        size = os.path.getsize(fn)
-        with open(fn, 'r') as f:
-            if size > 2000000:
-                f.seek(size - 2000000)
-            text = f.read()
-        #   [2026-10-08] 매치 줄만 찍으면 원인을 가린다: Abaqus 는 오류문을 줄바꿈하므로
-        #   "AN INITIAL CONDITION HAS BEEN SPECIFIED ON ELEMENT SET" 다음 줄에 **집합 이름**이
-        #   온다. 그 줄은 키워드에 안 걸려 버려졌고, 매번 원인을 추측해야 했다(HF 가 여기서 막혔다).
-        #   그래서 매치 지점마다 **뒤 2줄까지** 줄번호와 함께 남긴다(덱 대조용).
-        #   [2026-10-08] 먼저 **매치 줄 번호만** 모으고(정수 리스트 = 메모리 무시 가능),
-        #   출력은 앞 4개 + 끝 11개를 쓴다. 매치마다 문자열을 쌓으며 상한으로 끊으면
-        #   8MB .msg 에서 **마지막(=중단 원인)** 을 잃는다 — 그 실수를 두 번 했다.
-        _lines = text.splitlines()
-        _idx = [i for i, _ln in enumerate(_lines)
-                if _ln.strip() and any(k.lower() in _ln.lower() for k in keys)]
-        emit("[DIAG:%s] %s (%.0f KB) 핵심줄 %d개 (문맥 포함)"
-              % (job_name, fn, size / 1024.0, len(_idx)))
-        _keep = _idx if len(_idx) <= 16 else (_idx[:4] + [None] + _idx[-11:])
-        for _i in _keep:
-            if _i is None:
-                emit("      | ... (중략 %d개) ..." % (len(_idx) - 15))
-                continue
-            for _j in range(_i, min(_i + 3, len(_lines))):
-                if _lines[_j].strip():
-                    emit("      | %d| %s" % (_j + 1, _lines[_j].strip()[:170]))
 
 
 #   [§19.110] LF 진폭 override — 런타임 인자(fidelity) 파생이라 SETTINGS 밖에 남긴다.
@@ -2788,11 +2214,12 @@ elif fidelity == 'HF':
 
     if not run_job_with_ladder(HF_JOB):
         emit("!!! ERROR: HF 완주 실패(안정화 사다리 소진) -> RESULTS:FAIL")
-        _archive_result(x_c, d_c, 'HF_FAIL', 'nan,nan,nan,nan',
-                        dict({'status': 'LADDER_EXHAUSTED',
-                              'stabilize_global_ladder': str(STABILIZE_GLOBAL_LADDER),
-                              'stabilize_post_ladder': str(STABILIZE_POST_LADDER)},
-                             **_r13_ct_keys()))
+        archive_result(_HERE, _CFG_SHA1, globals().get('LF_ODB'), x_c, d_c, 'HF_FAIL',
+                       'nan,nan,nan,nan',
+                       dict({'status': 'LADDER_EXHAUSTED',
+                             'stabilize_global_ladder': str(STABILIZE_GLOBAL_LADDER),
+                             'stabilize_post_ladder': str(STABILIZE_POST_LADDER)},
+                            **r13_ct_keys(_R13_CT)))
         emit("RESULTS:FAIL")
         sys.stdout.flush()
         sys.exit(1)
@@ -2871,18 +2298,19 @@ try:
                                 _extra[_k2] = _v2
         except Exception:
             pass
-        _extra.update(_r13_ct_keys())
-        _archive_result(x_c, d_c, fidelity, _rc, _extra)
-        # [19.106] DN: 줄 -> 점별 txt 에 dn_ 접두 append (_archive_result 의 'w' 뒤).
+        _extra.update(r13_ct_keys(_R13_CT))
+        archive_result(_HERE, _CFG_SHA1, globals().get('LF_ODB'),
+                       x_c, d_c, fidelity, _rc, _extra)
+        # [19.106] DN: 줄 -> 점별 txt 에 dn_ 접두 append (archive_result 의 'w' 뒤).
         #     RESULTS 4필드와 all_results.csv 열 스키마는 그대로다.
-        _archive_dn(x_c, d_c, _dn_lines)
+        archive_dn(_HERE, x_c, d_c, _dn_lines)
         # [paper-match] ZK: 줄 -> 점별 txt 에 zk_ 접두 append (CSV 열은 그대로).
         #   HFONLY 처럼 짝 LF 가 없으면 ZK 줄 자체가 없다(경고 생략).
         if _zk_lines or fidelity == 'LF':
-            _archive_zk(x_c, d_c, _zk_lines, _zkiw_lines)
+            archive_zk(_HERE, x_c, d_c, _zk_lines, _zkiw_lines)
         # 성공한 HF 런에서만: HF ODB 설계점 태깅 + slope_stats 아카이빙(예외 안전).
-        #     _archive_result 가 점별 txt 를 'w' 로 다시 쓰므로 **그 뒤에** append 해야 한다.
-        _archive_slope(x_c, d_c)
+        #     archive_result 가 점별 txt 를 'w' 로 다시 쓰므로 **그 뒤에** append 해야 한다.
+        archive_slope(_HERE, _RUN, HF_ODB, x_c, d_c)
     else:
         emit("!!! ERROR: Extraction failed. 'extraction.txt' not found.") 
         emit("RESULTS:FAIL")   # 상위(mfbo)가 원인을 식별하도록 명시적 실패 신호
