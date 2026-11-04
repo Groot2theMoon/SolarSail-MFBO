@@ -941,7 +941,7 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
     loss_sum = 0.0
     ideal_area_sum = 0.0
     torque_z = 0.0
-    force_xy = np.zeros(2, dtype=np.float64)
+    force_tot = np.zeros(3, dtype=np.float64)
 
     # 4절점 요소 (Quad) 필터링
     quad_conns = [c for c in connectivity if len(c) == 4]
@@ -979,7 +979,7 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         #   [2026-11-04] cp/cm 오프셋용 z-모멘트: 요소 중심 × 요소 힘.
         _cent = 0.25 * (v0 + v1 + v2 + v3) - _TORQUE_CENTRE
         torque_z += float(np.sum(_cent[:, 0] * _ftot[:, 1] - _cent[:, 1] * _ftot[:, 0]))
-        force_xy += np.sum(_ftot[:, :2], axis=0)
+        force_tot += np.sum(_ftot, axis=0)
 
         loss_sum += (np.sum(areas) * IDEAL_THRUST_COEFF - actual_thrust)
         ideal_area_sum += np.sum(areas)
@@ -1016,7 +1016,7 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         actual_thrust = np.dot(np.sum(_ftot, axis=0), U_SUN)
         _cent = (v0 + v1 + v2) / 3.0 - _TORQUE_CENTRE
         torque_z += float(np.sum(_cent[:, 0] * _ftot[:, 1] - _cent[:, 1] * _ftot[:, 0]))
-        force_xy += np.sum(_ftot[:, :2], axis=0)
+        force_tot += np.sum(_ftot, axis=0)
 
         loss_sum += (np.sum(areas) * IDEAL_THRUST_COEFF - actual_thrust)
         ideal_area_sum += np.sum(areas)
@@ -1035,10 +1035,11 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         _signed = loss_sum / (_den_area * IDEAL_THRUST_COEFF)
         if diag is not None:
             #   [2026-11-04] hf 는 max(...,0) 로 **센서링**된다(음수=이득). 원값과 토크를 함께 남긴다.
-            _fxy = float(np.hypot(force_xy[0], force_xy[1]))
+            _fm = float(np.linalg.norm(force_tot))
             diag['hf_signed'] = _signed
             diag['torque_z_nm'] = torque_z
-            diag['cp_offset_m'] = (torque_z / _fxy) if _fxy > 0.0 else float('nan')
+            diag['force_magnitude_n'] = _fm
+            diag['cp_offset_m'] = (torque_z / _fm) if _fm > 0.0 else float('nan')
         return float(max(_signed, 0.0))
     return float(max(loss_sum, 1e-12))
 
