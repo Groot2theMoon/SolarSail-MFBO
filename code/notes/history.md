@@ -5083,3 +5083,25 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   남은 공통 이름은 런타임(`_CFG`/`_HERE`/`V*`/`angle_*`)과 파생(`CABLE_AREA`/`EDGE_SPRING_K`),
   값이 다른 축(`SIGMA0`/`CLAMP_EXCL_R`/`MESH_ORDER`/`DISP_GLOBAL`/`JOB_NAME`)이다.
   파생 상수는 config 적용 **뒤**에 계산돼야 하므로 스크립트에 남기는 것이 맞다.
+
+### 19.120 P3 후속 - leak 검사기 멀티라인 import, cable 오라클 단일 출처 (2026-11-04)
+
+[증상]
+  P3a/b 후 `static_leak_check.py` 가 HF/buckle 에서 오탐 10건(R2: BASE/THICKNESS/SEED_DIV/...).
+  `from core.constants import (` 가 **여러 줄**이 되자 `imported_names()` 가 첫 줄만 읽었다.
+
+[조치]
+  - `join_from_imports()`: 괄호가 닫힐 때까지 줄을 합친 뒤 괄호를 공백으로 바꾼다.
+    `imported_names()` 가 이 정규화된 텍스트를 쓴다. 단일행 괄호 import 도 같이 처리된다.
+  - 검증: `static_leak_check.py` -> **이상 없음 (3 파일)**, selftest OK.
+
+[결정 - `tools/run_abaqus_cable.py`]
+  - 이 오라클도 HF/좌굴과 **같은 모델 상수**를 쓰도록 `core/constants.py` 를 import 한다.
+    독립값을 유지하면 비교 자체가 오염되므로, "일부러 독립"이 아니라 "단일 출처"가 맞다.
+  - tools/ 실행을 위해 cwd 부모에서 `core/constants.py` 를 찾아 sys.path 에 넣는 부트스트랩을 둔다.
+  - 파생값 `CABLE_AREA` 만 스크립트에 남긴다(반지름은 상수 모듈).
+  - 이 변경으로 `defined_somewhere` 에 남아 오탐을 가리던 자체 정의도 사라졌다 - 가드가 정직해졌다.
+
+[기록 정정]
+  - p3 매니페스트 커밋 제목의 "12,846 lines" 는 P3b 이전 값이다. 실제 최종값은 **12,860줄**
+    (25파일, `code/core/*` 포함). 커밋 메시지는 이력이라 고치지 않고 여기에 정정한다.
