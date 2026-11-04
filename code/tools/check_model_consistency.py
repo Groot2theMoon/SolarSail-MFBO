@@ -89,6 +89,12 @@ SHARED_CONST = [
     "ELEM_CODE_TRI = S3",
     "SEED_DIV = 200.0",
     "CLAMP_CABLE_LEN = 0.5",
+    "PERTURBATION = 0.01",
+    "CABLE_RADIUS = 5.0e-4",
+    "LEN_TOP = 0.280",
+    "LEN_BOT = 0.689",
+    "PAPER_MATCH = True",
+    "PAPER_MESH_ORDER = 1",
 ]
 
 # 모드 소스(run_abaqus_mode.py)는 클램프가 없는 모델이므로 clamp_coord_* 정의만 제외한다.

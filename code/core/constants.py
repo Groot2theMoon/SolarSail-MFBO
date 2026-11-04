@@ -29,3 +29,16 @@ THICKNESS = 5.0e-6                     # m. 2.5e-6 은 cable 변형으로 수렴
 
 # ---- 클램프 케이블 ----
 CLAMP_CABLE_LEN = 0.5                  # m - HF/좌굴/모드가 같은 값이어야 한다(검사기 계약).
+CABLE_RADIUS = 5.0e-4                  # m
+LEN_TOP = 0.280                        # m
+
+LEN_BOT = 0.689                        # m
+
+# ---- 좌굴 스텝 ----
+PERTURBATION = 0.01                    # m - Buckle 스텝 섭동(λ×P 불변, §19.80).
+
+# ---- 프리셋/실행 ----
+PAPER_MATCH = True                     # 논문 정합 프리셋 스위치(HF 는 파생값을 이 값으로 만든다).
+PAPER_MESH_ORDER = 1                   # 기본 1차 S4/S3. 2차는 base state 불안정.
+INSTANCE_NAME = 'MEMBRANE-1'
+NUMCPUS = 4

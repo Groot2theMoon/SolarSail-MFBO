@@ -100,9 +100,18 @@ def buckle_disp():
     return float(m.group(1)) if m else 1.8e-5
 
 
+def source_texts():
+    """[P3] 상수 파일 + 스크립트를 한 텍스트로. 상수는 core/constants.py 가 정본이다."""
+    parts = []
+    for p in (CONSTANTS, BUCKLE_SCRIPT):
+        if os.path.exists(p):
+            parts.append(io.open(p, encoding='utf-8', errors='replace').read())
+    return '\n'.join(parts)
+
+
 def buckle_mesh_tag():
     """explicit config -> buckle source PAPER_MATCH/PAPER_MESH_ORDER."""
-    txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
+    txt = source_texts()
     _paper = CFG.get('PAPER_MATCH',
                      re.search(r'^PAPER_MATCH\s*=\s*True\b', txt, re.M) is not None)
     order = int(CFG.get('MESH_ORDER', 0) or
@@ -122,7 +131,7 @@ def seed_case():
 
 def buckle_pert_tag():
     """explicit config -> buckle source PERTURBATION -> _plvNNNNN."""
-    txt = io.open(BUCKLE_SCRIPT, encoding='utf-8', errors='replace').read()
+    txt = source_texts()
     if CFG.get('PERTURBATION') is not None:
         p = float(CFG['PERTURBATION'])
     else:
@@ -151,12 +160,8 @@ def expected_membrane_nodes():
     1st order: seed_div=200 -> 10,201 / 632 -> 100,489 / 2000 -> 1,002,001.
     2nd order is counted through aba_grid_mesh._second_order.
     """
-    #   [P3] BASE/HEIGHT/SEED_DIV 는 core/constants.py 로 이동했다 -> 상수 파일을 먼저 본다.
-    _texts = []
-    for _p in (CONSTANTS, BUCKLE_SCRIPT):
-        if os.path.exists(_p):
-            _texts.append(io.open(_p, encoding='utf-8', errors='replace').read())
-    txt = '\n'.join(_texts)
+    #   [P3] BASE/HEIGHT/SEED_DIV/PAPER_MESH_ORDER 는 core/constants.py 로 이동했다 -> 상수 파일을 먼저 본다.
+    txt = source_texts()
 
     def _c(name, default):
         if name in CFG and CFG[name] is not None:

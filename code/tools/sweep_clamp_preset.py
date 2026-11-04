@@ -29,7 +29,7 @@
     FAIL : ERROR, 고유값 0개, 또는 음수 고유값 >= 100 (base state 불안정)
 
 주의
-    - run_abaqus_buckle.py 는 **바이트 단위로 원복**한다(finally).
+    - run_abaqus_buckle.py 와 core/constants.py 를 **바이트 단위로 원복**한다(finally).
     - 고유값이 0개면 1회 자동 재시도한다(완료 마커 미기록 같은 일시 중단 대비).
     - 각 arm 의 .dat/.msg 를 sweep_out/ 에 복사한다(잡 이름이 겹쳐도 보존).
     - P_crit = λ_min x PERTURBATION. 이 값이 일정하면 PERT 는 스케일일 뿐이다.
@@ -48,6 +48,8 @@ import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tools/ -> code/
 BUCKLE = os.path.join(HERE, 'run_abaqus_buckle.py')
+#   [P3] PERTURBATION 은 core/constants.py 로 이동했다 -> 이 파일도 패치/원복해야 한다.
+CONSTANTS = os.path.join(HERE, 'core', 'constants.py')
 OUTDIR = os.path.join(HERE, 'sweep_out')
 
 # name, DISP_TOP_OVER_CORNER, PERTURBATION, MODE_STABILIZATION, CLAMP_PULL(None=--clamp-pull)
@@ -70,16 +72,20 @@ def _sub1(pat, rep, s, what):
     return new
 
 
-def patch_constants(txt, top, pert, stab):
-    """CASE 를 clamp_only 로 고정하고 자유 상수 3개만 덮어쓴다."""
+def patch_buckle(txt, top, stab):
+    """buckle 소스에서 CASE / DISP_TOP_OVER_CORNER / MODE_STABILIZATION 을 덮어쓴다."""
     txt = _sub1(r"^CASE\s*=\s*'[^']*'", "CASE = 'clamp_only'", txt, 'CASE')
     txt = _sub1(r"^DISP_TOP_OVER_CORNER\s*=.*$",
                 "DISP_TOP_OVER_CORNER = %.10g" % top, txt, 'DISP_TOP_OVER_CORNER')
-    txt = _sub1(r"^PERTURBATION\s*=.*$",
-                "PERTURBATION = %.10g" % pert, txt, 'PERTURBATION')
     txt = _sub1(r"^MODE_STABILIZATION\s*=.*$",
                 "MODE_STABILIZATION = %.10g" % stab, txt, 'MODE_STABILIZATION')
     return txt
+
+
+def patch_pert_const(txt, pert):
+    """[P3] PERTURBATION 은 core/constants.py 에서 덮어쓴다."""
+    return _sub1(r"^PERTURBATION\s*=.*$",
+                 "PERTURBATION = %.10g" % pert, txt, 'PERTURBATION')
 
 
 def newest_dat(t0):
@@ -150,9 +156,12 @@ def run_arm(i, a):
     """한 arm 실행. 반환: (eigs, neg, err, datp, secs)."""
     name, top, pert, stab, pull0 = ARMS[i]
     pull = a.clamp_pull if pull0 is None else pull0
-    txt = patch_constants(io.open(BUCKLE, 'r', encoding='utf-8').read(), top, pert, stab)
+    txt = patch_buckle(io.open(BUCKLE, 'r', encoding='utf-8').read(), top, stab)
     with io.open(BUCKLE, 'w', encoding='utf-8') as f:
         f.write(txt)
+    ctxt = patch_pert_const(io.open(CONSTANTS, 'r', encoding='utf-8').read(), pert)
+    with io.open(CONSTANTS, 'w', encoding='utf-8') as f:
+        f.write(ctxt)
     cmd = 'abaqus cae noGUI=run_abaqus_buckle.py -- %g %g %g %g' % (
         a.x_c, a.disp, pull, a.excl)
     print('  $ ' + cmd)
@@ -199,6 +208,7 @@ def main(argv=None):
         os.makedirs(OUTDIR, exist_ok=True)
 
     orig = io.open(BUCKLE, 'rb').read()
+    orig_const = io.open(CONSTANTS, 'rb').read()
     print('[sweep] x_c=%g  disp=%.4g  pull(기본)=%.4e  excl=%.2f  arms=%s'
           % (a.x_c, a.disp, a.clamp_pull, a.excl, idx))
     print('[sweep] CASE=clamp_only 고정, PRETENSION_MODE=corner2(CASE 소유). 음수 임계=%d'
@@ -212,7 +222,8 @@ def main(argv=None):
             print('\n===== arm %d/%d  %s : DISP_TOP=%.10g  PERT=%.4g  STAB=%.4g  pull=%.3e ====='
                   % (i, len(ARMS) - 1, name, top, pert, stab, pull))
             if a.dry_run:
-                patch_constants(orig.decode('utf-8'), top, pert, stab)
+                patch_buckle(orig.decode('utf-8'), top, stab)
+                patch_pert_const(orig_const.decode('utf-8'), pert)
                 results.append((name, top, pert, stab, pull, 0, 'DRY', '', 0.0))
                 continue
             eigs, neg, err, datp, secs = run_arm(i, a)
@@ -232,7 +243,10 @@ def main(argv=None):
     finally:
         with open(BUCKLE, 'wb') as f:
             f.write(orig)
-        print('\n[sweep] run_abaqus_buckle.py 원복 완료 (%d bytes)' % len(orig))
+        with open(CONSTANTS, 'wb') as f:
+            f.write(orig_const)
+        print('\n[sweep] run_abaqus_buckle.py (%d bytes) + core/constants.py (%d bytes) 원복 완료'
+              % (len(orig), len(orig_const)))
 
     print('\n===== 요약 =====')
     print('%-7s %-10s %-6s %-8s %-10s %3s  %-5s %-11s %s'

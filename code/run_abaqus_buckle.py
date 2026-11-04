@@ -57,7 +57,10 @@ for _cp in (os.getcwd(), os.path.dirname(os.getcwd()),
 import analysis_config as _AC
 #   [P3] HF/좌굴이 공유하는 모델 상수의 단일 출처. code/ 는 위 루프에서 sys.path 에 들어왔다.
 from core.constants import (BASE, HEIGHT, ELEM_CODE_QUAD, ELEM_CODE_TRI,  # noqa: E402
-                            SEED_DIV, THICKNESS, CLAMP_CABLE_LEN)
+                            SEED_DIV, THICKNESS, CLAMP_CABLE_LEN,
+                            CABLE_RADIUS, LEN_TOP, LEN_BOT,
+                            PERTURBATION, PAPER_MATCH, PAPER_MESH_ORDER,
+                            INSTANCE_NAME, NUMCPUS)
 _CLI_REST, _CLI_CONFIG, _CLI_CASE = _AC.split_cli(sys.argv[1:])
 _CFG = _AC.load_config(_CLI_CONFIG)
 _CFG_HASH = _AC.config_hash(_CFG)
@@ -78,8 +81,7 @@ _CFG_HASH = _AC.config_hash(_CFG)
 #   안 되고, 클램프 케이스가 paper 프리셋을 물려받아 좌굴모드가 깨지는 문제가 있었다.
 #   지금은 각 상수가 독립이다 - 바꾸려면 그 줄만 고친다. (2026-10-22)
 #   !! 값을 바꾸면 시드표(modes_*.txt)를 재생성해야 한다 - make_seed.py 를 먼저 실행.
-PAPER_MATCH = True            # 로그 표기용. 아래 프리셋 상수들을 제어하지 않는다.
-PAPER_MESH_ORDER = 1          # make_seed.py 가 읽는 이름. MESH_ORDER 와 같은 값으로 둔다.
+#   PAPER_MATCH / PAPER_MESH_ORDER 는 core/constants.py 소관이다(§19.119).
 MESH_ORDER = 1                # 1차 S4/S3. 2차는 base state 불안정으로 모드 추출 실패(2026-10-20)
 #   [2026-10-20 실측] 논문 정적 스텝의 코너 0.0005 m 는 이 모델에서 **base state 가 불안정**하다:
 #     SYSTEM MATRIX 592 negative eigenvalues / DIFFERENTIAL MATRIX 166,009 negative diagonals
@@ -119,10 +121,8 @@ SIGMA0 = 700.0          # 초기응력 [Pa]
 
 # ---- ④ 하중/프리텐션 ----
 # ---- 케이블 (mode.py / HF 와 동일) ----
-CABLE_RADIUS = 5.0e-4 # m
+#   CABLE_RADIUS / LEN_TOP / LEN_BOT 은 core/constants.py 소관이다(§19.119). 면적은 파생값이라 여기 남긴다.
 CABLE_AREA = np.pi * (CABLE_RADIUS**2)
-LEN_TOP = 0.280 # m
-LEN_BOT = 0.689 # m
 #   CLAMP_CABLE_LEN 은 core/constants.py 에서 import 한다(HF 와 같은 값 - 검사기 계약).
 #   PRETENSION_MODE 는 **CASE 표가 소유**한다(아래 _ROUTE 에서 파생). 자유 상수로 두지 않는다.
 #   clamp_only 에 paper3(3점 2:1)를 물리면 BC_Anchor_Top 이 앵커에서 구동으로 바뀌어
@@ -141,9 +141,7 @@ CLAMP_DC = 0.0556  # d_c - 클램프 당김 비율 (CLAMP_PULL = 코너 당김 *
 #   과거 CLAMP_DIR 상수는 job 이름의 'normal' 리터럴만 남기고 제거했다(2026-10-21).
 
 # ---- 좌굴 스텝 (run_abaqus_cable.py 에서 완주가 확인된 설정과 동일) ----
-PERTURBATION = 0.01           # m - Buckle 스텝 섭동. 0.10(논문)과 0.01 모두 PASS 했고
-                              #   λ×P 가 불변이라 **고유벡터는 동일**하다. λ 가 큰 쪽(0.01)을
-                              #   고른 이유는 준영모드(−1e-8 급)와 수치적으로 더 멀기 때문이다.
+#   PERTURBATION 은 core/constants.py 소관이다(§19.119). λ×P 가 불변이라 고유벡터는 동일하다.
 
 PATTERN_SIGN = 1.0            # 좌굴 '하중 패턴' 부호: 1.0 = 바깥으로 더 당김
 
@@ -201,10 +199,9 @@ EDGE_SPRING_K = EDGE_SPRING_ALPHA * EDGE_SPRING_SIGMA_T_REF
 # ---- misc (어느 그룹에도 안 들어가는 이름/경로/병렬 설정) ----
 TAG = '[run_abaqus_buckle]'
 RUN_DIR_NAME = "buckle"
-NUMCPUS = 4
+#   NUMCPUS / INSTANCE_NAME 은 core/constants.py 소관이다(§19.119).
 
 MODEL_PREFIX = 'SailModel_Buckle'
-INSTANCE_NAME = 'MEMBRANE-1'
 #   Explicit config overrides defaults; --case has higher priority than JSON CASE.
 _AC.apply_globals(globals(), _CFG)
 if _CLI_CASE:

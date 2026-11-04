@@ -76,7 +76,10 @@ for _cp in (os.getcwd(), os.path.dirname(os.getcwd()),
 import analysis_config as _AC
 #   [P3] HF/좌굴이 공유하는 모델 상수의 단일 출처. code/ 는 위 루프에서 sys.path 에 들어왔다.
 from core.constants import (BASE, HEIGHT, ELEM_CODE_QUAD, ELEM_CODE_TRI,  # noqa: E402
-                            SEED_DIV, THICKNESS, CLAMP_CABLE_LEN)
+                            SEED_DIV, THICKNESS, CLAMP_CABLE_LEN,
+                            CABLE_RADIUS, LEN_TOP, LEN_BOT,
+                            PERTURBATION, PAPER_MATCH, PAPER_MESH_ORDER,
+                            INSTANCE_NAME, NUMCPUS)
 _CLI_REST, _CLI_CONFIG, _CLI_CASE = _AC.split_cli(sys.argv[1:])
 _CFG = _AC.load_config(_CLI_CONFIG)
 _CFG_HASH = _AC.config_hash(_CFG)
@@ -104,8 +107,7 @@ _CFG_HASH = _AC.config_hash(_CFG)
 #   !! PAPER_MATCH=True 는 **시드표 재생성**이 필요하다:
 #        make_seed.py 로 modes_seed.txt 를 2차 격자에서 다시 만든 뒤 HF 를 돌린다.
 #      표가 1차 라벨이면 seed_family_gate 가 HF 제출 전에 중단한다.
-PAPER_MATCH = True
-PAPER_MESH_ORDER = 1             # 기본 1차 S4/S3. 2차(S8R5/STRI65)는 실험용 - 모드 추출 base state 불안정
+#   PAPER_MATCH / PAPER_MESH_ORDER 는 core/constants.py 소관이다(§19.119).
 MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
 LOAD_MODE = 'cable_stress' if PAPER_MATCH else 'disp'   # 'disp' | 'cable_stress'
 CABLE_PRESTRESS = 2.69e7         # Pa - 논문 5PCS Fig. 11, 3케이블 동일
@@ -168,7 +170,7 @@ RUN_MODE = 'auto'
 
 # ---- ② 형상/격자 ----
 MODEL_NAME = 'SailModel_Triangle'
-INSTANCE_NAME = 'MEMBRANE-1'
+#   INSTANCE_NAME 은 core/constants.py 소관이다(§19.119).
 
 #   BASE/HEIGHT/ELEM_CODE_*/SEED_DIV/THICKNESS/CLAMP_CABLE_LEN 은 core/constants.py 가 단일 출처다
 #   (§19.118). 막 요소는 1차(S4/S3) 유지 - 2차는 base state 를 더 나쁘게 만들어 기각됐다(§4).
@@ -191,10 +193,8 @@ EDGE_SPRING_ALPHA = 1.0e-3     # 1e-3(거의 자유) ~ 1(자연 강성) 스윕�
 EDGE_SPRING_K = EDGE_SPRING_ALPHA * EDGE_SPRING_SIGMA_T_REF
 
 # 케이블 파라미터 (Galhofo reference)
-CABLE_RADIUS = 5.0e-4 # m
+#   CABLE_RADIUS / LEN_TOP / LEN_BOT 은 core/constants.py 소관이다(§19.119). 면적은 파생값이라 여기 남긴다.
 CABLE_AREA = np.pi * (CABLE_RADIUS**2)
-LEN_TOP = 0.280 # m
-LEN_BOT = 0.689 # m
 
 #   CLAMP_CABLE_LEN 은 core/constants.py 에서 import 한다.
 
@@ -235,8 +235,7 @@ PRETENSION_SCALE = 10.0          # 프리텐션 변위 = 5e-6 m * 이 값 = 5e-5
 #     막 응력은 변하지 않는다(2026-11-03 `probe_prestress_sweep.py` 로 확인).
 #     옛 주석 "2122 Pa @ 5e-5 m, 운용점 조정은 DISP_GLOBAL" 은 disp 경로 기준이다.
 DISP_GLOBAL = 165e-6
-# 좌굴 스텝 perturbation - K_delta 를 만든다. 너무 작으면 고유값 분리가 나빠져 추출이 실패한다(§8b).
-PERTURBATION = 0.01
+# 좌굴 스텝 perturbation(§8b)은 core/constants.py 소관이다(§19.119).
 GLOBAL_FINAL = 1e-3  # 최종 하중: 코너 당김 1e-3 m
 # 하중 각도 (28.6도)
 angle_deg = 28.6
@@ -304,7 +303,7 @@ BUCKLE_VECTORS = 250
 # ---- ⑥ HF 솔버 ----
 # Abaqus 병렬 스레드/도메인 수 (1 = 단일 CPU, 4 = 대략 1.5~2.5배 빠름).
 #   라이선스 토큰이 없으면 잡이 라이선스 오류로 즉시 죽는다 -> 그때는 1 로.
-NUMCPUS = 4
+#   NUMCPUS 는 core/constants.py 소관이다(§19.119).
 # A: 좌굴 고유값 추출 솔버. **기본 LANCZOS** - Abaqus 의 *BUCKLE 기본 솔버이자 이 코드의
 #    원래 설정(LANCZOS + maxBlocks=DEFAULT)이다. 요소 ~1만 개 / DOF ~4만 개 + 두께 5um 라
 #    강성 조건수가 극단적이어서 SUBSPACE(작은 모델·다수 모드용)로는 100개 모드 추출이
