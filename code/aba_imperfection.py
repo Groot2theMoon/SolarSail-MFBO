@@ -68,7 +68,10 @@ def source_model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
 
     반환: (지문 or None, {상수: 값}). 소스를 못 읽거나 상수를 하나도 못 찾으면 (None, {}).
     """
-    found = {}
+    #   같은 키가 두 번 대입될 수 있다(실측: run_abaqus_buckle.py 의 CLAMP_EXCL_R —
+    #   기본값 0.21 과 CLI override). 예전 지문은 **모든 대입**을 파일 순서로 해싱했다.
+    #   keys 튜플에 그 키를 두 번 넣으면 "대입 순서"를 그대로 재현할 수 있다.
+    occ = {}
     try:
         # [2026-10-05] encoding 을 반드시 명시한다. 이 파일에는 한글 주석이 있고, Windows 의
         #   기본 인코딩(cp949)으로 UTF-8 파일을 열면 UnicodeDecodeError 가 나는데, 아래
@@ -82,21 +85,30 @@ def source_model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
         with fh as f:
             for line in f.read().splitlines():
                 code = line.split('#')[0].strip()
-                for k in keys:
-                    if k in found:
-                        continue
+                for k in dict.fromkeys(keys):      # 중복 키는 한 번만 검사
                     m = re.match(r'^%s\s*=\s*(.+)$' % re.escape(k), code)
                     if m:
-                        found[k] = m.group(1).strip()
+                        occ.setdefault(k, []).append(m.group(1).strip())
     except Exception:
         return None, {}
-    if not found:
+    if not occ:
         return None, {}
     #   [2026-11-04 P3] 해시 순서를 **keys 순서**로 고정한다. 예전에는 파일 등장 순서였다 ->
     #     상수를 다른 파일(core/constants.py)로 옮기면 파일 순서가 바뀌어 지문이 변했다.
     #     키 순서가 곧 canonical order 이므로, 이동해도 값만 같으면 지문이 같다.
-    vals = ['%s=%s' % (k, found[k]) for k in keys if k in found]
+    #     같은 키가 여러 번 나오면 keys 안의 그 횟수만큼 **순서대로** 소비한다.
+    vals = []
+    used = {}
+    for k in keys:
+        _lst = occ.get(k) or ()
+        _i = used.get(k, 0)
+        if _i < len(_lst):
+            vals.append('%s=%s' % (k, _lst[_i]))
+            used[k] = _i + 1
+    if not vals:
+        return None, {}
     digest = hashlib.sha1('|'.join(vals).encode('utf-8')).hexdigest()[:16]
+    found = dict((k, v[0]) for k, v in occ.items())
     return digest, found
 
 
@@ -468,6 +480,7 @@ BUCKLE_FINGERPRINT_KEYS = (
     'THICKNESS', 'CLAMP_EXCL_R', 'SIGMA0', 'CLAMP_CABLE_LEN', 'DISP_GLOBAL',
     'CORNER_ANGLE_DEG', 'CLAMP_DC', 'PERTURBATION', 'PATTERN_SIGN',
     'N_EIG_BUCKLE', 'BUCKLE_VECTORS', 'MODE_STABILIZATION', 'PRETENSION_MODE',
+    'CLAMP_EXCL_R',            # 382행 CLI override — 108행 값 뒤에 온다(중복 대입 보존)
     'JOB_NAME')
 BUCKLE_SCRIPT_NAME = 'run_abaqus_buckle.py'
 SEED_DIR_NAME = 'seeds'
