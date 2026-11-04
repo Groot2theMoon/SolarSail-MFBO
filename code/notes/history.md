@@ -5049,3 +5049,37 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [다음]
   남은 중복 상수는 소비처(도구가 텍스트를 치환하는지)를 먼저 확인한 뒤 하나씩 옮긴다.
   특히 `PERTURBATION` 은 `sweep_clamp_preset.py` 를 상수 파일 대상으로 바꾸는 작업이 선행돼야 한다.
+
+### 19.119 P3b - 나머지 정적 공통 상수 8개 이동 (2026-11-04)
+
+[옮긴 것]
+  `PERTURBATION` / `PAPER_MATCH` / `PAPER_MESH_ORDER` / `CABLE_RADIUS` / `LEN_TOP` / `LEN_BOT` /
+  `INSTANCE_NAME` / `NUMCPUS`. 이제 `core/constants.py` 가 15개 상수의 단일 출처다.
+
+[텍스트 소비처 - 이동 전에 고쳐야 했던 곳]
+  1. `make_seed.py`: `buckle_mesh_tag()`(PAPER_*), `buckle_pert_tag()`(PERTURBATION),
+     `expected_membrane_nodes()`(BASE/HEIGHT/SEED_DIV/PAPER_MESH_ORDER) 가 스크립트만 읽고 있었다.
+     `source_texts()` = 상수 파일 + 스크립트를 합쳐 읽도록 통일했다.
+  2. `tools/sweep_clamp_preset.py`: `PERTURBATION` 을 buckle 소스에서 치환하고 있었다 ->
+     `core/constants.py` 를 치환하고, **두 파일 모두** finally 에서 바이트 원복하도록 바꿨다.
+  3. `check_model_consistency.py`: `SHARED_CONST` 를 7 -> 13개로 확장(PERTURBATION/CABLE_RADIUS/
+     LEN_TOP/LEN_BOT/PAPER_MATCH/PAPER_MESH_ORDER).
+
+[P3b 가 드러낸 기존 결함 - 스윕의 CASE 패치]
+  `sweep_clamp_preset.py` 는 `^CASE\s*=\s*'...'` 를 치환했는데, CASE 는 2026-10-22 부터
+  `_CLI_CASE or _CFG.get('CASE', 'paper')` 파생이라 **한 번도 매치되지 않았다**(dry-run 실측).
+  -> 소스 패치를 지우고 실행 인자 `--case clamp_only` 로 고정했다. `split_cli` 가 `--case` 를
+  어디서나 제거하므로 숫자 인자 파싱은 그대로다(실측: rest 마지막 4개 = x/disp/pull/excl).
+
+[검증 - Abaqus 실측]
+  - py_compile OK / `check_model_consistency` **PASS**(HF↔buckle 13 + 공통상수 13).
+  - `buckle_fp` = **f86df4ef2156d803**(불변), `seed_gate` = **(True, 'OK')**,
+    합성표 헤더 지문 `896e607b273b2af0`(불변, make_seed dry-run + header 직접 계산).
+  - `sweep_clamp_preset.py --dry-run` 정상, `patch_pert_const` 치환/원복 확인, `--case` 파싱 확인.
+  - `test_fingerprint_api` 10/10. (`test_seed_path` 47/49 - 기존 `python3` 부재 2건)
+  - LF+HF 재해석 -> **G1 3/3 바이트 동일, G2 149키, G3 161kv, [gate] PASS**.
+
+[다음]
+  남은 공통 이름은 런타임(`_CFG`/`_HERE`/`V*`/`angle_*`)과 파생(`CABLE_AREA`/`EDGE_SPRING_K`),
+  값이 다른 축(`SIGMA0`/`CLAMP_EXCL_R`/`MESH_ORDER`/`DISP_GLOBAL`/`JOB_NAME`)이다.
+  파생 상수는 config 적용 **뒤**에 계산돼야 하므로 스크립트에 남기는 것이 맞다.
