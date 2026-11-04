@@ -28,6 +28,10 @@ import sys
 
 #   [P1] tools/ 로 옮겼다 - 검사 대상은 부모(code/)에 있으므로 HERE 는 부모를 가리킨다.
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+#   [P1] tools/ 에서 실행하면 sys.path[0] 이 tools/ 라 부모(code/)의 모듈을 못 찾는다
+#   (실측 2026-11-04: `import aba_grid_mesh` -> No module named). HERE 를 직접 넣는다.
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
 #   [2026-09-28 정정] 검사 대상은 **실제로 제출하는 HF** 다.
 #   예전에는 legacy 스크립트(run_abaqus_new.py)를 봤다 - 그 파일은 2026-10-21 삭제됐다.
 #   그래서 run_abaqus.py 의 모델 정의(요소/메쉬/결합)를 바꿔도 검사기가 PASS 를 냈다(가짜 초록불).
