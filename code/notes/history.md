@@ -5012,3 +5012,40 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - 주의: `FINGERPRINT_KEYS` 를 쓰는 다른 스크립트(hf/cable/attic)의 digest 는 바뀐다.
     이 값들은 어디에도 영속되지 않는다(시드표는 `buckle_fp` 만 사용) -> 표 재생성 불필요.
   - 이제 상수를 `core/constants.py` 로 옮겨도, 값만 같으면 buckle 지문이 유지된다.
+
+### 19.118 P3a - 공통 상수 단일 출처 `core/constants.py` (2026-11-04)
+
+[무엇을 옮겼나 - 7개]
+  `BASE` / `HEIGHT` / `ELEM_CODE_QUAD` / `ELEM_CODE_TRI` / `SEED_DIV` / `THICKNESS` /
+  `CLAMP_CABLE_LEN`. 두 스크립트에 **문자 그대로** 중복돼 있던 것 중, 지문 키에 들어가거나
+  `check_model_consistency.SHARED` 가 검사하던 값이다. 값/우변 표기는 그대로 복사했다.
+
+[왜 이 7개만인가 - 나머지는 지금 옮기면 안 된다]
+  - `PERTURBATION`: `tools/sweep_clamp_preset.py` 가 **buckle 소스 텍스트**의 이 줄을 치환한다.
+  - `RELEASE_EDGE_U3` / `EDGE_SPRING_ALPHA`: `tools/ab_softspring.py` 가 run_abaqus.py 텍스트를 편집한다.
+  - `CLAMP_EXCL_R` / `SIGMA0` / `MESH_ORDER` / `DISP_GLOBAL` / `JOB_NAME`: 두 스크립트의 **값이 다르거나**
+    런타임 파생(CLI/config)이다.
+  - `_CFG`/`_HERE`/`_RUN`/`V*`/`angle_*`/`CABLE_AREA`/`EDGE_SPRING_K`: 모듈 로드 시점의 런타임/파생값.
+  공통 이름 42개 중 7개를 옮겼고, 나머지 35개는 위 이유로 남긴다(다음 단계 후보).
+
+[소비처를 함께 고쳤다 - 안 고치면 조용히 깨지는 곳]
+  1. `aba_imperfection.source_model_fingerprint(source)` 가 **여러 소스**(list/tuple)를 순서대로
+     스캔한다. 지문은 keys 순서로 해싱하므로 소스 순서만 고정하면 된다.
+  2. `run_abaqus.py` 의 seed_gate: `_buckle_sources = (core/constants.py, run_abaqus_buckle.py)`.
+  3. `make_seed.py`: `BUCKLE_FP_SOURCES` (지문/게이트), `expected_membrane_nodes()` 의 상수 읽기는
+     상수 파일을 먼저 본다. (합성표 헤더 지문은 `896e607b273b2af0` 그대로 - dry-run 실측.)
+  4. `check_model_consistency.py`: 옮긴 7개는 `SHARED_CONST` 로 분리해 **core/constants.py** 에서
+     검사하고, 두 스크립트가 `from core.constants import` 를 갖는지도 본다.
+
+[검증 - Abaqus 실측]
+  - `py_compile` OK (run_abaqus / buckle / make_seed / aba_imperfection / core.constants / 검사기).
+  - `buckle_fingerprint((core/constants.py, run_abaqus_buckle.py))` = **f86df4ef2156d803** (불변).
+  - `seed_gate(0.2, 0.0001, seeds/modes_xc0p2.txt, sources)` = **(True, 'OK')**.
+  - `check_model_consistency.py` = **PASS** (HF↔buckle 13 + 공통상수 7).
+  - `test_fingerprint_api` 10/10, `test_seed_path` 47/49(기존 `python3` 부재 2건).
+  - LF+HF 재해석 -> **G1 3/3 바이트 동일, G2 149키, G3 161kv, [gate] PASS**.
+  - `snapshot` 이 `core/*.py` 도 기록하도록 확장(상대경로 이름).
+
+[다음]
+  남은 중복 상수는 소비처(도구가 텍스트를 치환하는지)를 먼저 확인한 뒤 하나씩 옮긴다.
+  특히 `PERTURBATION` 은 `sweep_clamp_preset.py` 를 상수 파일 대상으로 바꾸는 작업이 선행돼야 한다.

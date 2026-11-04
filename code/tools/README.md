@@ -1,10 +1,11 @@
 # tools/ — 수동 실행 장비 (런타임 경로 밖)
 
 여기 있는 것은 `run_analysis.py` 가 부르지 않는다. 사람이 직접 돌려서 **측정·검증**하는 스크립트다.
-P1(2026-11-03)에서 `code/` 밖으로 옮겼다. `code/*.py` 는 **23개**(게이트 `refactor_gate.py` 포함,
-실행 경로 22개)다. `run_abaqus_mode.py` 는 §19.64 로 비교가 은퇴해 `attic/` 으로 내렸다.
-P2(2026-11-04)에서 `run_abaqus.py` 의 로그/아카이빙/잡진단 함수를 `ctx.py`·`post.py`·`solver.py`
-로 옮겼다(§19.116). 두 스크립트 모두 `code/` 에 있으므로 import 경로는 그대로다.
+P1(2026-11-03)에서 `code/` 밖으로 옮겼다. `code/` 소스는 **25파일** = 최상위 23개
+(게이트 `refactor_gate.py` 포함, 실행 경로 22) + `core/` 2개. `run_abaqus_mode.py` 는 §19.64 로
+비교가 은퇴해 `attic/` 으로 내렸다. P2(2026-11-04)에서 로그/아카이빙/잡진단 함수를
+`ctx.py`·`post.py`·`solver.py` 로 옮겼고(§19.116), P3a 에서 공통 모델 상수 7개를
+`core/constants.py` 로 단일화했다(§19.118). 스크립트는 모두 `code/` 를 import 루트로 쓴다.
 
 ## 경로 규칙
 

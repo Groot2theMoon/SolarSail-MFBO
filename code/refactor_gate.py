@@ -448,10 +448,12 @@ def _count_lines(path):
 def cmd_snapshot(args):
     root = _ensure(_label_dir(args.label))
     rows = []
-    src = os.path.join(HERE, '*.py')
-    for p in sorted(glob.glob(src)):
-        rows.append('%-34s %8d  %s' % (os.path.basename(p), _count_lines(p),
-                                        _sha256_file(p)))
+    #   [P3] core/ 패키지도 소스 기록에 포함한다(이름은 상대경로).
+    srcs = sorted(glob.glob(os.path.join(HERE, '*.py')))
+    srcs += sorted(glob.glob(os.path.join(HERE, 'core', '*.py')))
+    for p in srcs:
+        name = os.path.relpath(p, HERE).replace('\\', '/')
+        rows.append('%-34s %8d  %s' % (name, _count_lines(p), _sha256_file(p)))
     total = sum(int(r.split()[1]) for r in rows) if rows else 0
     header = ('# refactor_gate snapshot label=%s  %s\n'
               '# file                               lines  sha256\n'
