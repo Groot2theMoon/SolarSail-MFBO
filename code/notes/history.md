@@ -5105,3 +5105,36 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [기록 정정]
   - p3 매니페스트 커밋 제목의 "12,846 lines" 는 P3b 이전 값이다. 실제 최종값은 **12,860줄**
     (25파일, `code/core/*` 포함). 커밋 메시지는 이력이라 고치지 않고 여기에 정정한다.
+
+### 19.121 P4 - 폐기 분기 삭제 (MFBO baseline 유지) (2026-11-04)
+
+[범위 - 사용자 결정]
+  계획서의 "기본값에서 죽은 분기 전부" 대신 **MFBO baseline 을 유지**하기로 했다.
+  `LOAD_MODE='disp'`, `PRETENSION_SCALE`, `PAPER_MATCH=False` 경로는 남긴다(루트
+  `PAPER_MATCH_BRANCH.md` 와 일관). 삭제한 것은 폐기가 확정된 네 축뿐이다.
+
+[삭제]
+  - `PULL_TOP` / `TOP_PULL_SCALE`: 상수 + 6개 분기. BC_Anchor 는 `else`(u1~ur3 완전 고정)만 남김.
+    3-tendon Top 구동은 `run_abaqus_buckle.py` 의 paper3 가 대신한다(§19.107).
+  - `RUN_SELF_BUCKLE_JOB`: 상수 + if/else. **로그 문구는 그대로** 남겼다
+    (`[IMPERFECTION] 자기 좌굴 잡 건너뜀 (RUN_SELF_BUCKLE_JOB=False)`) - G3 기준선과 바이트 동일.
+  - `NO_CLAMP=True`: 모드표 선택/seed 가족 게이트/클램프 RP/케이블 4개 블록.
+    함께 죽은 `seed_family_gate()`, `SEED_FAMILY_NAME`, `SEED_FAMILY_TABLE`, `top_cos/top_sin` 도 삭제.
+    살아있는 `if not NO_CLAMP:` 블록은 그대로 둔다(값이 항상 False 라 동작 동일).
+  - `USE_GRID_MESH=False`: 자유메쉬 생성 9줄 삭제(격자 경로만 남김).
+  - 결과: `run_abaqus.py` **2321 -> 2136줄** (diff 243 삭제 / 60 삽입 - 재들여쓰기 포함).
+
+[안전장치 - 조용한 오답 금지]
+  config 로 지워진 스위치를 켜면 조용히 다른 모델이 되므로, `_AC.apply_globals` 직후에 중단한다:
+    `if NO_CLAMP: raise RuntimeError(...)` / `if not USE_GRID_MESH: raise RuntimeError(...)`
+  `RELEASE_EDGE_U3` 는 A/B 장비라 그대로 유지한다(계획서).
+
+[검증 - Abaqus 실측]
+  - `py_compile` OK / `static_leak_check` **이상 없음 (3 파일)** /
+    `check_model_consistency` **PASS**(HF↔buckle 13 + 공통상수 13).
+  - LF+HF 재해석 -> **G1 3/3 바이트 동일, G2 149키, G3 161kv, [gate] PASS**.
+    삭제된 분기들은 기본값에서 실행되지 않았고, 보존한 로그 문구 덕에 G3 도 동일하다.
+
+[다음]
+  남은 축은 `IMPERFECTION_MODE` 대안(`odb_direct`/`file`)과 `LOAD_MODE='disp'`(baseline)이다.
+  전자는 기본 `odb_table` 만 쓰지만 config 로 켤 수 있어, 지우려면 사용자 결정이 필요하다.
