@@ -73,8 +73,11 @@ def _sub1(pat, rep, s, what):
 
 
 def patch_buckle(txt, top, stab):
-    """buckle 소스에서 CASE / DISP_TOP_OVER_CORNER / MODE_STABILIZATION 을 덮어쓴다."""
-    txt = _sub1(r"^CASE\s*=\s*'[^']*'", "CASE = 'clamp_only'", txt, 'CASE')
+    """buckle 소스에서 DISP_TOP_OVER_CORNER / MODE_STABILIZATION 을 덮어쓴다.
+
+    CASE 는 소스 리터럴이 아니라 `_CLI_CASE or _CFG.get(...)` 파생이라 소스를 고쳐도 안 먹는다
+    (2026-10-22). 그래서 CASE 는 실행 인자 `--case clamp_only` 로 고정한다.
+    """
     txt = _sub1(r"^DISP_TOP_OVER_CORNER\s*=.*$",
                 "DISP_TOP_OVER_CORNER = %.10g" % top, txt, 'DISP_TOP_OVER_CORNER')
     txt = _sub1(r"^MODE_STABILIZATION\s*=.*$",
@@ -162,7 +165,7 @@ def run_arm(i, a):
     ctxt = patch_pert_const(io.open(CONSTANTS, 'r', encoding='utf-8').read(), pert)
     with io.open(CONSTANTS, 'w', encoding='utf-8') as f:
         f.write(ctxt)
-    cmd = 'abaqus cae noGUI=run_abaqus_buckle.py -- %g %g %g %g' % (
+    cmd = 'abaqus cae noGUI=run_abaqus_buckle.py -- --case clamp_only %g %g %g %g' % (
         a.x_c, a.disp, pull, a.excl)
     print('  $ ' + cmd)
 
