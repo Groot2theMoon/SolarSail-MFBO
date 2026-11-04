@@ -68,7 +68,7 @@ def source_model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
 
     반환: (지문 or None, {상수: 값}). 소스를 못 읽거나 상수를 하나도 못 찾으면 (None, {}).
     """
-    vals = []
+    found = {}
     try:
         # [2026-10-05] encoding 을 반드시 명시한다. 이 파일에는 한글 주석이 있고, Windows 의
         #   기본 인코딩(cp949)으로 UTF-8 파일을 열면 UnicodeDecodeError 가 나는데, 아래
@@ -83,15 +83,21 @@ def source_model_fingerprint(source_path, keys=FINGERPRINT_KEYS):
             for line in f.read().splitlines():
                 code = line.split('#')[0].strip()
                 for k in keys:
+                    if k in found:
+                        continue
                     m = re.match(r'^%s\s*=\s*(.+)$' % re.escape(k), code)
                     if m:
-                        vals.append('%s=%s' % (k, m.group(1).strip()))
+                        found[k] = m.group(1).strip()
     except Exception:
         return None, {}
-    if not vals:
+    if not found:
         return None, {}
+    #   [2026-11-04 P3] 해시 순서를 **keys 순서**로 고정한다. 예전에는 파일 등장 순서였다 ->
+    #     상수를 다른 파일(core/constants.py)로 옮기면 파일 순서가 바뀌어 지문이 변했다.
+    #     키 순서가 곧 canonical order 이므로, 이동해도 값만 같으면 지문이 같다.
+    vals = ['%s=%s' % (k, found[k]) for k in keys if k in found]
     digest = hashlib.sha1('|'.join(vals).encode('utf-8')).hexdigest()[:16]
-    return digest, dict(v.split('=', 1) for v in vals)
+    return digest, found
 
 
 def model_fingerprint_line(source_path):
@@ -453,9 +459,16 @@ def job_completed_from_logs(job_name):
 #   HF(run_abaqus.py) 와 make_seed.py 가 **같은 규칙**을 써야 하므로 stdlib 전용인 여기에 둔다.
 #   결정 근거: code/notes/plan-hf-seed-pipeline-2026-10-12.md (Q1=a, Q2=a, Q3=b)
 # =====================================================================
-BUCKLE_FINGERPRINT_KEYS = FINGERPRINT_KEYS + (
-    'THICKNESS', 'MESH_ORDER', 'CLAMP_DC', 'CLAMP_CABLE_LEN', 'CLAMP_EXCL_R',
-    'CORNER_ANGLE_DEG')
+#   [2026-11-04 P3] **순서를 바꾸지 마라.** 이 튜플의 순서가 곧 해시 입력 순서다
+#   (`source_model_fingerprint` 가 keys 순서로 값을 모은다). 현재 순서는 2026-11-04 이전의
+#   파일 등장 순서를 그대로 얼린 것이며, 이 덕분에 기존 시드표 헤더의 buckle_fp 가 유효하다.
+#   기존 표(f86df4ef...)와의 호환 검증: tools/test_fingerprint_api.py + seed_gate 실측.
+BUCKLE_FINGERPRINT_KEYS = (
+    'MESH_ORDER', 'BASE', 'HEIGHT', 'ELEM_CODE_QUAD', 'ELEM_CODE_TRI', 'SEED_DIV',
+    'THICKNESS', 'CLAMP_EXCL_R', 'SIGMA0', 'CLAMP_CABLE_LEN', 'DISP_GLOBAL',
+    'CORNER_ANGLE_DEG', 'CLAMP_DC', 'PERTURBATION', 'PATTERN_SIGN',
+    'N_EIG_BUCKLE', 'BUCKLE_VECTORS', 'MODE_STABILIZATION', 'PRETENSION_MODE',
+    'JOB_NAME')
 BUCKLE_SCRIPT_NAME = 'run_abaqus_buckle.py'
 SEED_DIR_NAME = 'seeds'
 
