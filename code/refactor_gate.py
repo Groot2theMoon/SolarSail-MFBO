@@ -303,7 +303,7 @@ def cmd_check(args):
     decks = _expand(args.deck)
     want = sorted((meta['files'].get('deck') or {}).keys())
     if want and not args.deck:
-        print('[G1 deck] (요청 없음 — 건너뜀, baseline %d개)' % len(want))
+        print('[G1 deck] (요청 없음 - 건너뜀, baseline %d개)' % len(want))
     elif want or decks:
         print('[G1 deck]')
         got = dict((os.path.basename(p), p) for p in decks)
@@ -330,7 +330,7 @@ def cmd_check(args):
     results = _expand(args.results)
     want = sorted((meta['files'].get('results') or {}).keys())
     if want and not args.results:
-        print('[G2 results] (요청 없음 — 건너뜀, baseline %d개)' % len(want))
+        print('[G2 results] (요청 없음 - 건너뜀, baseline %d개)' % len(want))
     elif want or results:
         print('[G2 results]')
         got = dict((os.path.basename(p), p) for p in results)
@@ -357,7 +357,7 @@ def cmd_check(args):
     probes = _expand(args.probe)
     want = sorted((meta['files'].get('probe') or {}).keys())
     if want and not args.probe:
-        print('[G3 probe] (요청 없음 — 건너뜀, baseline %d개)' % len(want))
+        print('[G3 probe] (요청 없음 - 건너뜀, baseline %d개)' % len(want))
     elif want or probes:
         print('[G3 probe]')
         got = dict((os.path.basename(p), p) for p in probes)
@@ -399,10 +399,15 @@ def _sha256_file(path):
 
 
 def _count_lines(path):
+    #   wc -l 과 같은 정의: 개행 **문자** 수. 마지막 줄에 개행이 없으면 세지 않는다.
+    #   (예전 구현은 `for line in f` 로 개행 없는 마지막 줄까지 세어 wc -l 보다 2줄 많았다.)
     n = 0
-    with io.open(path, 'r', encoding='utf-8', errors='replace') as f:
-        for _ in f:
-            n += 1
+    with io.open(path, 'rb') as f:
+        while True:
+            chunk = f.read(65536)
+            if not chunk:
+                break
+            n += chunk.count(b'\n')
     return n
 
 

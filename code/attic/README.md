@@ -21,6 +21,7 @@ P1(2026-11-03)에서 `code/` 밖으로 내린 것 중 **더 이상 맞지 않는
 | `slope_stats_stub.py` | 같은 tag 에서 **106/110 FAIL** (추출 배선 금지문자 검사 등) |
 | `pull_top_stub.py` | `PULL_TOP` 경로 폐기 → 배선 검사 **FAIL** |
 | `seed_family_stub.py` | `NameError: SEED_FAMILY_NAME` — 그 상수는 `SEED_FAMILY_TABLE` 로 바뀌었다 |
+| `run_abaqus_mode.py` | 모드 소스 비교(run_abaqus.py ↔ 이 스크립트)가 §19.64 로 은퇴. HF 임퍼펙션은 `run_abaqus_buckle.py` → `aba_mode_from_odb.py` 경로를 쓴다 |
 | `RA_calc.py` | 1회성 광학 계산. 입력 `nk_data.csv` / `sun_data.csv` 가 저장소에 없다 |
 
 "지금도 통과한다"는 이유로 `tools/` 로 올린 것: `buckle_stub_harness.py`(`seed 0.5` exit 0),

@@ -1,7 +1,8 @@
 # tools/ — 수동 실행 장비 (런타임 경로 밖)
 
 여기 있는 것은 `run_analysis.py` 가 부르지 않는다. 사람이 직접 돌려서 **측정·검증**하는 스크립트다.
-P1(2026-11-03)에서 `code/` 밖으로 옮겼다. 런타임 경로는 `code/*.py` 20개뿐이다.
+P1(2026-11-03)에서 `code/` 밖으로 옮겼다. `code/*.py` 는 **20개**(게이트 `refactor_gate.py` 포함,
+실행 경로 19개)다. `run_abaqus_mode.py` 는 §19.64 로 비교가 은퇴해 `attic/` 으로 내렸다.
 
 ## 경로 규칙
 
@@ -37,7 +38,7 @@ sys.path.insert(0, _CODE)
 | `probe_prestress_sweep.py` | 케이블 프리스트레스 스윕 (중앙 von Mises 운용점 탐색) | 예 |
 | `sweep_buckle_xc.py` / `sweep_clamp_preset.py` | 좌굴모드가 성공하는 `x_c` 범위 / 클램프 프리셋 OFAT | 예 |
 | `screen_report.py` / `inp_mesh_compare.py` / `wrinkle_spectrum.py` | `.msg`/`.sta` 판정 / 두 `.inp` 메쉬 정합 / 주름 파장 측정 | 아니오(파일) |
-| `run_abaqus_cable.py` | 클램프 없는 대조 모델(좌굴 오라클). **모드 소스는 `run_abaqus_mode.py`(code/)** | 예 |
+| `run_abaqus_cable.py` | 클램프 없는 대조 모델(좌굴 오라클). 모드 소스는 `run_abaqus_mode.py` 이며 **`attic/` 으로 은퇴**했다(§19.64) | 예 |
 | `run_hf_capture.py` | `run_abaqus.py` 를 감싸 출력이 삼켜져도 흔적을 남긴다 | 예 |
 
 ## 검증 (2026-11-03, P1 직후)

@@ -4880,3 +4880,38 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 
 [다음]
   P2(함수 이동)는 `baseline/p0` 캡처가 끝난 뒤에만. 지금 상태로 옮기면 게이트 없이 수치 경로를 만지는 것이다.
+
+### 19.115 P0 준비 보정 — cp949 크래시, 모드스크립트 은퇴, 기준점 0.2/0.0001 (2026-11-04)
+
+[1. `refactor_gate.py` cp949 크래시 — 게이트가 FAIL 이 아니라 crash 했다]
+  - 증상: 세 게이트 중 **일부만** 인자로 주면 `print('[G1 deck] (요청 없음 — 건너뜀 ...)')` 가
+    `UnicodeEncodeError` 로 죽는다. cp949 콘솔에 U+2014(em dash) 가 없다.
+  - 조치: 그 3줄(306/333/360)의 `—` -> `-`. 전수 검사로 **print 문 안의 cp949 실패는 이 3줄뿐**임을 확인
+    (`iconv -f UTF-8 -t CP949` 로 파일의 모든 print 줄을 개별 검사).
+  - 재발 방지: 게이트 출력에는 em dash/en dash를 쓰지 않는다. 주석·docstring 은 상관없다.
+
+[2. `run_abaqus_mode.py` -> `attic/`]
+  - 근거: §19.64 로 HF와의 모드소스 비교가 은퇴. AST 도달 불가. `code/` = 실행 경로만 이라는 P1 규칙과
+    어긋나 있었다. `git mv` 로 이동(내용 수정 0).
+  - 결과: `code/*.py` **21 -> 20파일**. 이동 직후 12,619줄(wc -l), 그 뒤 이 항목의 게이트 수정
+    (`_count_lines` +5줄)까지 반영한 최종값은 **12,624줄**. `refactor_gate.py` 포함, 실행 경로 19개.
+    `baseline/p1/source_manifest.txt` 는 12,624로 다시 뽑았다.
+  - `run_abaqus.py` 의 주석에 남은 "run_abaqus_mode.py" 언급은 **이력 설명**이라 고치지 않았다(경로 실행 없음).
+
+[3. 줄 수 정의 — wc -l 로 통일]
+  - 증상: p1 매니페스트가 13,392줄인데 `wc -l` 은 13,390. `_count_lines` 가 개행 없는 마지막 줄까지 세었다.
+  - 조치: `_count_lines` 를 **개행 문자 수**(wc -l) 로 바꿨다. 매니페스트를 다시 뽑아 두 숫자를 맞춘다.
+  - 영향 범위: snapshot 전용. G1/G2/G3 판정에는 쓰이지 않는다.
+
+[4. 기준점이 0.5 0.5 가 아니라 0.2 0.0001 인 이유 — baseline/README.md 에 반영]
+  - `0.5/0.5` 는 어느 설정의 점도 아니고(`paper_sd632`=0.5/1.5, `seed`=0.2/1e-4), HF는 **제출 전에**
+    시드표를 검사한다(`run_abaqus.py:1564`). `seeds/modes_xc0p2.txt` 만 존재가 확인됐다.
+  - `--config configs/seed.json` 은 금지: `make_seed/force_seed=true` 라 매 런 모드를 재생성하고,
+    부호 기준 노드가 달라지면 임퍼펙션 장이 뒤집혀 코드가 같아도 `hf` 가 바뀐다.
+  - `aba/*.inp` 글롭은 과거 덱까지 잡는다 -> 캡처 전에 `ren aba aba_pre_p0`.
+  - 캡처 직후 **같은 두 런을 한 번 더** 돌려 `check` 로 노이즈 바닥을 측정한다. G2는 오차 0, G3는
+    다중집합 동일인데 로그에 λ 고유값이 들어가므로, 이 측정 없이는 P2 이후 FAIL 의 원인을 가를 수 없다.
+
+[5. 태그]
+  - `git ls-remote --tags origin` 에 `pre-refactor-2026-11-03` 이 **이미 있다**(로컬/원격 동일 커밋).
+    추가 push 불필요. `--follow-tags` 는 경량 태그를 건너뛰므로 앞으로도 `git push origin --tags` 를 쓴다.

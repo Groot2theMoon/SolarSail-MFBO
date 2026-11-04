@@ -11,17 +11,46 @@
 
 ## P0 캡처 절차 (Abaqus 머신에서 1회)
 
-`code/` 에서 기본 설정(x_c=0.5, d_c=0.5) 2런. `--config` 를 주지 않는다 =
-`SEED_DIV=200` 기본 격자(약 1.8만 요소). config 를 주면 설계점이 바뀌어 게이트가 다른 것을 잰다.
+운용점은 **x_c=0.2, d_c=0.0001** 이다(2026-11-03 실런과 같은 점). `--config` 를 주지 않는다 =
+코드 기본값(`SEED_DIV=200`, `MESH_ORDER=1`, `N_EIG_BUCKLE=4`, `DISP_GLOBAL=165e-6`)으로 돌아
+그 실런과 같은 조건이 된다.
 
 ```bat
 cd code
-abaqus cae noGUI=run_abaqus.py -- LF 0.5 0.5
-abaqus cae noGUI=run_abaqus.py -- HF 0.5 0.5
+ren aba aba_pre_p0          & rem G1 은 aba/*.inp 전부를 기준선에 넣는다 - 과거 덱을 먼저 치운다
+abaqus cae noGUI=run_abaqus.py -- LF 0.2 0.0001
+abaqus cae noGUI=run_abaqus.py -- HF 0.2 0.0001
 
 python refactor_gate.py capture --label p0 ^
     --deck "aba/*.inp" --results "results/results_*.txt" --probe "hf_run_log.txt"
 ```
+
+### 왜 0.5 0.5 가 아닌가
+
+- HF 는 제출 **전에** 시드표를 검사한다(`run_abaqus.py:1564`). 표가 없으면
+  `ImperfectionSourceError` → `... aborting BEFORE HF job submit`. x_c=0.2 의 합성표
+  (`seeds/modes_xc0p2.txt`)는 2026-11-03 런으로 존재가 확인됐지만, `0.5/0.5` 표는 저장소에 없다.
+- `0.5/0.5` 는 어느 설정의 점도 아니다(`paper_sd632.json`=0.5/1.5, `seed.json`=0.2/1e-4).
+
+### `--config configs/seed.json` 을 쓰면 안 된다
+
+`seed.json` 은 `"make_seed": true, "force_seed": true` 다 — 런마다 좌굴 모드를 **재생성**한다.
+재생성된 모드의 부호 기준 노드가 달라지면 임퍼펙션 장이 뒤집혀 `hf` 가 바뀐다. 코드가 한 줄도
+안 변해도 게이트가 FAIL 한다. `--config` 없이 도는 것이 이 게이트의 전제다.
+
+### 노이즈 바닥 (캡처 직후, 같은 두 런을 한 번 더)
+
+```bat
+abaqus cae noGUI=run_abaqus.py -- LF 0.2 0.0001
+abaqus cae noGUI=run_abaqus.py -- HF 0.2 0.0001
+python refactor_gate.py check --label p0 ^
+    --deck "aba/*.inp" --results "results/results_*.txt" --probe "hf_run_log.txt"
+```
+
+두 번째 런이 PASS 면 기계 노이즈가 0 이라는 뜻이고, FAIL 이면 그 diff 가 **허용오차의 근거**다
+(G2 는 오차 0, G3 는 다중집합 동일인데 로그에 `λ=-1.586670e-03` 같은 고유값이 들어간다).
+이 단계를 건너뛰면 P2 이후 모든 단계에서 원인 불명 FAIL 을 만난다. 허용오차를 넣을 때는
+제외 키와 근거를 이 문서에 적는다.
 
 ## 이후 단계마다
 
