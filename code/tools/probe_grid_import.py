@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""probe_grid_import.py — CAE 에서 `.inp` 격자 import 경로만 **30초**에 검증한다.
+"""probe_grid_import.py - CAE 에서 `.inp` 격자 import 경로만 **30초**에 검증한다.
 
 왜 필요한가
     `Part.addNodes` / `addElements` / `deleteMesh` 는 **`odb.Part` 전용**이라
@@ -16,7 +16,7 @@
     [grid] PartFromInputFile grid_probe.inp -> part 'Membrane' (노드 10201, S4 9900, S3 200)
     [probe] 파트 노드 10201 / 요소 10100   (기대와 일치)
     [probe] x 범위 0.0000 .. 20.0000
-    [probe] OK — 이 경로가 이 기계에서 작동한다
+    [probe] OK - 이 경로가 이 기계에서 작동한다
 """
 from __future__ import print_function
 import os
@@ -26,7 +26,7 @@ import sys
 
 from abaqus import mdb                                     # noqa: F401
 
-#   [P1] tools/ 로 옮겼다 — aba_grid_mesh 는 부모(code/)에 있다.
+#   [P1] tools/ 로 옮겼다 - aba_grid_mesh 는 부모(code/)에 있다.
 _CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _CODE not in sys.path:
     sys.path.insert(0, _CODE)
@@ -64,9 +64,9 @@ def main():
     say('[probe] 모델에서 읽은 값: 노드 %d / 요소 %d   (기대 노드 10201, 요소 10100)'
         % (n_nodes_read, n_elem_read))
     #   **중요**: .inp 에 쓴 개수가 아니라 **모델에서 읽은** 개수를 검사한다.
-    #   (예전 판은 쓴 값만 비교해서, 모델에 메쉬가 잘못 들어가도 통과했다 — 로컬 검증이 잡았다.)
+    #   (예전 판은 쓴 값만 비교해서, 모델에 메쉬가 잘못 들어가도 통과했다 - 로컬 검증이 잡았다.)
     if n_nodes_read != 10201 or n_elem_read != 10100:
-        say('[probe] !! 모델의 메쉬가 기대와 다르다 — .inp 또는 import 경로를 확인해야 한다')
+        say('[probe] !! 모델의 메쉬가 기대와 다르다 - .inp 또는 import 경로를 확인해야 한다')
         return 1
 
     xs = [nd.coordinates[0] for nd in part.nodes]
@@ -96,9 +96,9 @@ def main():
         % (_st['cover'], _st['n'] - _st['miss'], _st['n'],
            _st['dev_mean'] or 0.0, _st['dev_max'] or 0.0))
     if _st['miss'] or _st['cover'] < 0.9999:
-        say('[probe] !! 미러쌍 누락 %d개 — 메쉬가 좌우대칭이 아니다' % _st['miss'])
+        say('[probe] !! 미러쌍 누락 %d개 - 메쉬가 좌우대칭이 아니다' % _st['miss'])
         return 1
-    say('[probe] OK — 이 경로가 이 기계에서 작동한다. 이제 본 런을 돌려도 좋다.')
+    say('[probe] OK - 이 경로가 이 기계에서 작동한다. 이제 본 런을 돌려도 좋다.')
     return 0
 
 

@@ -1,4 +1,4 @@
-"""wrinkle_spectrum.py — 기존 ODB 에서 주름 파장/개수를 측정한다 (라이선스 소모 없음).
+"""wrinkle_spectrum.py - 기존 ODB 에서 주름 파장/개수를 측정한다 (라이선스 소모 없음).
 
 사용법 (code\\ 디렉터리에서):
     abaqus python wrinkle_spectrum.py aba\\HF_Postbuckle.odb

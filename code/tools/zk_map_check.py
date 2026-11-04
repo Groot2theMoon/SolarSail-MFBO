@@ -202,7 +202,7 @@ def main():
         _ds_ok = _check('dir_spread_deg', spread,
                         zk.get('zk_dir_spread_deg', float('nan')), 1e-3)
         if not _ds_ok:
-            print('  WARN dir_spread 불일치 — 가중/마스크 정의 확인 필요 (FAIL 미포함)')
+            print('  WARN dir_spread 불일치 - 가중/마스크 정의 확인 필요 (FAIL 미포함)')
     elif kind == 'lf' and args.baseline == 'd_c1p5':
         ok &= _check('I_w', iw, BASE_D_C1P5['I_w'], 1e-12, 1e-6)
         ok &= _check('state_taut_frac', frac['taut'],

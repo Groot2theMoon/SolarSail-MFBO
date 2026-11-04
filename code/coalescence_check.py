@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-coalescence_check.py — 좌굴 모드 병합(coalescence) 진단 도구
+coalescence_check.py - 좌굴 모드 병합(coalescence) 진단 도구
 ================================================================================
 배경 (arXiv:2609.19603, Prabha & Kumar 2026)
   좌굴 고유치 λ₁·λ₂가 접근하는 설계점(병합점)에서는 "어느 모드로 좌굴되는가"가
@@ -11,10 +11,10 @@ coalescence_check.py — 좌굴 모드 병합(coalescence) 진단 도구
   (논문의 modality 판정은 최적화 기반이지만, 여기서는 진단용 근사만 쓴다. §한계 참조)
 
 두 가지 모드
-  1) record  — Abaqus 실행 직후 좌굴 고유치를 읽어 이력(eig_history.jsonl)에 1줄 추가.
+  1) record  - Abaqus 실행 직후 좌굴 고유치를 읽어 이력(eig_history.jsonl)에 1줄 추가.
                run_abaqus.py 의 Buckle_Analysis 직후 훅에서 자동 호출된다([N-6]).
                표준 라이브러리만 사용 → Abaqus Python 에서도 안전.
-  2) analyze — 이력과 HF 결과를 조인해 간극 vs LF-HF 잔차(또는 반복 산포)를 분석.
+  2) analyze - 이력과 HF 결과를 조인해 간극 vs LF-HF 잔차(또는 반복 산포)를 분석.
                Abaqus 불필요, pn40/Windows 어디서나 실행 가능.
 
 사용 예
@@ -28,7 +28,7 @@ coalescence_check.py — 좌굴 모드 병합(coalescence) 진단 도구
   python coalescence_check.py analyze --history code/aba/eig_history.jsonl \
          --hf-csv hf_points.csv --out coalescence_report.csv --plot coalescence.png
 
-  # (2') 회고 분석 (체크포인트 경로 — 정규화 좌표를 mfbo.py 규약으로 역변환)
+  # (2') 회고 분석 (체크포인트 경로 - 정규화 좌표를 mfbo.py 규약으로 역변환)
   python coalescence_check.py analyze --history code/aba/eig_history.jsonl \
          --checkpoint mfbo_checkpoint.pt --plot coalescence.png
 
@@ -171,7 +171,7 @@ def key(x_c, d_c):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# record — Abaqus 측 기록기 (표준 라이브러리만)
+# record - Abaqus 측 기록기 (표준 라이브러리만)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def cmd_record(args):
@@ -203,7 +203,7 @@ def cmd_record(args):
             src = os.path.basename(args.msg)
 
     if not vals:
-        print("[record] 고유치를 찾지 못했습니다 — Abaqus 버전의 .dat 헤더 형식을 확인하세요.", file=sys.stderr)
+        print("[record] 고유치를 찾지 못했습니다 - Abaqus 버전의 .dat 헤더 형식을 확인하세요.", file=sys.stderr)
         # 실패 원인을 그 자리에서 알 수 있도록 파일 앞부분과 관련 줄을 함께 찍는다.
         #   (a) 좌굴이 실패하면 .dat 에 고유치 표가 아예 없다 -> 여기서 바로 구분된다.
         #   (b) 좌굴은 성공했는데 표 형식이 다르면 아래 'E|' 줄에 그 형식이 보인다.
@@ -255,7 +255,7 @@ def cmd_record(args):
                     same_pt = (old.get("x_c") == rec["x_c"] and old.get("d_c") == rec["d_c"])
                     same_src = (old.get("dat_mtime") == rec["dat_mtime"] and rec["dat_mtime"] is not None)
                     if same_pt and (same_src or rec["dat_mtime"] is None):
-                        print("[record] 이미 기록됨 — 건너뜀 (x_c=%s, d_c=%s)" % (rec["x_c"], rec["d_c"]))
+                        print("[record] 이미 기록됨 - 건너뜀 (x_c=%s, d_c=%s)" % (rec["x_c"], rec["d_c"]))
                         return 0
         except IOError:
             pass
@@ -276,7 +276,7 @@ def cmd_record(args):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# analyze — 회고 분석
+# analyze - 회고 분석
 # ──────────────────────────────────────────────────────────────────────────────
 
 def load_history(paths):
@@ -513,7 +513,7 @@ def cmd_analyze(args):
     if metric_name:
         print(" 신뢰도 대용 지표      : %s%s" % (metric_name,
               "  (같은 점 반복 실행 산포)" if metric_name == "hf_repeat_spread"
-              else "  (|LF-HF| 잔차 — 반복 실행 데이터가 없을 때의 대용)"))
+              else "  (|LF-HF| 잔차 - 반복 실행 데이터가 없을 때의 대용)"))
         if inb:
             print("   밴드 내 중앙값      : %.6g  (n=%d)" % (_median(inb), len(inb)))
         if outb:
@@ -522,7 +522,7 @@ def cmd_analyze(args):
             ratio = _median(inb) / _median(outb) if _median(outb) else float("inf")
             print("   비율 (내/외)        : %.3g  → %s" % (ratio,
                   "가설 지지(밴드 내가 더 불안정)" if ratio >= args.ratio_thresh
-                  else "가설 미지지 — 밴드 내가 특별히 나쁘지 않음"))
+                  else "가설 미지지 - 밴드 내가 특별히 나쁘지 않음"))
         rho = spearman([g for g, _m in use], [_m for _g, _m in use])
         print("   스피어만 상관 ρ(gap, 지표): %.4f  (n=%d, gap이 작을수록 지표가 커야 하므로 음수 기대)"
               % (rho, len(use)))
@@ -533,7 +533,7 @@ def cmd_analyze(args):
 
     if len(rows) < args.min_points:
         print("")
-        print(" ⚠ 표본 %d점 < 권장 %d점 — 이 결과로 가설을 채택/기각하지 마세요 (탐색적 지표)."
+        print(" [!] 표본 %d점 < 권장 %d점 - 이 결과로 가설을 채택/기각하지 마세요 (탐색적 지표)."
               % (len(rows), args.min_points))
     print("=" * 74)
 
@@ -541,7 +541,7 @@ def cmd_analyze(args):
         try:
             make_plot(rows, metric, metric_name, args.gap_thresh, args.plot)
             print("[analyze] 그림 저장: %s" % args.plot)
-        except Exception as e:      # matplotlib 없음 등 — 분석 결과에는 영향 없음
+        except Exception as e:      # matplotlib 없음 등 - 분석 결과에는 영향 없음
             print("[analyze] 그림 생략: %s" % e)
 
     return 0
@@ -581,7 +581,7 @@ def make_plot(rows, metric, metric_name, thresh, path):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# selftest — 실제 Abaqus 산출물 없이 동작 확인
+# selftest - 실제 Abaqus 산출물 없이 동작 확인
 # ──────────────────────────────────────────────────────────────────────────────
 
 SELFTEST_DAT = """\
@@ -722,7 +722,7 @@ def cmd_selftest(args):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="좌굴 모드 병합(coalescence) 진단 — 고유치 간극 기록/분석",
+        description="좌굴 모드 병합(coalescence) 진단 - 고유치 간극 기록/분석",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="예: python coalescence_check.py analyze --history code/aba/eig_history.jsonl --hf-csv hf.csv --out report.csv --plot gap.png")
     sub = ap.add_subparsers(dest="cmd")

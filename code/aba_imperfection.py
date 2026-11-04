@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""임퍼펙션(좌굴모드) 소스 스테이징 — 2-모델 레시피 (2026-09-22)
+"""임퍼펙션(좌굴모드) 소스 스테이징 - 2-모델 레시피 (2026-09-22)
 
 무엇을 하는가
   좌굴모드를 '클램프 없는' 모델에서 추출해, '클램프가 있는' 포스트버클링 모델의
@@ -40,7 +40,7 @@ import shutil
 import time
 
 try:
-    # 기존 검증된 고유치(.dat MODE NO 표) 파서 재사용 — 중복 구현 금지
+    # 기존 검증된 고유치(.dat MODE NO 표) 파서 재사용 - 중복 구현 금지
     from coalescence_check import parse_eigenvalues
 except Exception:                                        # pragma: no cover
     parse_eigenvalues = None
@@ -353,7 +353,7 @@ def _norm_elem_code(x):
 
 #   [§19.112] RELEASE_EDGE_U3=True 는 자유변 면외 구속을 '하드 u3=0' 에서 to-ground 스프링으로
 #     바꾼다 -> 덱에 **노드별 스프링 요소**(n = All_Edges_NoClamp 노드수)가 정당하게 생긴다.
-#     CAE 는 그 요소를 `*Element, type=Spring1` 로 쓴다(고전 키워드 표기는 SPRINGA — 같은 스프링).
+#     CAE 는 그 요소를 `*Element, type=Spring1` 로 쓴다(고전 키워드 표기는 SPRINGA - 같은 스프링).
 #     종전 가드는 'S' 로 시작하는 타입을 전부 셸 폴백 후보로 봤기 때문에 `Spring1` 이
 #     extra=['Spring1'] 로 잡혀 **정상 덱을 제출 전에 막았다**(실측 2026-10-19).
 EDGE_SPRING_ELEM_TYPES = ('Spring1', 'SPRINGA')
@@ -371,16 +371,16 @@ def verify_inp_element_types(inp_path, want_codes, allow_extra=None,
 
     allow_extra  이번 덱에서 **정당하게** 있을 수 있는 비(非)셸 요소 타입(예: §19.111/§19.112 의
                  `Spring1`). 기본 None = 종전과 **완전히 같은** 판정(하위호환). 여기 넣은 타입만
-                 extra 목록에서 빠지고, 다른 셸/막 계열 타입은 그대로 실패시킨다 — 허용은 기능
+                 extra 목록에서 빠지고, 다른 셸/막 계열 타입은 그대로 실패시킨다 - 허용은 기능
                  스위치가 켜졌을 때만 호출자가 넘긴다.
     expect_extra_total  allow_extra 요소 수의 기대값(보통 스프링 대상 경계 노드수).
                  None 이면 개수 검증을 하지 않는다. 값이 있으면 합계와 비교해 **불일치면 실패**한다.
                  왜: 스프링이 절반만 생성되거나(셋이 비었거나) 다른 영역에 붙으면 BC 대체가
-                 조용히 어긋난다 — '타입이 있으니 통과' 로는 잡히지 않는다.
+                 조용히 어긋난다 - '타입이 있으니 통과' 로는 잡히지 않는다.
 
     반환: (ok, counts, err_str)
       ok      = 요청 코드가 전부 .inp 에 존재하는가 (+ allow_extra 개수 기대값 일치)
-      counts  = {요소코드: **요소 수**}   (블록 수가 아니라 요소 수 — 메쉬가 바뀌었는지 판정용)
+      counts  = {요소코드: **요소 수**}   (블록 수가 아니라 요소 수 - 메쉬가 바뀌었는지 판정용)
     """
     counts, cur = {}, None
     try:
@@ -449,7 +449,7 @@ def job_completed_from_logs(job_name):
 
 
 # =====================================================================
-# 설계점별 시드표 (2026-10-12) — x_c/d_c 로 표 경로를 결정하고, 지문으로 드리프트를 막는다.
+# 설계점별 시드표 (2026-10-12) - x_c/d_c 로 표 경로를 결정하고, 지문으로 드리프트를 막는다.
 #   HF(run_abaqus.py) 와 make_seed.py 가 **같은 규칙**을 써야 하므로 stdlib 전용인 여기에 둔다.
 #   결정 근거: code/notes/plan-hf-seed-pipeline-2026-10-12.md (Q1=a, Q2=a, Q3=b)
 # =====================================================================
@@ -477,7 +477,7 @@ def seed_table_name(x_c, d_c, prefix='modes'):
 
 
 def composite_table_name(x_c, prefix='modes'):
-    """[§19.77] 합성 시드표 파일명 — **d_c 를 넣지 않는다**.
+    """[§19.77] 합성 시드표 파일명 - **d_c 를 넣지 않는다**.
 
     모드 내용이 d_c 와 무관하기 때문이다(시드 클램프 당김은 0.01 고정, §19.70). 종전에는 HF 의
     d_c 가 이름에 들어가 새 d_c 마다 합성을 다시 해야 했는데, 그 d_c 는 모드에 아무 영향이 없다.
@@ -503,7 +503,7 @@ def composite_table_path(seeds_dir, x_c, env=None):
 
 
 def seed_table_path(seeds_dir, x_c, d_c, env=None):
-    """합성 시드표 경로. [§19.77] d_c 는 이름·지문에서 빠졌다 — 인자는 호출부 호환용."""
+    """합성 시드표 경로. [§19.77] d_c 는 이름·지문에서 빠졌다 - 인자는 호출부 호환용."""
     return composite_table_path(seeds_dir, x_c, env=env)
 
 
@@ -513,7 +513,7 @@ def buckle_fingerprint(script_path, keys=BUCKLE_FINGERPRINT_KEYS):
 
 
 def point_tag(x_c, d_c):
-    """설계점 태그 — 산출물 이름에 넣어 짝 어긋남(mispairing)을 구조적으로 막는다."""
+    """설계점 태그 - 산출물 이름에 넣어 짝 어긋남(mispairing)을 구조적으로 막는다."""
     return '_xc%s_dc%s' % (value_tag(x_c), value_tag(d_c))
 
 
@@ -595,8 +595,8 @@ def lf_odb_is_current(odb_path, tag=None, model_fp=None, config_sha=None):
 
     인자별 판정:
       tag        : 물리 경로 버전(필수, 기존 동작).
-      model_fp   : 모델 정의값 sha1 — run_abaqus 가 자기가 아는 값으로 대조(가장 강함).
-      config_sha : config sha1 — mfbo 처럼 모델값을 모르는 호출자가 쓰는 **거친** 대조.
+      model_fp   : 모델 정의값 sha1 - run_abaqus 가 자기가 아는 값으로 대조(가장 강함).
+      config_sha : config sha1 - mfbo 처럼 모델값을 모르는 호출자가 쓰는 **거친** 대조.
     `None` 이면 그 축은 검사하지 않는다(기존 호출부 호환). sidecar 에 키가 없으면 불일치로 본다
     (구 ODB 1회 재제출 = 안전한 방향).
     """
@@ -625,7 +625,7 @@ def file_token(path):
 
 
 def canon_seed_inputs(x_c, d_c, buckle_fp, seed_sha, clamp_sha):
-    """지문 입력의 정본 문자열 — HF 와 make_seed 가 **같은 문자열**을 만들어야 한다.
+    """지문 입력의 정본 문자열 - HF 와 make_seed 가 **같은 문자열**을 만들어야 한다.
 
     [§19.77] **d_c 를 뺀다**: 모드가 d_c 무관이므로(§19.70) d_c 가 다르면 같은 표를 쓰는 게 맞다.
     인자 d_c 는 호출부 호환을 위해 받기만 하고 지문에는 쓰지 않는다.
@@ -698,7 +698,7 @@ def seed_gate(x_c, d_c, table_path, buckle_script, keys=BUCKLE_FINGERPRINT_KEYS)
         return False, '헤더의 x_c/d_c 를 숫자로 읽지 못함', info
     if abs(_xc - float(x_c)) > 1e-9:
         return False, 'x_c 불일치(표 %.4f vs 런 %.4f)' % (_xc, float(x_c)), info
-    #   [§19.77] d_c 는 비교하지 않는다 — 모드 내용이 d_c 무관이므로(§19.70) 다른 d_c 의 표를
+    #   [§19.77] d_c 는 비교하지 않는다 - 모드 내용이 d_c 무관이므로(§19.70) 다른 d_c 의 표를
     #     그대로 쓰는 것이 맞다. 표가 어느 d_c 로 만들어졌는지는 d_c_ref 로 참고만 한다.
     _now = buckle_fingerprint(buckle_script, keys)
     if _now != (info.get('buckle_fp') or None):
@@ -710,7 +710,7 @@ def seed_gate(x_c, d_c, table_path, buckle_script, keys=BUCKLE_FINGERPRINT_KEYS)
         return False, ('지문 재계산 불일치(%s vs 표 %s) -> 표가 손상/수정됨'
                        % (_exp, info.get('fingerprint'))), info
     #   [2026-10-12] 소스 모드표가 표 생성 뒤 바뀌면(재추출했는데 재합성 안 함) 조용히 낡은 표를 쓴다.
-    #   같은 폴더에 소스가 남아 있으면 지금 해시와 대조한다(없으면 건너뜀 — 이동/삭제는 정상 흐름).
+    #   같은 폴더에 소스가 남아 있으면 지금 해시와 대조한다(없으면 건너뜀 - 이동/삭제는 정상 흐름).
     _tdir = os.path.dirname(os.path.abspath(table_path))
     for _k in ('seed', 'clamp'):
         _nm, _sha = info.get(_k), info.get(_k + '_sha')

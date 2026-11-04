@@ -1,4 +1,4 @@
-"""에너지 이력(ALLIE / ALLSD / ALLKE) 판독기 — 감쇠가 결과를 만들고 있는지 정량화한다.
+"""에너지 이력(ALLIE / ALLSD / ALLKE) 판독기 - 감쇠가 결과를 만들고 있는지 정량화한다.
 
 사용법:
     abaqus python energy_check.py aba\HF_Postbuckle.odb

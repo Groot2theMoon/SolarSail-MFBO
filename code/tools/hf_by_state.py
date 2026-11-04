@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""hf_by_state.py — hf 를 LF 상태(taut/wrinkled/slack) 별로 분해한다.
+"""hf_by_state.py - hf 를 LF 상태(taut/wrinkled/slack) 별로 분해한다.
 
 왜
     hf 는 요소별 손실의 면적가중 평균이라 상태별로 **정확히 가법**이다.
@@ -28,7 +28,7 @@ import json
 import numpy as np
 from odbAccess import openOdb
 
-#   [P1] tools/ 로 옮겼다 — 런타임 모듈(eval_abaqus)은 부모(code/)에 있다.
+#   [P1] tools/ 로 옮겼다 - 런타임 모듈(eval_abaqus)은 부모(code/)에 있다.
 _CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _CODE not in sys.path:
     sys.path.insert(0, _CODE)
@@ -73,7 +73,7 @@ def get_instance(odb):
 
 
 def element_connectivity(inst):
-    """(labels(N,), conns: list[list[int]]) — 요소 라벨 순서와 conns 순서 대응."""
+    """(labels(N,), conns: list[list[int]]) - 요소 라벨 순서와 conns 순서 대응."""
     labs, conns = [], []
     for el in inst.elements:
         labs.append(el.label)
@@ -385,7 +385,7 @@ def main(argv):
           ('합계', 1.0, '', hf_total, tot_w))
 
     if missing:
-        print(_P + ' (경고) LF 에 없는 HF 요소 라벨 %d개 — 집계에서 제외' % missing)
+        print(_P + ' (경고) LF 에 없는 HF 요소 라벨 %d개 - 집계에서 제외' % missing)
 
     # ---------- 판정
     t = rows.get('taut')

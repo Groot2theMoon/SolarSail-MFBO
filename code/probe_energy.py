@@ -1,23 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""안정화 에너지 점검 — stabilize 로 "완주시킨" 해석이 신뢰 가능한지 판정한다 (2026-10-13).
+"""안정화 에너지 점검 - stabilize 로 "완주시킨" 해석이 신뢰 가능한지 판정한다 (2026-10-13).
 
     abaqus python probe_energy.py <job_or_odb> [step]
 
 배경
     HF 의 Step-Postbuckle 은 `*Static, stabilize=<값>` 로 돈다. 안정화는 인공 감쇠라서,
-    스냅스루를 "잘 흘려보내" 완주를 만들어 줄 수 있다 — 즉 완주가 물리의 결과인지
+    스냅스루를 "잘 흘려보내" 완주를 만들어 줄 수 있다 - 즉 완주가 물리의 결과인지
     감쇠의 결과인지 구분해야 한다. 판정 기준(관행): 안정화 소산 에너지가 내부(변형) 에너지의
     **수 % 이하**면 신뢰, 5% 이상이면 결과를 의심한다.
 
 읽는 것
     ODB 의 전체모델 에너지 이력(ALLIE 내부, ALLSD 안정화소산, ALLKE 운동, ETOTAL)에서
     - 각 스텝 마지막 값과 그 비 ALLSD/ALLIE
-    - **시간에 대한 최대 비**(worst case) — 이게 실질 판정치다.
+    - **시간에 대한 최대 비**(worst case) - 이게 실질 판정치다.
 
 에너지 이력이 없으면
     스텝의 출력 요청에 `*Energy Output`(또는 `*Output, history` + 에너지 변수)이 없어서다.
-    그때는 patcher 의 스텝 블록에 한 줄 추가하고 재실행해야 한다 — 스크립트가 그렇게 안내한다.
+    그때는 patcher 의 스텝 블록에 한 줄 추가하고 재실행해야 한다 - 스크립트가 그렇게 안내한다.
 """
 from __future__ import print_function
 import os

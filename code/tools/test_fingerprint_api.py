@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""지문(fingerprint) API 단위시험 — Abaqus 불필요(라이선스 0).
+"""지문(fingerprint) API 단위시험 - Abaqus 불필요(라이선스 0).
 
     python3 test_fingerprint_api.py        # PASS/FAIL, 실패 시 EXIT=1
 
@@ -70,7 +70,7 @@ def main():
 
     print()
     if FAIL:
-        print("RESULT: FAIL %d / %d — %s" % (len(FAIL), N[0], ', '.join(FAIL)))
+        print("RESULT: FAIL %d / %d - %s" % (len(FAIL), N[0], ', '.join(FAIL)))
         return 1
     print("RESULT: PASS %d/%d" % (N[0], N[0]))
     return 0

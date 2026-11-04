@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
-"""solver.py — Abaqus 잡 실행 보조: 덱 패처, 완주 판정, 실패 진단.
+"""solver.py - Abaqus 잡 실행 보조: 덱 패처, 완주 판정, 실패 진단.
 
 run_abaqus.py 에서 **함수만** 옮겼다(2026-11-04, P2). `run_job_safely`/`run_job_with_ladder`
-는 `mdb`/`abq` 와 30여 개 모델 상수에 직접 묶여 있어 이 모듈로 옮기지 않았다 — 그 둘은
+는 `mdb`/`abq` 와 30여 개 모델 상수에 직접 묶여 있어 이 모듈로 옮기지 않았다 - 그 둘은
 스크립트에 남고, 여기 있는 함수는 경로(`here`)만 받는다.
 """
 
@@ -26,7 +26,7 @@ def run_patcher(here, deck, step='Step-Postbuckle', ctrl=('--line-search', '--ra
     SRC == DST (제자리 덮어쓰기) 가 안전하다. 덕분에 잡 이름/입력 파일명이
     그대로 유지되어 아래 job.submit() 흐름을 손대지 않아도 된다.
 
-    반환: True(성공) / False(실패 — 호출자가 RESULTS:FAIL 로 끊는다)
+    반환: True(성공) / False(실패 - 호출자가 RESULTS:FAIL 로 끊는다)
     """
     #   [§19.85] stabilize 가 주어지면 패치된 덱의 `*Static, stabilize=...` 값만 교체한다.
     #     (패처 자체의 안정화 기본값에 의존하지 않고 사다리를 돌리기 위한 최소 개입)
@@ -35,7 +35,7 @@ def run_patcher(here, deck, step='Step-Postbuckle', ctrl=('--line-search', '--ra
             _t = _f.read()
         _new, _n = re.subn(r'(\*Static,\s*stabilize=)[0-9.eE+-]+', r'\g<1>%g' % _v, _t)
         if _n != 1:
-            emit("[LADDER] !!! stabilize 치환 실패(패턴 %d건) — 덱을 확인하세요: %s" % (_n, _p))
+            emit("[LADDER] !!! stabilize 치환 실패(패턴 %d건) - 덱을 확인하세요: %s" % (_n, _p))
             return False
         with open(_p, 'w', encoding='utf-8') as _f:
             _f.write(_new)
@@ -59,7 +59,7 @@ def run_patcher(here, deck, step='Step-Postbuckle', ctrl=('--line-search', '--ra
         for ln in _lines:
             _ls = ln.lstrip()
             if _ls.startswith('*'):
-                # 새 키워드 줄 — *Controls 면 블록 시작, 아니면 블록 종료
+                # 새 키워드 줄 - *Controls 면 블록 시작, 아니면 블록 종료
                 _skip = _ls.lower().startswith('*controls')
             if not _skip:
                 _keep.append(ln)
@@ -124,11 +124,11 @@ def run_patcher(here, deck, step='Step-Postbuckle', ctrl=('--line-search', '--ra
             emit("[PATCHER] 셸 실행 실패: %s" % _e2)
 
     if not _deck_markers():
-        emit("[PATCHER] !!! 패치 마커가 덱에 없다 — 손으로 실행해 보세요:")
+        emit("[PATCHER] !!! 패치 마커가 덱에 없다 - 손으로 실행해 보세요:")
         emit('[PATCHER]     abaqus python riks_patch_input.py "%s" "%s" %s %s'
              % (deck, deck, step, ' '.join(ctrl)))
         return False
-    emit("[PATCHER] OK — %s 패치 확인 (%.1f KB -> %.1f KB, 마커 %s)"
+    emit("[PATCHER] OK - %s 패치 확인 (%.1f KB -> %.1f KB, 마커 %s)"
          % (deck, before / 1024.0, os.path.getsize(deck) / 1024.0, _deck_markers()))
     return True
 
@@ -179,7 +179,7 @@ def print_job_diag(job_name):
         #   그래서 매치 지점마다 **뒤 2줄까지** 줄번호와 함께 남긴다(덱 대조용).
         #   [2026-10-08] 먼저 **매치 줄 번호만** 모으고(정수 리스트 = 메모리 무시 가능),
         #   출력은 앞 4개 + 끝 11개를 쓴다. 매치마다 문자열을 쌓으며 상한으로 끊으면
-        #   8MB .msg 에서 **마지막(=중단 원인)** 을 잃는다 — 그 실수를 두 번 했다.
+        #   8MB .msg 에서 **마지막(=중단 원인)** 을 잃는다 - 그 실수를 두 번 했다.
         _lines = text.splitlines()
         _idx = [i for i, _ln in enumerate(_lines)
                 if _ln.strip() and any(k.lower() in _ln.lower() for k in keys)]

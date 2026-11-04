@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
-"""post.py — 설계점 결과 아카이빙 (results_*.txt / all_results.csv / slope / DN / ZK).
+"""post.py - 설계점 결과 아카이빙 (results_*.txt / all_results.csv / slope / DN / ZK).
 
 run_abaqus.py 에서 **함수만** 옮겼다(2026-11-04, P2). 수치 경로/계약은 바뀌지 않는다:
   - `RESULTS:` 4필드(lf1,lf2,lf3,hf)는 이 모듈이 읽지도 쓰지도 않는다.
   - `all_results.csv` 는 `archive_result` 만 쓰고, 열 스키마는 고정이다(§19.91).
-  - 모든 함수는 예외 안전이다 — 실패해도 해석은 계속되고 경고 1줄만 남는다.
+  - 모든 함수는 예외 안전이다 - 실패해도 해석은 계속되고 경고 1줄만 남는다.
 
 경로는 호출자가 넘긴다(모듈이 스크립트의 `_HERE`/`_RUN`/`HF_ODB` 전역을 읽지 않는다).
 """
@@ -22,7 +22,7 @@ def archive_result(here, cfg_sha1, lf_odb, x_c, d_c, fidelity, results_csv, extr
     """[§19.88] 설계점별 결과 아카이빙.
 
     왜: HF 잡 이름이 `HF_Postbuckle` 고정이라 다음 런이 **직전 산출물을 지운다**
-    (`run_job_safely` 가 odb/dat/msg 를 제거). 그래서 (0.5,0.3)의 ODB 를 이미 잃었다 —
+    (`run_job_safely` 가 odb/dat/msg 를 제거). 그래서 (0.5,0.3)의 ODB 를 이미 잃었다 -
     결과를 설계점 이름의 텍스트 + 누적 CSV 로 남겨 스윕 분석이 한 파일로 가능하게 한다.
 
     남기는 것: RESULTS 4필드(lf1,lf2,lf3,hf) + 사다리가 쓴 stabilize_used/에너지 비/판정 + 시각.
@@ -53,7 +53,7 @@ def archive_result(here, cfg_sha1, lf_odb, x_c, d_c, fidelity, results_csv, extr
         with io.open(os.path.join(_dir, _tag), 'w', encoding='utf-8') as _f:
             for _k in sorted(_kv):
                 _f.write('%s=%s\n' % (_k, _kv[_k]))
-        #   [§19.91] 열 스키마를 **고정**한다 — 진단키(stabilize/에너지/flip_bias)도 CSV 에 실제로
+        #   [§19.91] 열 스키마를 **고정**한다 - 진단키(stabilize/에너지/flip_bias)도 CSV 에 실제로
         #     실려야 스윕 분석이 한 파일로 된다(헤더가 1회만 쓰이므로 열 목록은 상수여야 한다).
         _cols = ['x_c', 'd_c', 'fidelity', 'timestamp', 'stabilize_used',
                  'allds_allie_last_pct', 'allds_allie_max_pct', 'energy_verdict',
@@ -257,7 +257,7 @@ def archive_zk(here, x_c, d_c, zk_lines, zkiw_lines=None):
 
         #   `zk_metrics.txt` sidecar 의 추가 키(`zk_Iw` 등)도 점별 txt 에 남긴다.
         #     ZK: 줄은 public 4키만 갖고, I_w/기준면적/가중모드는 sidecar 에만 있다.
-        #   [A1] ZK:FAIL 이어도 sidecar 를 병합한다 — 원인 단서(fields/frame_value)가
+        #   [A1] ZK:FAIL 이어도 sidecar 를 병합한다 - 원인 단서(fields/frame_value)가
         #     거기에만 있고, 다음 런이 zk_metrics.txt 를 덮으면 영구 소실된다.
         #     stale 차단은 "FAIL 에서는 진단 키만 통과"로 대신한다(값 키는 병합 금지).
         _FAILDX = ('fields', 'frame_value', 'reason', 'odb')

@@ -23,7 +23,7 @@ ITER_SPLIT = re.compile(r'\bITERATION\s+(\d+)\s*\n')
 
 
 def read_text(path):
-    """Decode a log that may be UTF-8, CP949 or latin-1 — never report it unreadable."""
+    """Decode a log that may be UTF-8, CP949 or latin-1 - never report it unreadable."""
     with open(path, 'rb') as fh:
         data = fh.read()
     for enc in ('utf-8', 'cp949', 'latin-1'):
@@ -54,7 +54,7 @@ def parse(text):
         'maxIter': _int(r'MAXIMUM NUMBER OF ITERATIONS\s+(\d+)', text),
         'eqs': _int(r'NUMBER OF EQUATIONS:\s+(\d+)', text),
         'sysNeg': _int(r'SYSTEM MATRIX HAS (\d+) NEGATIVE', text),
-        # [2026-10-07] subspace 실제 차원 — 창(window) 추천의 상한이다.
+        # [2026-10-07] subspace 실제 차원 - 창(window) 추천의 상한이다.
         #   실측 문구: "THE NUMBER OF VECTORS IN SUBSPACE IS REDUCED TO 14 DUE TO LINEAR DEPENDENCY"
         'reduced_to': _int(r'VECTORS IN SUBSPACE IS REDUCED TO\s+(\d+)', text),
         'diffNeg': _int(r'DIFFERENTIAL MATRIX HAS (\d+) NEGATIVE DIAGONAL', text),
@@ -88,7 +88,7 @@ MODE_TABLE_HDR = re.compile(r'MODE\s+NO\s+.*EIGEN', re.I)
 
 
 def dat_lambdas(text, limit=12):
-    """`.dat` 의 MODE NO / EIGENVALUE 표에서 lambda 를 읽는다 (순수 함수 — 단위검증 가능).
+    """`.dat` 의 MODE NO / EIGENVALUE 표에서 lambda 를 읽는다 (순수 함수 - 단위검증 가능).
 
     왜 표에서만 읽는가: 실패 런의 `ITERATION n` 목록은 레일리 몫 스냅샷이지 스펙트럼이 아니다.
     요청 수만큼 `CONVERGED` 한 런의 표만 lambda 로 인용할 수 있다. 표가 없으면 빈 리스트
@@ -117,13 +117,13 @@ def dat_lambdas(text, limit=12):
 
 
 def _window_hint(d):
-    """창(window) 추천 — 두 조건의 교집합이다.
+    """창(window) 추천 - 두 조건의 교집합이다.
 
       (a) N_EIG_BUCKLE > base state 의 SYSTEM 음수 고유값 개수
       (b) N_EIG_BUCKLE <= 실제 subspace 차원 ("VECTORS IN SUBSPACE IS REDUCED TO n" 의 n)
 
     (a)는 '음수 모드 뒤에 양수 모드가 들어오게' 하는 조건이고 (b)는 '원리적으로 찾을 수 있는 수'의
-    상한이다. 둘 다 만족해야 하며, 교집합이 비면 **창으로 못 푸는 실패**다 — 그때는 창을 키우지 말고
+    상한이다. 둘 다 만족해야 하며, 교집합이 비면 **창으로 못 푸는 실패**다 - 그때는 창을 키우지 말고
     base state 를 의심한다(ITERATION 1 이 전부 음수면 그 점이 좌굴 후다).
     """
     neg, red = d.get('sysNeg'), d.get('reduced_to')
@@ -136,7 +136,7 @@ def _window_hint(d):
         print('  window hint  : N_EIG_BUCKLE in (%d, %d]   (음수 %d < 요청 <= subspace %d)'
               % (neg, red, neg, red))
     else:
-        print('  window hint  : 공집합 — 음수 %d >= subspace %d  ==> 창으로 못 푼다.' % (neg, red))
+        print('  window hint  : 공집합 - 음수 %d >= subspace %d  ==> 창으로 못 푼다.' % (neg, red))
         print('                 base state 가 좌굴 후이거나(ITERATION 1 전부 음수) 다른 원인이다.')
 
 

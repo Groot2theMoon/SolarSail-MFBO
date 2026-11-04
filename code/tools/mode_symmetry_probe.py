@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""mode_symmetry_probe.py — 좌굴모드의 **좌우대칭성** 진단과 대칭/반대칭 정규화.
+"""mode_symmetry_probe.py - 좌굴모드의 **좌우대칭성** 진단과 대칭/반대칭 정규화.
 
 문제(2026-10-07 사용자 지적): 수렴에 성공한 모드들이 모두 클램프 근처에만 몰려 있거나,
 수렴에 실패하거나, 양쪽에 대칭적으로 생기지 않고 **한쪽에만** 생긴다.
@@ -36,7 +36,7 @@ import os
 import sys
 from collections import defaultdict
 
-#   [P1] tools/ 로 옮겼다 — 런타임 모듈(buckle_mode_report)은 부모(code/)에 있다.
+#   [P1] tools/ 로 옮겼다 - 런타임 모듈(buckle_mode_report)은 부모(code/)에 있다.
 _CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _CODE not in sys.path:
     sys.path.insert(0, _CODE)
@@ -50,7 +50,7 @@ def mirror_partner(coords, axis=MIRROR_AXIS_X, tol=MIRROR_TOL_M):
     """coords=[(x,y,z),...] -> (partner, stats).
 
     partner[i] = 미러상 (2*axis-x, y) 에 가장 가까운 노드 인덱스(tol 이내), 없으면 -1.
-    stats = dict(n, miss, cover, dev_max, dev_mean)  — 메쉬 비대칭의 직접 지표.
+    stats = dict(n, miss, cover, dev_max, dev_mean)  - 메쉬 비대칭의 직접 지표.
     순수 파이썬(격자 해시로 후보 축소). numpy 불필요.
     """
     n = len(coords)
@@ -85,8 +85,8 @@ def mirror_partner(coords, axis=MIRROR_AXIS_X, tol=MIRROR_TOL_M):
 def symmetrize(u3, partner):
     """u3 -> (sym, anti). 짝이 없으면(partner<0) 자기 값을 양쪽에 쓴다.
 
-    sym  = (u + M u)/2   — 양쪽에 **같은 부호**로 나타나는 성분
-    anti = (u - M u)/2   — 양쪽에 **반대 부호**로 나타나는 성분
+    sym  = (u + M u)/2   - 양쪽에 **같은 부호**로 나타나는 성분
+    anti = (u - M u)/2   - 양쪽에 **반대 부호**로 나타나는 성분
     sym + anti == u  (짝이 있는 노드에서 정확히 성립)
     """
     n = len(u3)
@@ -173,7 +173,7 @@ def report(odb_path, step_name, n_modes=4, instance=None, axis=MIRROR_AXIS_X):
 
 def selftest():
     """순수 함수만 시험한다(Abaqus 불필요)."""
-    cnt = [0, 0]      # [ok, tot]  — 중첩 함수에서 py2 호환으로 리스트를 쓴다(global 금지)
+    cnt = [0, 0]      # [ok, tot]  - 중첩 함수에서 py2 호환으로 리스트를 쓴다(global 금지)
     # --- 완전 대칭인 장난감 메쉬 (축 x=0) ---
     coords = [(1.0, 0.0, 0.0), (-1.0, 0.0, 0.0),
               (1.0, 1.0, 0.0), (-1.0, 1.0, 0.0),

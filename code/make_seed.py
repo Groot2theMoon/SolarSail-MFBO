@@ -32,7 +32,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 #   [§19.68] Windows 콘솔/파이프 인코딩(cp949) 때문에 자식이 출력 중 죽는 것을 막는다.
-#     (실측: aba_mode_from_odb.py 가 파이프로 잡힌 stdout 에서 '—' 를 못 써 죽었다.)
+#     (실측: aba_mode_from_odb.py 가 파이프로 잡힌 stdout 에서 '-' 를 못 써 죽었다.)
 os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 os.environ.setdefault('PYTHONUTF8', '1')
 _CHILD_ENV = dict(os.environ, PYTHONIOENCODING='utf-8', PYTHONUTF8='1')
@@ -75,7 +75,7 @@ def sh(cmd, dry=False, cwd=HERE):
 
 
 def _need(path, what, hint=''):
-    """산출물 검증 — rc 가 아니라 파일로 판정한다."""
+    """산출물 검증 - rc 가 아니라 파일로 판정한다."""
     if not os.path.exists(path):
         raise SystemExit("[make_seed] %s 가 만들어지지 않았습니다 -> %s\n"
                          "  (위에 찍힌 자식 출력의 마지막 줄을 보세요.)%s"
@@ -306,7 +306,7 @@ def main(argv=None):
             odb, _job = expected_odb(a.x_c, disp, 0.0, _sc, a.excl)
             if not a.dry_run and not fresh(odb, _job_t0):
                 raise SystemExit(
-                    "[make_seed] buckle ODB 가 **이번 실행에서 갱신되지 않았습니다** — CAE/해석이 실패했습니다.\n"
+                    "[make_seed] buckle ODB 가 **이번 실행에서 갱신되지 않았습니다** - CAE/해석이 실패했습니다.\n"
                     "  이전 ODB 를 읽어 모드표를 만들면 안 됩니다. buckle/*.msg·.dat 의 원인을 확인하세요.\n"
                     "  odb=%s" % odb)
         _t0 = time.time()
@@ -316,7 +316,7 @@ def main(argv=None):
             _need(seed_tbl, 'seed 가족 모드표')
             if not fresh(seed_tbl, _t0):
                 raise SystemExit(
-                    "[make_seed] seed 모드표가 **이번 실행에서 갱신되지 않았습니다** — buckle 잡이 실패해\n"
+                    "[make_seed] seed 모드표가 **이번 실행에서 갱신되지 않았습니다** - buckle 잡이 실패해\n"
                     "  이전 표가 그대로 남아 있습니다. 이 표를 쓰면 1차/낡은 모드가 HF 에 주입됩니다.\n"
                     "  buckle/*.msg·.dat 의 원인을 먼저 고치고 --force 로 다시 실행하세요.\n"
                     "  table=%s" % seed_tbl)
@@ -341,7 +341,7 @@ def main(argv=None):
             odb, _job = expected_odb(a.x_c, disp, a.seed_clamp_dc, 'clamp_only', a.excl)
             if not a.dry_run and not fresh(odb, _job_t0):
                 raise SystemExit(
-                    "[make_seed] clamp buckle ODB 가 **이번 실행에서 갱신되지 않았습니다** — CAE/해석이 실패했습니다.\n"
+                    "[make_seed] clamp buckle ODB 가 **이번 실행에서 갱신되지 않았습니다** - CAE/해석이 실패했습니다.\n"
                     "  이전 ODB 를 읽어 모드표를 만들면 안 됩니다. buckle/*.msg·.dat 의 원인을 확인하세요.\n"
                     "  odb=%s" % odb)
         _t0 = time.time()
@@ -354,7 +354,7 @@ def main(argv=None):
                         % a.seed_clamp_dc))
             if not fresh(clamp_tbl, _t0):
                 raise SystemExit(
-                    "[make_seed] clamp 모드표가 **이번 실행에서 갱신되지 않았습니다** — buckle 잡이 실패해\n"
+                    "[make_seed] clamp 모드표가 **이번 실행에서 갱신되지 않았습니다** - buckle 잡이 실패해\n"
                     "  이전 표가 그대로 남아 있습니다. 이 표를 쓰면 1차/낡은 모드가 HF 에 주입됩니다.\n"
                     "  buckle/*.msg·.dat 의 원인을 먼저 고치고 --force 로 다시 실행하세요.\n"
                     "  table=%s" % clamp_tbl)
@@ -370,7 +370,7 @@ def main(argv=None):
         _cur = A.read_seed_header(out_tbl)
         if _cur.get('fingerprint') == _fp:
             print("      합성표 있음 - 건너뜀 (%s, 지문 %s)" % (os.path.basename(out_tbl), _fp))
-            print("\n[make_seed] OK — HF 가 %s 를 읽는다 (d_c 무관, §19.77)" % os.path.basename(out_tbl))
+            print("\n[make_seed] OK - HF 가 %s 를 읽는다 (d_c 무관, §19.77)" % os.path.basename(out_tbl))
             return 0
     if a.dry_run:
         _rel_d = lambda p: os.path.relpath(p, HERE)
@@ -418,7 +418,7 @@ def main(argv=None):
     if nodes != [_exp_nodes] or sorted(tbl.keys()) != [1, 2, 3, 4] or any(p != 1.0 for p in peaks):
         print("!!! 검증 실패 - nodes=%s modes=%s peaks=%s" % (nodes, sorted(tbl.keys()), peaks))
         return 1
-    print("[make_seed] OK — HF 가 %s 를 읽는다" % os.path.basename(out_tbl))
+    print("[make_seed] OK - HF 가 %s 를 읽는다" % os.path.basename(out_tbl))
     return 0
 
 

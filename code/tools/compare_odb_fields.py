@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""두 ODB 의 변위장을 노드별로 비교한다 — '같은 해인가 / 거울상인가 / 다른 해인가'.
+"""두 ODB 의 변위장을 노드별로 비교한다 - '같은 해인가 / 거울상인가 / 다른 해인가'.
 
 사용:
     abaqus python compare_odb_fields.py <A.odb> <B.odb> <step_name> [frameA] [frameB]

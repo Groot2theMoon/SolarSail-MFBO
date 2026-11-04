@@ -1,12 +1,12 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""정적 누출 검사 — 실행 없이 잡히는 NameError 두 종류 (2026-10-08)
+"""정적 누출 검사 - 실행 없이 잡히는 NameError 두 종류 (2026-10-08)
 
 왜 필요한가
     좌굴 스크립트(run_abaqus_buckle.py)는 스텁 하네스로 **실행** 검증이 된다. 그런데
     나머지 세 스크립트(run_abaqus.py / run_abaqus_mode.py / run_abaqus_cable.py)에는
     그런 검사가 없다. 그래서 격자 블록을 복사할 때 딸려온 이름이나 빠진 임포트가 조용히
-    통과해 실제 Abaqus 런에서 죽는다 — 실제로 HF 가 그렇게 두 번 죽었다(§19.33, §19.34):
+    통과해 실제 Abaqus 런에서 죽는다 - 실제로 HF 가 그렇게 두 번 죽었다(§19.33, §19.34):
         NameError: name 'TAG' is not defined          <- 복사가 끌고 온 좌굴 전용 상수
         NameError: name 'io'  is not defined          <- 임포트 누락(덱 검사 코드 3곳)
 
@@ -59,14 +59,14 @@ STRING_RE = re.compile(r'"[^"\n]*"|\'[^\'\n]*\'')
 
 
 def strip_strings(code):
-    """문자열 리터럴을 지운다. docstring/도움말에 이름이 적혀 있으면 이름 '사용'이 아니다 —
+    """문자열 리터럴을 지운다. docstring/도움말에 이름이 적혀 있으면 이름 '사용'이 아니다 -
     1차 스캔의 오탐 7건 중 다수가 이 때문이었다(예: mode.py 도움말 속 IMPERFECTION_MODE)."""
     return STRING_RE.sub('', TRIPLE_RE.sub('', code))
 
 
 def used_modules(code):
     """`X.` 형태로 쓰인 이름 중 표준 라이브러리 목록에 있는 것.
-    앞에 점이 붙은(`obj.datetime.`) 것은 제외한다 — 그건 속성 접근이지 모듈이 아니다."""
+    앞에 점이 붙은(`obj.datetime.`) 것은 제외한다 - 그건 속성 접근이지 모듈이 아니다."""
     return set(re.findall(r'(?<![\w.])([a-z_][a-z0-9_]*)\.', code)) & set(MODS)
 
 
@@ -93,7 +93,7 @@ LHS_ID_RE = re.compile(r'(?<![\w.])([A-Za-z_][A-Za-z0-9_]*)\s*(?:,|=(?!=))')
 
 
 def locally_bound_names(code):
-    """이 파일 안에서 '묶이는' 모든 이름 — 오탐 억제용으로 넓게 잡는다.
+    """이 파일 안에서 '묶이는' 모든 이름 - 오탐 억제용으로 넓게 잡는다.
     모듈수준/함수내 대입, for 대상, def 인자, with/except ... as, 튜플 대입 좌변까지."""
     out = set(ANY_ASSIGN_RE.findall(code)) | set(FOR_RE.findall(code))
     for m in DEF_RE.finditer(code):
@@ -112,12 +112,30 @@ def locally_bound_names(code):
 ELEM_NEEDING_CALL = re.compile(r'(\.Stress|\.SectionAssignment|InitialCondition)\s*\(')
 
 
+def _call_args(code, open_idx):
+    """`open_idx` 가 가리키는 '(' 부터 짝이 맞는 ')' 까지의 인자 텍스트.
+
+    주석은 이미 제거된 코드를 받는다. 문자열 안의 괄호까지 세지만, 이 검사 대상
+    호출들의 인자는 집합 이름/숫자뿐이라 그 경우가 없다.
+    """
+    depth = 0
+    for i in range(open_idx, len(code)):
+        ch = code[i]
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+            if depth == 0:
+                return code[open_idx + 1:i]
+    return code[open_idx + 1:]
+
+
 def grid_node_set_misuse(codes):
     """격자 모드에서 'All'(절점집합)을 **요소가 필요한 호출**에 넘기면 잡는다.
 
     격자(USE_GRID_MESH=True)에서 파트의 `All` 은 **절점**집합이다. 초기응력(Stress)이나
     SectionAssignment 처럼 요소/면 집합이 필요한 곳에 `All` 을 주면 Abaqus 입력처리기가
-    'not an element set' 으로 죽는다. 실제로 HF 가 이걸로 죽었다 — 초기응력을 만드는
+    'not an element set' 으로 죽는다. 실제로 HF 가 이걸로 죽었다 - 초기응력을 만드는
     Stress 호출이 3곳인데 격자 전환에서 1곳만 _ALL_ELEM 으로 바뀌고 나머지 2곳이
     'All' 로 남아, 마지막 재생성이 절점집합 위에 초기응력을 걸었다(2026-10-08).
     자유메쉬에서는 All 이 면집합이라 정상이므로 격자일 때만 검사한다.
@@ -131,9 +149,11 @@ def grid_node_set_misuse(codes):
         for m in ELEM_NEEDING_CALL.finditer(code):
             #   창을 **호출 범위 안**으로 자른다. 그냥 700자를 보면 호출 뒤에 오는
             #   DisplacementBC 의 정당한 sets['All'](절점집합)까지 잡아 오탐이 난다.
-            _tail = code[m.end():]
-            _end = re.search(r'\n\s*\)', _tail)
-            seg = _tail[:_end.start()] if _end else _tail[:700]
+            #   2026-11-04: `\n\s*\)` 로 끝을 찾는 방식은 닫는 괄호가 인자 줄 끝에 붙은
+            #   호출(`sigma23=0.0)`)에서 실패해 700자 폴백으로 떨어졌고, 그 창이 다음
+            #   DisplacementBC 의 sets['All'] 까지 삼켜 **오탐 2건**을 냈다(§19.114 기록).
+            #   괄호 깊이로 정확히 닫는 지점을 찾는다.
+            seg = _call_args(code, m.end() - 1)
             if re.search(r"sets\['All'\]", seg):
                 ln = code[:m.start()].count('\n') + 1
                 out.append((p, 'R3', '%s @%d 에 sets[All]' % (m.group(1), ln)))
@@ -201,7 +221,7 @@ def main(argv):
     if len(argv) > 1:
         paths = argv[1:]
     else:
-        #   [P1] run_abaqus_cable.py 는 tools/ 로 옮겼다 — 두 디렉터리를 모두 본다.
+        #   [P1] run_abaqus_cable.py 는 tools/ 로 옮겼다 - 두 디렉터리를 모두 본다.
         paths = []
         for _d in (code, here):
             for t in TARGETS:
@@ -215,7 +235,7 @@ def main(argv):
     if not problems:
         print('[leak] 이상 없음 (%d 파일 검사)' % len(paths))
         return 0
-    print('[leak] 누출 %d건 — 실행 전에 고치세요:' % len(problems))
+    print('[leak] 누출 %d건 - 실행 전에 고치세요:' % len(problems))
     for p, rule, name in problems:
         why = {'R1': '모듈처럼 쓰였는데 임포트 없음',
                'R2': '다른 스크립트의 모듈수준 이름을 정의 없이 사용',

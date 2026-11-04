@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""clamp 좌굴모드가 깨지는 원인을 격리 검증(OFAT) — CASE='clamp_only' 고정.
+"""clamp 좌굴모드가 깨지는 원인을 격리 검증(OFAT) - CASE='clamp_only' 고정.
 
 현재 상태 (2026-10-22 실측)
     PRETENSION_MODE 는 **CASE 표가 소유**한다(_ROUTE['pretension']).
@@ -245,7 +245,7 @@ def main(argv=None):
     print('\n해석')
     print('  P_crit 열이 일정하면 PERTURBATION 은 스케일일 뿐 물리에 영향 없음')
     print('  실패 arm 이 하나뿐이면 그 arm 이 바꾼 변수가 원인')
-    print('  전부 PASS 면 이 축에서 원인 없음 — 다른 축(형상/BC)을 봐야 함')
+    print('  전부 PASS 면 이 축에서 원인 없음 - 다른 축(형상/BC)을 봐야 함')
     print('  원본 .dat/.msg 는 %s 에 보존' % OUTDIR)
     return 0
 

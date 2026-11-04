@@ -35,7 +35,7 @@ import math
 import os
 import sys
 
-#   [P1] tools/ 로 옮겼다 — eval_abaqus / base_state_probe 는 부모(code/)에 있다.
+#   [P1] tools/ 로 옮겼다 - eval_abaqus / base_state_probe 는 부모(code/)에 있다.
 _CODE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _CODE not in sys.path:
     sys.path.insert(0, _CODE)

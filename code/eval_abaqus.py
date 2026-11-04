@@ -288,7 +288,7 @@ ZK_DIR_R_MIN = 1.0e-3    # axial mean 이 의미를 가지려면 R >= 이 값 (�
 #   (lf2 의 `nu, E = 0.34, 2.5e9` 와 같은 종류의 함정) -> 한 곳에 모은다.
 #   주의: run_abaqus.py 의 실제 재료 상수와 **반드시** 같아야 한다(자동 검증 없음).
 ZK_E = 2.5e9             # Pa, Kapton. 어긋나면 zk_Iw_pa 가 조용히 틀어진다
-ZK_NU = 0.34             # Kapton 푸아송비 — `zk_Iw` 보정 + [B3] 응력 경계에 사용
+ZK_NU = 0.34             # Kapton 푸아송비 - `zk_Iw` 보정 + [B3] 응력 경계에 사용
 # ---- [B2] 변형률 임계값 ------------------------------------------------------
 #   0.0 = 종전과 **바이트 동일**(정의 변경 없음). lf1 의 -1e-7 과 맞추려면 값을 준다
 #   (그 순간 state_wrinkled_frac 의 정의가 바뀐다).
@@ -953,7 +953,7 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         valid = norms > 1e-12
         normals[valid] = cross_prod[valid] / norms[valid, np.newaxis]
         
-        #   [§19.90] 뒤집기 **전에** 진짜 역방향(n_z<0) 요소를 계수한다 — 뒤집기 편향 진단용.
+        #   [§19.90] 뒤집기 **전에** 진짜 역방향(n_z<0) 요소를 계수한다 - 뒤집기 편향 진단용.
         if extra_out is not None:
             _bw = normals[:, 2] < 0.0
             extra_out['n_total'] += int(len(areas))
@@ -987,7 +987,7 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         normals = np.zeros_like(cross_prod)
         valid = norms > 1e-12
         normals[valid] = cross_prod[valid] / norms[valid, np.newaxis]
-        #   [§19.90] 뒤집기 **전에** 진짜 역방향(n_z<0) 요소를 계수한다 — 뒤집기 편향 진단용.
+        #   [§19.90] 뒤집기 **전에** 진짜 역방향(n_z<0) 요소를 계수한다 - 뒤집기 편향 진단용.
         if extra_out is not None:
             _bw = normals[:, 2] < 0.0
             extra_out['n_total'] += int(len(areas))

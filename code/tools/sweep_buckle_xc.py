@@ -1,5 +1,5 @@
 """
-sweep_buckle_xc.py — 버클모드가 성공하는 x_c 범위를 찾는 스윕 (Abaqus 머신에서 실행).
+sweep_buckle_xc.py - 버클모드가 성공하는 x_c 범위를 찾는 스윕 (Abaqus 머신에서 실행).
 
 무엇을 하나
     x_c 목록 각각에 대해 run_abaqus_buckle.py 를 실행한다. 실패하면 f(DEAD_FRAC)를
@@ -9,12 +9,12 @@ sweep_buckle_xc.py — 버클모드가 성공하는 x_c 범위를 찾는 스윕 
 왜 f 를 낮추나
     f=0.5 는 x_c=0.5 에서만 개시(50.4%) 아래다. 개시 하중비는 x_c 마다 다르고 **비단조**다
     (0.35 -> 19.2% / 0.50 -> 50.4% / 0.65 -> 37.5%). 개시 위의 base state 에는 안정한
-    선형모드가 없어 'THE EIGENVALUES CANNOT BE FOUND' 로 죽는다 — 창(N_EIG) 문제가 아니므로
+    선형모드가 없어 'THE EIGENVALUES CANNOT BE FOUND' 로 죽는다 - 창(N_EIG) 문제가 아니므로
     좌굴 창을 키우는 것으로는 못 넘긴다(음수 고유값 234개 > 요청 수).
 
 무엇을 고정하나
     클램프 당김 = DISP x 0.0556 (실측 동작 운용값). d_c=0.5/1.0 실패는 인위 프로브였고,
-    운용점과 무관하다 — 모드 추출의 목적은 'guidance' 이므로 운용 클램프 하나로 충분하다.
+    운용점과 무관하다 - 모드 추출의 목적은 'guidance' 이므로 운용 클램프 하나로 충분하다.
 
 주의
     아래 DISP / EXCL_R / CLAMP_DC 는 run_abaqus_buckle.py 의 상수와 **값이 같아야 한다**.
@@ -28,9 +28,9 @@ sweep_buckle_xc.py — 버클모드가 성공하는 x_c 범위를 찾는 스윕 
     Ctrl+C 로 중단해도 안전하다. 다시 실행하면 CSV 에 이미 있는 (x_c, f) 는 건너뛴다.
 
 출력
-    buckle/sweep_xc_results.csv — x_c, f, verdict, negative, seconds, job, note
+    buckle/sweep_xc_results.csv - x_c, f, verdict, negative, seconds, job, note
     판정: ok(**양수 lambda 존재**) / fail:negative-modes(표는 있으나 전부 음수 = 개시 넘음) /
-          fail:eigenvalues(표 없음 — 창·조건화) / fail:other(그 외) / fail:no-job(실행 실패)
+          fail:eigenvalues(표 없음 - 창·조건화) / fail:other(그 외) / fail:no-job(실행 실패)
     note 열에 n과 lambda 값 기록. 개시 하중비 = f + (1-f) x lambda1 (x_c=0.5 검증: 0.5041).
 """
 import argparse
@@ -45,14 +45,14 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tool
 BUCKLE = os.path.join(HERE, 'buckle')
 OUT_CSV = os.path.join(BUCKLE, 'sweep_xc_results.csv')
 
-DISP = 1.8e-5        # m — 운용점 (DISP_GLOBAL, mode.py 와 동일)
-EXCL_R = 0.21        # m — CLAMP_EXCL_R (이중 구속 방지, 격자 경계 정합)
-CLAMP_DC = 0.0556    # 운용 클램프 비율 (CLAMP_DC — 실측 동작값)
+DISP = 1.8e-5        # m - 운용점 (DISP_GLOBAL, mode.py 와 동일)
+EXCL_R = 0.21        # m - CLAMP_EXCL_R (이중 구속 방지, 격자 경계 정합)
+CLAMP_DC = 0.0556    # 운용 클램프 비율 (CLAMP_DC - 실측 동작값)
 DEFAULT_LADDER = [0.50, 0.35, 0.20, 0.10, 0.05]   # 내림차순. 0.05 아래는 조건화 악화(0.018 퇴화)
 
 
 def buckle_cmd(xc, f):
-    """run_abaqus_buckle.py 1회 실행 명령. shell=True — Windows abaqus 는 .bat 이다."""
+    """run_abaqus_buckle.py 1회 실행 명령. shell=True - Windows abaqus 는 .bat 이다."""
     return ('abaqus cae noGUI=run_abaqus_buckle.py -- %.4g %.4g %.6g %.4g %.4g'
             % (xc, DISP, DISP * CLAMP_DC, EXCL_R, f))
 
@@ -76,7 +76,7 @@ def parse_lams(dat):
 
 
 def classify(job, out):
-    """(verdict, note) — .dat/.msg 기반. **양수 lambda 가 하나도 없으면 ok 가 아니다**:
+    """(verdict, note) - .dat/.msg 기반. **양수 lambda 가 하나도 없으면 ok 가 아니다**:
         전부 음수면 base 가 이미 개시를 넘은 상태의 unloading 분기다(시드로 쓸 수 없다).
         개시 하중비 = f + (1-f) x lambda1 (x_c=0.5 검증: 0.5+0.5x8.1969e-3 = 0.5041)."""
     dat = read_text(os.path.join(BUCKLE, job + '.dat')) if job else ''
@@ -96,7 +96,7 @@ def classify(job, out):
             return 'ok', note
         return 'fail:negative-modes', note
     if 'HAS BEEN COMPLETED' in dat:
-        return 'fail:other', neg          # 완주했는데 고유값 표가 없다 — f 로 못 넘긴다
+        return 'fail:other', neg          # 완주했는데 고유값 표가 없다 - f 로 못 넘긴다
     return 'fail:other', neg
 
 
@@ -155,7 +155,7 @@ def main():
     plan = []
     for xc in a.xc:
         if round(xc, 4) in ok_xc:
-            print('x_c=%.2f — 이미 성공 기록, 건너뜀' % xc)
+            print('x_c=%.2f - 이미 성공 기록, 건너뜀' % xc)
             continue
         for f in ladder:
             if (round(xc, 4), round(f, 4)) in done:
@@ -170,7 +170,7 @@ def main():
     for xc, f in plan:
         print('  x_c=%.2f f=%.2f  |  %s' % (xc, f, buckle_cmd(xc, f)))
     if a.dry_run:
-        print('(dry-run — 실행하지 않았다)')
+        print('(dry-run - 실행하지 않았다)')
         return 0
 
     for i, (xc, f) in enumerate(plan, 1):
@@ -185,8 +185,8 @@ def main():
         if verdict == 'ok':
             continue
         if verdict in ('fail:eigenvalues', 'fail:negative-modes'):
-            continue                       # 개시 위/넘음 — f 를 낮춰 재시도
-        print('  !! %s — f 로 못 넘긴다. 이 x_c 의 나머지 사다리 생략.' % verdict)
+            continue                       # 개시 위/넘음 - f 를 낮춰 재시도
+        print('  !! %s - f 로 못 넘긴다. 이 x_c 의 나머지 사다리 생략.' % verdict)
         for f2 in ladder:
             if f2 < f and (round(xc, 4), round(f2, 4)) not in done:
                 append_row(['%.2f' % xc, '%.2f' % f2, 'skipped', '', '0', '',

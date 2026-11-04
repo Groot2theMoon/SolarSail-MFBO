@@ -127,10 +127,10 @@ if USE_GRID_MESH:
     print("[mesh] grid(.inp import, orphan): 노드 %d / S4 %d + S3 %d = %d"
           % (_nn, _n4, _n3, _n4 + _n3))
     #   orphan mesh: 섹션은 **요소 기반**으로, 요소가 있는 **뒤**에 준다(§10a).
-    #   셋 이름 'All' 유지 — inst_memb.sets['All'] 참조가 남아 있다.
+    #   셋 이름 'All' 유지 - inst_memb.sets['All'] 참조가 남아 있다.
     #   orphan mesh 는 요소/절점 겸용 집합이 없다 -> 두 개를 만든다.
     p.Set(elements=p.elements, name='All_Elem')   # 섹션+초기응력(요소)
-    p.Set(nodes=p.nodes, name='All')              # 변위 BC(절점) — 이름 유지
+    p.Set(nodes=p.nodes, name='All')              # 변위 BC(절점) - 이름 유지
     p.SectionAssignment(region=p.sets['All_Elem'], sectionName='Section-Membrane')
 else:
     s = my_model.ConstrainedSketch(name='triangle_profile', sheetSize=BASE*2)

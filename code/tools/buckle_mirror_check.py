@@ -1,5 +1,5 @@
 """
-buckle_mirror_check.py — 좌굴 ODB의 미러(x -> 20-x) 대칭 진단.
+buckle_mirror_check.py - 좌굴 ODB의 미러(x -> 20-x) 대칭 진단.
 
 무엇을 하나
     좌굴 잡 ODB의 기저 프레임(Step-Buckle frame 0)과 모드 프레임들의 변위장을 읽어,
@@ -8,7 +8,7 @@ buckle_mirror_check.py — 좌굴 ODB의 미러(x -> 20-x) 대칭 진단.
 
 판정 원리 (군론)
     기저가 미러대칭이면 축퇴쌍(λ1≈λ2)의 고유공간은 대칭부 ⊕ 반대칭부로 분해되고,
-    그 안의 **정규직교 쌍**은 (대칭±반대칭)/√2 의 회전일 뿐이다 — 즉 둘 다 같은 쪽에
+    그 안의 **정규직교 쌍**은 (대칭±반대칭)/√2 의 회전일 뿐이다 - 즉 둘 다 같은 쪽에
     몰리는 것은 불가능하고, 반드시 한 쪽은 반대편이다(둘 다 한쪽 = 서로의 거울상).
     따라서 '둘 다 한쪽'이 관측되면 기저가 미러대칭을 깬 것이다(개시 넘음 -> 국소좌굴).
 
@@ -21,11 +21,11 @@ buckle_mirror_check.py — 좌굴 ODB의 미러(x -> 20-x) 대칭 진단.
     ⚠️ [§19.53] CAE 커널은 argv 앞에 exe 경로를 넣는다 -> 인자는 **꼬리 기준**으로 읽는다
        (앞에서 a[0] 을 쓰던 구현이 `ABQcaeK.exe.odb` 로 죽었다).
     ⚠️ buckle 산출물은 RUN_DIR_NAME='buckle' 아래에 쌓이므로 buckle/ 접두사가 필요하다
-       (openOdb(job + '.odb') 를 cwd 상대경로로 연다 — 접두사가 없으면 FileNotFound 로 죽는다).
+       (openOdb(job + '.odb') 를 cwd 상대경로로 연다 - 접두사가 없으면 FileNotFound 로 죽는다).
 
 출력 판독
     기저 잔차/크기 ~ 0   -> 기저 대칭 (모드 쌍은 반드시 좌우 짝; 보이는 쪽 문제는 기저 회전)
-    기저 잔차/크기 큼    -> 기저가 대칭을 깼다 (개시 위) — 씨드 재료로는 부적합 판정 근거
+    기저 잔차/크기 큼    -> 기저가 대칭을 깼다 (개시 위) - 씨드 재료로는 부적합 판정 근거
 """
 from odbAccess import openOdb
 import sys
@@ -47,7 +47,7 @@ def _args(argv=None):
     ⚠️ [2026-10-12 §19.53] `abaqus cae noGUI=script.py -- <job> <step>` 로 부르면 sys.argv 앞쪽에
     **커널 실행파일 경로**(.../ABQcaeK.exe)와 `noGUI=...py` 가 들어온다. 예전 구현은 앞에서부터
     a[0] 을 job 으로 써서 exe 경로를 열려다 `OdbError: ...ABQcaeK.exe.odb` 로 죽었다.
-    (반면 `abaqus python script.py ...` 는 argv[0]='script.py' 라 무사하다 — 두 호출 방식이 다르다.)
+    (반면 `abaqus python script.py ...` 는 argv[0]='script.py' 라 무사하다 - 두 호출 방식이 다르다.)
     -> 커널 토큰을 걸러내고 **꼬리에서** 읽는다(run_abaqus_buckle.py 의 sys.argv[-3:] 관례와 동일).
     """
     a = [t for t in list(sys.argv if argv is None else argv)
@@ -140,7 +140,7 @@ def main():
             print('  모드1 %s 모드2: max|du1|=%.3e  max|du2|=%.3e  max|du3|=%.3e  잔차/크기=%.2f'
                   % (label, r1, r2, r3, max(r1, r2, r3) / mxc))
     print('  판독: 기저 잔차/크기 ~0 -> 기저 대칭(모드가 한쪽으로 보이면 기저 회전 문제)')
-    print('        기저 잔차/크기 큼  -> 기저가 대칭을 깼다(개시 넘음) — 씨드 부적합 근거')
+    print('        기저 잔차/크기 큼  -> 기저가 대칭을 깼다(개시 넘음) - 씨드 부적합 근거')
     odb.close()
     return 0
 

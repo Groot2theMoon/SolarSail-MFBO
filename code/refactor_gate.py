@@ -11,7 +11,7 @@
     G2 results : results_*.txt -> key=value -> 값 단위 비교. (상대 1e-5, timestamp/mtime 제외)
     G3 probe   : 프로브 로그 -> key=value 다중집합 비교.   (base_state_probe 등)
 
-사용 (리팩토링 **전**에 capture, **후**에 check — 같은 인자로)
+사용 (리팩토링 **전**에 capture, **후**에 check - 같은 인자로)
     python refactor_gate.py capture --label p0 --deck "aba/*.inp" --results "results/results_*.txt"
     python refactor_gate.py check   --label p0 --deck "aba/*.inp" --results "results/results_*.txt"
     python refactor_gate.py snapshot --label p0
@@ -45,7 +45,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 BASELINE_DIR = os.path.join(HERE, 'baseline')
 
 # 결과 txt 에서 매 런마다 달라지는 키. 값 비교에서 뺀다(키 자체는 존재해야 한다).
-#   r13_ct_odb_mtime: ODB 파일 수정시각 — 런할 때마다 다르다(2026-11-04 실측).
+#   r13_ct_odb_mtime: ODB 파일 수정시각 - 런할 때마다 다르다(2026-11-04 실측).
 VOLATILE_KEYS = ('timestamp', 'r13_ct_odb_mtime')
 
 # G2/G3 숫자 비교 상대오차. 2026-11-04 실측(같은 코드·같은 기계로 LF+HF를 **재해석**):
@@ -55,7 +55,7 @@ VOLATILE_KEYS = ('timestamp', 'r13_ct_odb_mtime')
 REL_TOL = 1.0e-5
 
 # ---------------------------------------------------------------------------
-# G1 — 덱 정규화
+# G1 - 덱 정규화
 # ---------------------------------------------------------------------------
 #   Abaqus writeInput 산출물의 머리말은 ** 로 시작하는 주석이다:
 #       *Heading
@@ -115,7 +115,7 @@ def deck_digest(path):
 
 
 # ---------------------------------------------------------------------------
-# G2/G3 — key=value
+# G2/G3 - key=value
 # ---------------------------------------------------------------------------
 _KV_LINE = re.compile(r'^\s*([A-Za-z_][\w.\-]*)\s*=\s*(.*?)\s*$')
 _KV_ANY = re.compile(r'([A-Za-z_][\w./\-]*)=([^\s,;]+)')
@@ -125,7 +125,7 @@ def _num(v):
     """'1e-3' / ' 0.001 ' / '(-3.4e-12' -> float. 숫자가 아니면 None.
 
     괄호·쉼표는 프로브 로그가 값을 `n_eq=(-3.45e-12 ...` 처럼 잘라 담기 때문이다.
-    날짜(`2026-11-04 15:50:59`)는 숫자로 읽히지 않는다 — 그런 키는 VOLATILE_KEYS 에 둔다.
+    날짜(`2026-11-04 15:50:59`)는 숫자로 읽히지 않는다 - 그런 키는 VOLATILE_KEYS 에 둔다.
     """
     s = str(v).strip().strip('()[]{},;')
     try:
@@ -171,7 +171,7 @@ def _same_value(a, b):
 
 
 def diff_kv(old, new, label_old='baseline', label_new='now'):
-    """[(key, kind, old, new)] — kind: 'changed' | 'missing' | 'added' | 'multiplicity'."""
+    """[(key, kind, old, new)] - kind: 'changed' | 'missing' | 'added' | 'multiplicity'."""
     problems = []
     od, nd = {}, {}
     #   volatile 키는 **양쪽**에서 뺀다. baseline 파일이 예전 volatile 규칙으로 만들어졌어도
@@ -404,7 +404,7 @@ def cmd_check(args):
 
 
 # ---------------------------------------------------------------------------
-# snapshot — 소스 트리 지문(무엇이 바뀌었는지 한 파일로)
+# snapshot - 소스 트리 지문(무엇이 바뀌었는지 한 파일로)
 # ---------------------------------------------------------------------------
 def _sha256_file(path):
     h = hashlib.sha256()
@@ -452,7 +452,7 @@ def cmd_snapshot(args):
 
 
 # ---------------------------------------------------------------------------
-# selftest — 게이트가 게이트인지 스스로 증명
+# selftest - 게이트가 게이트인지 스스로 증명
 # ---------------------------------------------------------------------------
 _DECK_A = """*Heading
 ** Job name: HF_Postbuckle_u3free Model name: SailModel_Triangle
@@ -522,7 +522,7 @@ def cmd_selftest(args):
           % ('PASS' if not diff_kv(old, same) else 'FAIL'))
     if diff_kv(old, same):
         fails += 1
-    #   잡음(상대 1e-5 이하)은 통과해야 한다 — 2026-11-04 실측 최대 1.44e-6.
+    #   잡음(상대 1e-5 이하)은 통과해야 한다 - 2026-11-04 실측 최대 1.44e-6.
     noise = [('x_c', '0.5'), ('d_c', '0.5'), ('fidelity', 'LF'),
              ('lf1', '0.123456790'), ('lf2', 'nan'), ('hf', '1e-3')]
     ok = not diff_kv(old, noise)

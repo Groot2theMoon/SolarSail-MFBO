@@ -50,7 +50,7 @@ def pick_mode_frames(lambdas, n_modes):
     return pick
 
 
-# (2026-09-28) 횡(면외) 성분 필터 — 임퍼펙션은 z 섭동이므로 u3 가 없는 모드는 쓸 수 없다.
+# (2026-09-28) 횡(면외) 성분 필터 - 임퍼펙션은 z 섭동이므로 u3 가 없는 모드는 쓸 수 없다.
 U3_MIN_FRAC = 1.0e-3     # 모드 최대성분 대비 u3 최대값이 이 비율 미만이면 '면내 모드'로 보고 버린다
 BUCKLE_SCAN_MAX = 40     # 후보 프레임 스캔 상한(앞쪽 프레임이 면내 모드일 때 뒤로 넘어가기 위함)
 
@@ -103,7 +103,7 @@ def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, ver
              % (os.path.basename(odb_path), step_name, len(frames), n_modes, instance))
         # (2026-09-28 실측) *BUCKLE 스텝 ODB 의 frame.frameValue 는 고유치가 아니라 '모드 번호'(1,2,3,4)다.
         #   좌굴계수 λ 는 .dat 의 MODE NO 표에 있으므로 dat_hint 가 있으면 그쪽을 우선한다.
-        #   (λ 는 모드 선택/로그 표기용이다 — 노드 섭동 물리에는 영향이 없다. 그래도 틀린 값을 쓰지 않는다.)
+        #   (λ 는 모드 선택/로그 표기용이다 - 노드 섭동 물리에는 영향이 없다. 그래도 틀린 값을 쓰지 않는다.)
         lam_src = 'odb.frameValue'
         if dat_hint and os.path.exists(dat_hint):
             try:
@@ -124,7 +124,7 @@ def extract_modes(odb_path, step_name, instance=DEFAULT_INSTANCE, n_modes=4, ver
         #   모드가 아니다. 그런데 .dat 의 λ 목록은 '모드 1..n' 이라 ODB 프레임과 **한 칸 어긋난다**.
         #   밀린 채로 두면: 기저가 후보로 들어가(면외 미미로 걸리긴 한다) λ 표기가 한 칸씩 틀리고,
         #   마지막 실제 모드가 λ 목록 범위 밖이 되어 **통째로 버려진다**
-        #   (실측: 5프레임/4고유치에서 3모드만 나왔다 — 네 번째 모드가 사라졌다).
+        #   (실측: 5프레임/4고유치에서 3모드만 나왔다 - 네 번째 모드가 사라졌다).
         #   => 기저 프레임 자리에 자리표시자를 넣어 목록을 프레임에 정렬한다.
         _has_base = False
         if len(frames) > 1:
@@ -258,7 +258,7 @@ def main(argv):
     inst_name = argv[5] if len(argv) > 5 else DEFAULT_INSTANCE
     #   [2026-10-07] CLI 경로도 **동명 .dat 을 자동으로 물린다**(buckle_mode_report 와 같은 규칙).
     #   없으면 lambda 가 ODB frameValue(=모드 번호 1,2,3,4)로 찍혀 'λ>0' 필터와 기록이 어긋난다.
-    #   (실측: 사용자가 λ=1.000e+00, 2.000e+00 ... 을 보았다 — 실제 고유치는 8.19691e-03 등이다.)
+    #   (실측: 사용자가 λ=1.000e+00, 2.000e+00 ... 을 보았다 - 실제 고유치는 8.19691e-03 등이다.)
     _dat_auto = os.path.splitext(odb_path)[0] + '.dat'
     _dh = _dat_auto if os.path.exists(_dat_auto) else None
     print('[MODES] lambda 출처 = %s' % (os.path.basename(_dh) if _dh

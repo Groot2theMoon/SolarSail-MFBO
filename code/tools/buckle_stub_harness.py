@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""buckle_stub_harness.py — Abaqus 없이 run_abaqus_buckle.py 의 build_model() 을 실행한다.
+"""buckle_stub_harness.py - Abaqus 없이 run_abaqus_buckle.py 의 build_model() 을 실행한다.
 
 무엇을 하는가 (배선 검증. 물리 검증이 아니다)
     `from abaqus import *` 를 가짜 모듈로 갈아끼우고, 실행 블록(제출/대기) **앞까지**만 잘라
@@ -7,14 +7,14 @@
     만들어졌는가'를 기록한다.
 
 무엇을 잡는가 (실측으로 잡힌 것)
-    1) 없는 BC 를 참조하는 KeyError — cload 라우트에 Disp_Control_Right 가 없는데 섭동 블록이
+    1) 없는 BC 를 참조하는 KeyError - cload 라우트에 Disp_Control_Right 가 없는데 섭동 블록이
        참조해 모델 생성 자체가 죽었다.
     2) 같은 이름을 두 createStepName 으로 만들어 **나중 것이 0 으로 덮어쓴** 사고
        (CF_Corner_* 가 Initial/GlobalTension 양쪽에 생성됨).
     둘 다 py_compile 로는 안 잡히고, Abaqus 로는 라이선스 1회 + 수십 분 뒤에야 드러난다.
 
 무엇을 못 보는가
-    lambda, 수렴, 변위장, 모드 형상 — 물리 판정은 실측(라이선스)으로만 나온다.
+    lambda, 수렴, 변위장, 모드 형상 - 물리 판정은 실측(라이선스)으로만 나온다.
 
 사용
     python3 buckle_stub_harness.py <case> [x_c] [--out PATH]
@@ -38,12 +38,12 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # [P1] tool
 SRC = os.path.join(HERE, 'run_abaqus_buckle.py')
 CUT_MARKER = 'print("=" * 78)'          # 실행 블록의 시작(소스에 두 번 나온다 -> 첫 번째에서 자른다)
 
-# 케이스가 요구하는 상수 — run_abaqus_buckle.py 의 _require_constant 와 같은 계약을 여기서도 만족시킨다.
+# 케이스가 요구하는 상수 - run_abaqus_buckle.py 의 _require_constant 와 같은 계약을 여기서도 만족시킨다.
 # (하네스가 하나를 빠뜨리면 스크립트 자신의 계약 검사가 예외를 올려 드러난다)
-# ⚠️ 값은 **파이썬 리터럴 그대로** 쓴다(문자열은 따옴표 포함) — 치환이 값을 그대로 끼워 넣는다.
+# ⚠️ 값은 **파이썬 리터럴 그대로** 쓴다(문자열은 따옴표 포함) - 치환이 값을 그대로 끼워 넣는다.
 #    실측: 따옴표를 빼면 `PRETENSION_MODE = corner2` 가 되어 NameError 로 죽는다.
 CASE_CONSTANTS = {
-    #  PRETENSION_MODE 는 스크립트의 PAPER_MATCH 프리셋이 결정한다(여기서 덮지 않는다 —
+    #  PRETENSION_MODE 는 스크립트의 PAPER_MATCH 프리셋이 결정한다(여기서 덮지 않는다 -
     #  paper 프리셋에서 corner2 로 덮으면 _require_constant 가 즉시 예외를 낸다).
     'seed':       {'CORNER_ANGLE_DEG': '28.6'},
     'clamp_only': {'CORNER_ANGLE_DEG': '28.6'},
@@ -52,7 +52,7 @@ CASE_CONSTANTS = {
 }
 
 # ---------------------------------------------------------------------------
-# 목(mock) — CAE 객체 표면이 넓으므로 범용 기록 목 + 필요한 곳만 실제 동작
+# 목(mock) - CAE 객체 표면이 넓으므로 범용 기록 목 + 필요한 곳만 실제 동작
 # ---------------------------------------------------------------------------
 
 
@@ -113,7 +113,7 @@ class Node(object):
 
 
 class NodeArray(object):
-    """instance.nodes 목 — getByBoundingSphere 는 **반경을 실제로 존중**한다.
+    """instance.nodes 목 - getByBoundingSphere 는 **반경을 실제로 존중**한다.
 
     반경을 무시하면 두 방향으로 오진한다(스킬 기록):
       - 전부 돌려주면 All_Edges_NoClamp 가 부당하게 채워져 '빈 셋' 결함이 숨는다
@@ -181,11 +181,11 @@ class Step(Obj):
     pass
 
 
-_STEP_NAMES = set()   # Model 이 만든 스텝 이름 — setValuesInStep 의 오타 검사용
+_STEP_NAMES = set()   # Model 이 만든 스텝 이름 - setValuesInStep 의 오타 검사용
 
 
 class BC(Obj):
-    """경계조건/집중하중 목 — 스텝별 값 이력을 남긴다(0 덮어쓰기 사고를 잡기 위해)."""
+    """경계조건/집중하중 목 - 스텝별 값 이력을 남긴다(0 덮어쓰기 사고를 잡기 위해)."""
 
     def __init__(self, name, log, created_in, **kw):
         Obj.__init__(self, 'bc:%s' % name, log, name=name)
@@ -245,7 +245,7 @@ class Part(Obj):
         #   로컬에서 초록으로 지나가고 Abaqus 가 AttributeError 로 죽는다(2026-10-07 실측).
         raise AttributeError(
             "'Part' object has no attribute 'addNodes'  "
-            "(mdb Part 에는 없다 — odb.Part 전용. .inp import 를 쓸 것)")
+            "(mdb Part 에는 없다 - odb.Part 전용. .inp import 를 쓸 것)")
 
     addElements = addNodes
     deleteMesh = addNodes
@@ -375,7 +375,7 @@ class Model(Obj):
             blk = re.search(r'^\*Element,\s*type=%s\s*$((?:\n[^\*].*)*)' % etype, txt, re.M)
             return len([ln for ln in (blk.group(1).splitlines() if blk else []) if ln.strip()])
         n_q, n_t = _count('S4'), _count('S3')
-        #   *Node 줄도 실제로 읽어 part.nodes 를 채운다 — 프로브의 좌우대칭/개수 검사가
+        #   *Node 줄도 실제로 읽어 part.nodes 를 채운다 - 프로브의 좌우대칭/개수 검사가
         #   로컬에서 진짜로 돌아가게 하기 위해서다(목이 비어 있으면 그 검사를 못 한다).
         _nodes = []
         _nb = re.search(r'^\*Node\s*$((?:\n[^\*].*)*)', txt, re.M)   # *Node 블록만
@@ -398,12 +398,12 @@ class Model(Obj):
     #     2) my_model.concentratedForces[...]                      <- 그런 저장소가 없다(loads 다)
     #   1)은 하중 생성기의 검사로, 2)는 이 엄격 모드로 로컬에서 잡힌다.
     _API = frozenset((
-        # 생성기 — Model 의 method (Abaqus Scripting Reference)
+        # 생성기 - Model 의 method (Abaqus Scripting Reference)
         'DisplacementBC', 'VelocityBC', 'AccelerationBC', 'ConcentratedForce', 'Moment',
         'Pressure', 'BodyForce', 'Gravity', 'Tie', 'Coupling', 'Part', 'Material',
         'TrussSection', 'HomogeneousShellSection', 'Stress', 'Temperature', 'StaticStep',
         'BuckleStep', 'FrequencyStep', 'FieldOutputRequest', 'ConstrainedSketch',
-        # 저장소 — Model 의 repository. 집중하중은 'loads' 이지 'concentratedForces' 가 아니다.
+        # 저장소 - Model 의 repository. 집중하중은 'loads' 이지 'concentratedForces' 가 아니다.
         'boundaryConditions', 'loads', 'steps', 'parts', 'sets', 'materials', 'sections',
         'interactions', 'constraints', 'fields', 'predefinedFields', 'amplitudes',
         'profiles', 'skins', 'initialConditions', 'rootAssembly', 'assembly',
@@ -412,7 +412,7 @@ class Model(Obj):
     def __getattr__(self, k):
         if k not in Model._API:
             raise AttributeError(
-                "[harness] Model 에 %r 이 없습니다 — Abaqus API 이름이 맞는지 확인하세요. "
+                "[harness] Model 에 %r 이 없습니다 - Abaqus API 이름이 맞는지 확인하세요. "
                 "(집중하중 저장소는 'loads' 이고 'concentratedForces' 는 없습니다. "
                 "하중은 Initial 스텝에 만들 수 없습니다.)" % k)
         return Obj.__getattr__(self, k)
@@ -443,9 +443,9 @@ class Model(Obj):
         """[법칙] Abaqus 는 **하중**을 Initial 스텝에 만들 수 없다.
 
         ValueError: The specified step either does not exist or is the Initial step.
-        BC 는 Initial 에 만들어도 된다 — 그래서 이 검사는 하중 생성기에만 건다.
+        BC 는 Initial 에 만들어도 된다 - 그래서 이 검사는 하중 생성기에만 건다.
         (2026-10-07 실측: clamp_lf 배선이 Initial 에 CF 를 만들어 모델 생성이 죽었는데,
-         관대한 목이 통과시켜 Abaqus 왕복 1회를 잃었다. 그래서 목에 법칙을 넣는다 —
+         관대한 목이 통과시켜 Abaqus 왕복 1회를 잃었다. 그래서 목에 법칙을 넣는다 -
          스텁 하네스의 존재 이유가 바로 이런 '라이선스 없이 잡히는 실수' 이다.)
         """
         if kw.get('createStepName') == 'Initial':
@@ -525,7 +525,7 @@ def _shim_numpy():
 def _stub_modules(head):
     """`from abaqus import *` 등이 대문자 심볼을 전부 가져가므로 소스에서 이름을 긁어 채운다."""
     #   주의: 스크립트가 **스스로 대입하는** 대문자 이름(PERTURBATION 등)을 스텁이 선점하면
-    #   정의 순서 버그(NameError)를 가려버린다(실측: CLAMP_LIVE_M 사고 — 실제 런은 L263 에서 즉사).
+    #   정의 순서 버그(NameError)를 가려버린다(실측: CLAMP_LIVE_M 사고 - 실제 런은 L263 에서 즉사).
     consts = sorted(set(re.findall(r'\b([A-Z][A-Z0-9_]{1,})\b', head)))
     consts = [n for n in consts if not re.search(r'^%s\s*=' % n, head, re.M)]
     mods = {}
@@ -584,7 +584,7 @@ def main(argv):
     src = io.open(SRC, encoding='utf-8').read()
     head, sep, _ = src.partition(CUT_MARKER)
     if not sep:
-        sys.stderr.write('FAIL 실행 블록 마커(%r)를 찾지 못했습니다 — 파일 구조가 바뀌었습니까?\n' % CUT_MARKER)
+        sys.stderr.write('FAIL 실행 블록 마커(%r)를 찾지 못했습니다 - 파일 구조가 바뀌었습니까?\n' % CUT_MARKER)
         return 3
     head, subs = _substitute(head, case, legacy)
 
@@ -593,7 +593,7 @@ def main(argv):
     print('[harness] mode  = %s   case=%s   x_c=%s' % ('legacy' if legacy else 'CASE', case, x_c))
     for name, val, n in subs:
         print('[harness] subst %-18s = %-10s (치환 %d회)%s'
-              % (name, val, n, '' if n == 1 else '   <<< 치환 실패 — 상수 이름을 확인하라'))
+              % (name, val, n, '' if n == 1 else '   <<< 치환 실패 - 상수 이름을 확인하라'))
     print('[harness] 주의: lambda/수렴/모드 형상은 이 도구가 볼 수 없다(배선만 본다).')
     print('=' * 78)
 
@@ -608,11 +608,11 @@ def main(argv):
         sys.modules[name] = m
     sys.path.insert(0, HERE)
     try:
-        import numpy            # noqa: F401  (있으면 진짜 numpy 를 쓴다 — 사용자 머신과 동일 조건)
+        import numpy            # noqa: F401  (있으면 진짜 numpy 를 쓴다 - 사용자 머신과 동일 조건)
     except ImportError:
         sys.modules['numpy'] = _shim_numpy()
         print('[harness] numpy 없음 -> 내장 심(shim) 사용 (표준 라이브러리만)')
-    import aba_grid_mesh as _gm            # 실제 모듈(순수 파이썬) — 좌표 판정은 Abaqus 불필요
+    import aba_grid_mesh as _gm            # 실제 모듈(순수 파이썬) - 좌표 판정은 Abaqus 불필요
     sys.modules['aba_grid_mesh'] = _gm
     g['mdb'] = Mdb(LOG)
     sys.argv = [SRC, str(x_c)]             # 스크립트의 parse_args 에 하네스 인자가 새지 않게
@@ -643,7 +643,7 @@ def main(argv):
         _dump(LOG, out_path, case, x_c, ok=False)
         return 5
 
-    print('[harness] build_model(%r) 반환 = %r  — 배선 기록 %d건'
+    print('[harness] build_model(%r) 반환 = %r  - 배선 기록 %d건'
           % (g['DISP'], model_name, len(LOG.rows)))
     _report(g, LOG)
     _dump(LOG, out_path, case, x_c, ok=True)
@@ -651,7 +651,7 @@ def main(argv):
 
 
 def _report(g, log):
-    """사람이 읽는 배선 요약 — 이게 하네스의 실제 산출물이다."""
+    """사람이 읽는 배선 요약 - 이게 하네스의 실제 산출물이다."""
     print('-' * 78)
     print('[배선] 경계조건 / 집중하중  (스텝별 값 이력)')
     for name, bc in sorted(g['mdb'].models[g['MODEL_PREFIX']].boundaryConditions.items()):

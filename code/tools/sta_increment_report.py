@@ -1,4 +1,4 @@
-"""`.sta`(Abaqus 상태 파일) 판독기 — "이 모델이 완주 가능한가"를 10~20분에 판정한다.
+"""`.sta`(Abaqus 상태 파일) 판독기 - "이 모델이 완주 가능한가"를 10~20분에 판정한다.
 
 사용법:
     python sta_increment_report.py aba\HF_Postbuckle.sta            (Abaqus 불필요, 표준 파이썬)

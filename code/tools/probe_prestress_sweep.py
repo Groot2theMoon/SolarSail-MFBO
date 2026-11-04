@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""케이블 프리스트레스 스윕 — 중앙 von Mises 가 1 psi(6895 Pa)가 되는 운용점을 찾는다.
+"""케이블 프리스트레스 스윕 - 중앙 von Mises 가 1 psi(6895 Pa)가 되는 운용점을 찾는다.
 
     python probe_prestress_sweep.py --dry-run      # config 생성/경로만 검증
     python probe_prestress_sweep.py                # LF 4점 실행 (~40 s/점)
@@ -57,7 +57,7 @@ CABLE_AREA = 7.853981633974483e-07   # m^2, r=5e-4
 def build_config(base, cable_pa, x_c, d_c, out_path):
     cfg = json.load(io.open(base, encoding='utf-8'))
     cfg['CABLE_PRESTRESS'] = cable_pa
-    #   구 disp 경로 키가 남아 있으면 지운다 — 이 경로에서는 무효지만, 읽는 사람이
+    #   구 disp 경로 키가 남아 있으면 지운다 - 이 경로에서는 무효지만, 읽는 사람이
     #   "DISP_GLOBAL 이 운용점"이라고 오독하는 것을 막는다.
     cfg.pop('DISP_GLOBAL', None)
     cfg['_comment'] = (
@@ -126,7 +126,7 @@ def main(argv=None):
         build_config(base, cable_pa, a.x_c, a.d_c, tmp)
         rc, log = run(['abaqus', 'python', 'run_analysis.py', '--config', tmp], a.dry_run)
         if rc:
-            print('[PROBE] !!! LF 실행 실패 rc=%d — 중단' % rc)
+            print('[PROBE] !!! LF 실행 실패 rc=%d - 중단' % rc)
             return rc
         if a.dry_run:
             continue
@@ -148,7 +148,7 @@ def main(argv=None):
               % (mean_pa, minp_pa, mises_pa, mises_pa / TARGET))
 
     if a.dry_run:
-        print('\n[PROBE] dry-run 종료 — config 만 생성했다:', os.path.basename(tmp))
+        print('\n[PROBE] dry-run 종료 - config 만 생성했다:', os.path.basename(tmp))
         return 0
 
     if rows:
@@ -180,7 +180,7 @@ def main(argv=None):
         if den:
             k = num / den
             tgt = TARGET / k
-            print('  선형 기울기 k = %.4f Pa/Pa  -> 1 psi 는 CABLE_PRESTRESS ≈ %.4g Pa'
+            print('  선형 기울기 k = %.4f Pa/Pa  -> 1 psi 는 CABLE_PRESTRESS ~ %.4g Pa'
                   ' (= %.2f N/cable)' % (k, tgt, tgt * CABLE_AREA))
         print('  판정: M/1psi 가 프리스트레스에 비례하면 선형 / 포화하면 비선형(주름)')
 
@@ -190,7 +190,7 @@ def main(argv=None):
         build_config(base, a.restore, a.x_c, a.d_c, tmp)
         rc, _ = run(['abaqus', 'python', 'run_analysis.py', '--config', tmp], a.dry_run)
         if rc:
-            print('[PROBE] !!! 복원 실패 rc=%d — 수동으로 다시 돌리세요' % rc)
+            print('[PROBE] !!! 복원 실패 rc=%d - 수동으로 다시 돌리세요' % rc)
             return rc
 
     #   스윕이 덮어쓴 점별 results txt 를 원래(HF) 기록으로 되돌린다.

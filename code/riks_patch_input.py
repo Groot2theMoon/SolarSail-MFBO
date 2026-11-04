@@ -31,7 +31,7 @@ KNOWN_FLAGS = ('--line-search', '--riks',
 KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=', '--inc=',
                '--nls=', '--slsmin=', '--ia=', '--ran=', '--can=',
                '--i0=', '--ir=')
-# --relax-corr 제거(2026-10-05) — 유일한 기능이 field 게이트였고, 지금은 --can=/--ran= 이 자동으로
+# --relax-corr 제거(2026-10-05) - 유일한 기능이 field 게이트였고, 지금은 --can=/--ran= 이 자동으로
 #   켠다. 게이트만 켜고 값을 안 주면 Cαn=1.0(기본의 100배 느슨)을 조용히 넣었다(§12).
 if '--relax-corr' in sys.argv[1:]:
     print('[중단] --relax-corr 는 제거되었습니다.')
@@ -52,7 +52,7 @@ _argv = [a for a in sys.argv[1:] if not a.startswith('--')]
 v = _argv
 LPF = None
 LS = ('--line-search' in sys.argv[1:])   # [2026-10-05 복구] 슬라이스 실수로 지워졌던 줄
-# field 블록 게이트 — Rαn/Cαn 은 field 데이터 줄에만 들어가므로 게이트가 꺼져 있으면 --ran=/--can= 이
+# field 블록 게이트 - Rαn/Cαn 은 field 데이터 줄에만 들어가므로 게이트가 꺼져 있으면 --ran=/--can= 이
 #   조용히 사라진다. 둘 중 하나라도 주면 자동으로 켜고, 아무것도 안 주면 Abaqus 기본값을 쓴다(§12).
 RC = ('--can=' in ' '.join(sys.argv[1:])) or ('--ran=' in ' '.join(sys.argv[1:]))
 FORCE_RIKS = ('--riks' in sys.argv[1:])
@@ -60,7 +60,7 @@ SPD_DISCONT = ('--speed-discont' in sys.argv[1:])   # 속도: 컷백 감소(문�
 SPD_ITER = ('--speed-iter' in sys.argv[1:])   # [2026-10-05 복구] 슬라이스 실수로 덮어써졌던 줄
 ARC = None                      # --arc=<dl_in>: 아크길이 직접 지정(문서 기본인 '상한 없음' 동반)
 ARC_MAX = None                  # --arc-max=<v>: 굳이 상한을 걸고 싶을 때만
-# 수렴 레버 — *CONTROLS 문서(2017 KEYRefMap simakey-r-controls) 근거(§12).
+# 수렴 레버 - *CONTROLS 문서(2017 KEYRefMap simakey-r-controls) 근거(§12).
 #   FIELD: Rαn(최대잔차/평균플럭스, 기본 5e-3) / Cαn(최대보정/최대증분, 기본 1e-2).
 #   LINE SEARCH: Nls(최대 반복, Newton 기본 0=비활성, 권장 5).  IA: 증분당 최대 시도(기본 5).
 NLS = None                      # --nls=<N>
@@ -187,7 +187,7 @@ if TSTOP is not None:
     if len(old_data) < 2:
         print('[중단] 데이터 줄에 timePeriod 항목이 없습니다: %r' % lines[sidx + 1])
         sys.exit(2)
-    # 함정 — *Static 의 initialInc/minInc/maxInc 는 스텝타임 단위다. timePeriod 만 줄이면 같은 값이
+    # 함정 - *Static 의 initialInc/minInc/maxInc 는 스텝타임 단위다. timePeriod 만 줄이면 같은 값이
     #   램프 기준으로 20배 큰 증분이 되어 보정검정이 깨진다. 세 값을 같은 비율로 스케일해 보존한다(§12).
     _old_tp = float(old_data[1]) if len(old_data) > 1 else 1.0
     _ratio = (TSTOP / _old_tp) if _old_tp else 1.0
@@ -212,7 +212,7 @@ if 'inc=' in new_step.lower():
 out = list(lines)
 out[si] = new_step
 if LS:
-    # line search 의 표적 — attempt 1 에서 보정이 부호를 바꾸며 커지고 'DISP. CORRECTION TOO LARGE'
+    # line search 의 표적 - attempt 1 에서 보정이 부호를 바꾸며 커지고 'DISP. CORRECTION TOO LARGE'
     #   -> 'APPEARS TO BE DIVERGING' 이 된다. 정적 해석·기존 안정화는 그대로 두고 삽입만 한다(§12).
     _nls = int(NLS) if NLS is not None else 5
     # fields: Nls, slsmax, slsmin  (뒤는 기본값)
@@ -227,7 +227,7 @@ if RC and (CAN is None):
     print('       => 기본값을 의도한 것이면 그대로 두고, 명시하려면 --can=1e-2 를 함께 준다.')
     print('       (과거처럼 1.0 으로 끄려면 --can=1.0 - 문서가 허용하나 정확도 손실이 있다)')
 if RC:
-    # Cαn 이 필요한 이유 — 잔차는 통과하는데 'DISP. CORRECTION TOO LARGE COMPARED TO DISP. INCREMENT'
+    # Cαn 이 필요한 이유 - 잔차는 통과하는데 'DISP. CORRECTION TOO LARGE COMPARED TO DISP. INCREMENT'
     #   로 실패한다. 증분이 작아지면 보정/증분 비가 만족될 수 없다(컷백 함정).
     #   문서가 'set Cαn to 1' 을 허용한다. 잔차 기준 Rαn 은 건드리지 않는다(평형 정확성 유지, §12).
     _ran_s = ('%.6g' % RAN) if RAN is not None else ''
@@ -240,7 +240,7 @@ if RC:
     #   RC 가 값옵션(--ran/--can)으로만 켜지므로 이 분기는 도달 불가다. 이 분기가
     #   '플래그만 주면 Cαn=1.0' 이라는 조용한 기본값 변경의 원인이었다.
     out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
-# TIME INCREMENTATION 은 한 블록으로 병합한다 — 데이터 줄은 필드 '위치'로만 의미를 갖고,
+# TIME INCREMENTATION 은 한 블록으로 병합한다 - 데이터 줄은 필드 '위치'로만 의미를 갖고,
 #   블록이 2개면 뒤 블록의 빈 칸이 앞을 덮는지가 문서에 없다. I0/IR 은 ANALYSIS=DISCONTINUOUS
 #   없이 직접 필드로 지정한다(문서가 overrides 라고 명시). 우리 모델엔 severe discontinuity 가 없다(§12).
 _ti = [''] * 11                       # I0, IR, IP, IC, IL, IG, IS, IA, IJ, IT, IcS
@@ -265,7 +265,7 @@ if _ti_used:
     out.insert(sidx + 2, ', '.join(_ti))
     out.insert(sidx + 2, '*Controls, parameters=time incrementation')
 if SPD_DISCONT:
-    # 속도 개선 — 문서: "Sometimes it is useful to increase both I0 and IR ... to avoid premature cutbacks".
+    # 속도 개선 - 문서: "Sometimes it is useful to increase both I0 and IR ... to avoid premature cutbacks".
     #   ANALYSIS=DISCONTINUOUS 는 I0=8/IR=10 을 자동 설정한다. 우리 런은 컷백 20.5%(203/990)라
     #   조기 컷백을 줄이는 것이 목적이다(§12).
     out.insert(sidx + 2, '*Controls, analysis=discontinuous')
@@ -293,7 +293,7 @@ if LPF is not None:
 
 _raw = io.open(SRC, 'rb').read()
 _nl = '\r\n' if b'\r\n' in _raw else '\n'
-# 가드 — 리크스 스텝은 데이터 덱의 마지막이어야 한다. 아니면 입력단계에서 즉시 죽으므로 중단한다(§12).
+# 가드 - 리크스 스텝은 데이터 덱의 마지막이어야 한다. 아니면 입력단계에서 즉시 죽으므로 중단한다(§12).
 _tail = [] if not DO_RIKS else [(sidx + 3 + k, l) for k, l in enumerate(out[sidx + 2:])
          if l.strip().lower().startswith('*step')]
 if _tail:

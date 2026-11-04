@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""buckle_mode_report.py — 좌굴모드 **형상**을 읽고 판정한다. (읽기 전용, 라이선스 0)
+"""buckle_mode_report.py - 좌굴모드 **형상**을 읽고 판정한다. (읽기 전용, 라이선스 0)
 
 왜 필요한가
     지금까지 판정은 lambda 의 부호와 개수뿐이었다. 정작 "이 모드가 우리 주름인가" 는 한 번도
@@ -9,7 +9,7 @@
         움직이지 않는다. 클램프 물리가 아니므로 시드로 쓰면 틀린 초기결함이 된다.
     그래서 x_c 를 바꾼 런들의 모드가 '따라 움직이는가' 를 상관계수와 무게중심 이동으로 본다.
 
-사용 (abaqus python — 위치 인자만. 런처가 --key=value 의 '=' 를 소비한다)
+사용 (abaqus python - 위치 인자만. 런처가 --key=value 의 '=' 를 소비한다)
     abaqus python buckle_mode_report.py <odb> <step> [n_modes] [instance]
     abaqus python buckle_mode_report.py cmp <odbA> <odbB> [<odbC>] <step> [n_modes] [instance]
     python3 buckle_mode_report.py selftest          <- Abaqus 없이 순수 함수만 검증
@@ -22,7 +22,7 @@ import sys
 DEFAULT_INSTANCE = 'MEMBRANE-1'
 DEFAULT_THICKNESS = 5.0e-6      # run_abaqus_buckle.py 의 THICKNESS 와 맞춘다
 
-# 판정 임계값 — 실측 분포를 보고 조정한다(계획 §4: 3번 런 결과 뒤에 확정).
+# 판정 임계값 - 실측 분포를 보고 조정한다(계획 §4: 3번 런 결과 뒤에 확정).
 CORR_MOVE = 0.80        # 이 이상 상관이면 '같은 모드가 이동한 것' 으로 본다
 CORR_SAME = 0.99        # 이 이상이면 사실상 같은 형상
 MOVE_FRAC = 0.25        # 무게중심 이동 / 모드 자체 폭(r90) 이 이 이상이면 '이동' (상대 기준)
@@ -32,7 +32,7 @@ U3_FRAC_MIN = 0.10      # 면외 비율이 이 미만이면 '면내 모드' 로 
 
 
 # ---------------------------------------------------------------------------
-# 순수 함수 — 합성 입력으로 Abaqus 없이 검증한다(selftest)
+# 순수 함수 - 합성 입력으로 Abaqus 없이 검증한다(selftest)
 # ---------------------------------------------------------------------------
 
 
@@ -42,7 +42,7 @@ def mode_metrics(nodes, disp, thickness=DEFAULT_THICKNESS, top_frac=0.1):
     nodes = {label: (x, y, z)}, disp = {label: (u1, u2, u3)}  (공통 라벨만 쓰인다)
 
     반환: {'u3_frac', 'cx', 'cy', 'r90', 'peak_xy', 'over_2t', 'n'}
-      u3_frac : max|u3| / max(max|u1|, max|u2|, max|u3|)  — 면내 모드면 O(1e-16)
+      u3_frac : max|u3| / max(max|u1|, max|u2|, max|u3|)  - 면내 모드면 O(1e-16)
       cx, cy  : |u3| 가중 무게중심 (진폭이 어디 사는가)
       r90     : |u3| 상위 top_frac 노드들의 무게중심으로부터의 RMS 반경 (분포 폭)
       over_2t : |u3| > 2*thickness 인 노드 비율
@@ -62,7 +62,7 @@ def mode_metrics(nodes, disp, thickness=DEFAULT_THICKNESS, top_frac=0.1):
                 'peak_xy': None, 'over_2t': 0.0, 'n': len(common)}
     cx = sum(abs(disp[l][2]) * nodes[l][0] for l in common) / s
     cy = sum(abs(disp[l][2]) * nodes[l][1] for l in common) / s
-    # rw = |u3| 가중 RMS 반경(전체 노드) — **모드의 실제 폭** 대리변수.
+    # rw = |u3| 가중 RMS 반경(전체 노드) - **모드의 실제 폭** 대리변수.
     #   r90(상위 10% 의 분산 반경)은 피크 영역만 재므로 모드 폭의 대리변수가 되지 못한다
     #   (합성 검증: s=2 -> 16 으로 넓혀도 r90 이 1.12 -> 1.30 으로 거의 불변).
     rw = (sum(abs(disp[l][2]) * ((nodes[l][0] - cx) ** 2 + (nodes[l][1] - cy) ** 2)
@@ -134,7 +134,7 @@ def verdict_pair(ma, mb, corr, move_frac=MOVE_FRAC, pinned_frac=PINNED_FRAC,
     d_rel = (d / scale) if scale else None
     if corr <= 0.0:
         return 'ANTI'
-    # 절대 폴백(move_tol)은 r90 을 못 구했을 때만 쓴다 — 둘을 OR 로 묶으면 넓은 모드에서
+    # 절대 폴백(move_tol)은 r90 을 못 구했을 때만 쓴다 - 둘을 OR 로 묶으면 넓은 모드에서
     #   상대 기준이 무력해진다(합성 검증: r90=4 m 인 넓은 모드의 0.6 m 이동이 MOVES 로 오판됐다).
     if corr >= corr_same and ((d_rel < pinned_frac) if d_rel is not None else (d < move_tol)):
         return 'PINNED'
@@ -157,7 +157,7 @@ def judge_modes(metrics, u3_min=U3_FRAC_MIN):
 
 
 # ---------------------------------------------------------------------------
-# ODB 읽기 (Abaqus 전용 — selftest 는 이 함수를 부르지 않는다)
+# ODB 읽기 (Abaqus 전용 - selftest 는 이 함수를 부르지 않는다)
 # ---------------------------------------------------------------------------
 
 
@@ -199,7 +199,7 @@ def read_odb_modes(odb_path, step_name, n_modes=8, instance=DEFAULT_INSTANCE, da
             if _fi == 0 and len(_frames) > 1:
                 try:
                     if float(getattr(fr, 'frameValue', -1.0)) == 0.0:
-                        msgs.append('[REPORT] 기저 프레임(frame 1, frameValue 0) 건너뜀 — 모드가 아니다')
+                        msgs.append('[REPORT] 기저 프레임(frame 1, frameValue 0) 건너뜀 - 모드가 아니다')
                         continue
                 except Exception:
                     pass
@@ -208,7 +208,7 @@ def read_odb_modes(odb_path, step_name, n_modes=8, instance=DEFAULT_INSTANCE, da
                 for v in fr.fieldOutputs['U'].values:
                     d[v.nodeLabel] = (float(v.data[0]), float(v.data[1]), float(v.data[2]))
             except KeyError:
-                msgs.append('[REPORT] 프레임에 U 출력이 없다 — FieldOutputRequest 확인')
+                msgs.append('[REPORT] 프레임에 U 출력이 없다 - FieldOutputRequest 확인')
                 break
             disps.append(d)
         lams = []
@@ -232,7 +232,7 @@ def read_odb_modes(odb_path, step_name, n_modes=8, instance=DEFAULT_INSTANCE, da
 
 
 def fmt_mode_line(i, lam, met, label=None, note_if_none='(지표 계산 불가)'):
-    """모드 한 줄 포맷. **순수 함수** — 면내 모드(met['cx'] is None)에서도 크래시하지 않는다.
+    """모드 한 줄 포맷. **순수 함수** - 면내 모드(met['cx'] is None)에서도 크래시하지 않는다.
 
     실측 크래시(2026-10-07, control_none M1): 그 모드는 u3 가 **항등적으로 0**(면내 모드)이라
     mode_metrics 가 cx=None 을 돌려주는데, 포맷이 '%7.3f' % None 을 시도해
@@ -275,7 +275,7 @@ def _report_one(odb_path, step_name, n_modes, instance, dat_hint, limit):
 
 
 def cmp_verdicts(da, db, ma, mb):
-    """두 ODB 의 모드 대응 판정 목록. **순수 함수** — 프레임 수와 메트릭 수가 달라도 안전하다.
+    """두 ODB 의 모드 대응 판정 목록. **순수 함수** - 프레임 수와 메트릭 수가 달라도 안전하다.
 
     실측 크래시(2026-10-07): ODB 프레임 수가 메트릭 수보다 많아(요청 4 인데 프레임이 더 있다)
     range(min(len(da), len(db))) 로 돌다 ma[k] 에서 IndexError.
@@ -318,17 +318,17 @@ def _cmp(argv, step_name, n_modes, instance):
                 bad = True
         print()
     if bad:
-        print('판정: PINNED 가 있다 — 그 모드는 경계조건 아티팩트일 수 있다. 시드로 쓰기 전에')
+        print('판정: PINNED 가 있다 - 그 모드는 경계조건 아티팩트일 수 있다. 시드로 쓰기 전에')
         print('      압축영역(클램프 부착선 밖)에 진폭이 있는지 확인하라.')
     else:
-        print('판정: PINNED 없음 — 상관/이동으로 판단한 결과는 위 표를 따른다.')
+        print('판정: PINNED 없음 - 상관/이동으로 판단한 결과는 위 표를 따른다.')
     return 0
 
 
 def selftest():
     """합성 모드로 순수 함수를 검증한다(부정 포함). Abaqus 불필요.
 
-    픽스처는 **국소 모드**(Gaussian)를 쓴다 — 실제 좌굴모드에 가깝다. 초기 픽스처였던 원뿔(cone)은
+    픽스처는 **국소 모드**(Gaussian)를 쓴다 - 실제 좌굴모드에 가깝다. 초기 픽스처였던 원뿔(cone)은
     10x10 전역에서 상관이 0.32 밖에 안 나와 MOVES 판정을 시험하지 못했다(그 실패가 이 픽스처를 고쳤다).
     """
     import math
@@ -350,7 +350,7 @@ def selftest():
     wide = bump(5.6, 5.0, s=8.0)      # 같은 0.6 m 이동이지만 상대 이동량은 작다
     anti = dict((l, (0.0, 0.0, -base[l][2])) for l in base)
     inplane = dict((l, (base[l][2], 0.0, 1e-16)) for l in base)
-    #  u3 가 **항등적으로 0** 인 픽스처 — 실측 크래시(control_none M1)의 실제 입력이다.
+    #  u3 가 **항등적으로 0** 인 픽스처 - 실측 크래시(control_none M1)의 실제 입력이다.
     #  1e-16 이면 early-return 경로를 타지 않으므로(w 합 > 0) 크래시 회귀를 시험하지 못한다.
     inplane0 = dict((l, (base[l][2], 0.0, 0.0)) for l in base)
 
@@ -378,12 +378,12 @@ def selftest():
         ('면내 모드가 judge 에서 버려짐', judge_modes([mn])[0] == []),
         ('정상 모드가 judge 를 통과', judge_modes([mb])[0] == [1]),
         ('스케일 민감성: 넓은 모드의 같은 0.6 m 이동은 MOVES 가 아니다', v_wide != 'MOVES'),
-        #  포맷 회귀 — 실측 크래시(면내 모드 = u3 항등 0 -> cx=None)를 그대로 입력으로 넣는다
+        #  포맷 회귀 - 실측 크래시(면내 모드 = u3 항등 0 -> cx=None)를 그대로 입력으로 넣는다
         ('면내 픽스처가 early-return 경로를 탄다(cx=None)', mn0 is not None and mn0['cx'] is None),
         ('크래시 회귀: 면내 모드(cx=None) 포맷', '면내' in fmt_mode_line(1, 1.5e-4, mn0)),
         ('크래시 회귀: met=None 포맷', '계산 불가' in fmt_mode_line(1, None, None)),
         ('정상 모드 포맷에 lambda 가 들어감', '1.48328e-04' in fmt_mode_line(1, 1.48328e-4, mb)),
-        #  cmp 회귀 — 프레임 수가 메트릭 수보다 많은 실측 상황
+        #  cmp 회귀 - 프레임 수가 메트릭 수보다 많은 실측 상황
         ('cmp 상한: 프레임 수 > 메트릭 수여도 안전',
          len(cmp_verdicts([base] * 6, [moved] * 6, [mb, mb], [mm, mm])) == 2),
         ('cmp 판정: 같은 모드쌍은 PINNED',
@@ -411,7 +411,7 @@ def main(argv):
     try:
         from odbAccess import openOdb           # noqa: F401
     except ImportError:
-        sys.stderr.write('odbAccess 없음 — `abaqus python` 으로 실행하거나 selftest 를 쓰세요.\n')
+        sys.stderr.write('odbAccess 없음 - `abaqus python` 으로 실행하거나 selftest 를 쓰세요.\n')
         return 3
     args = list(argv[1:])
     if args and args[0] == 'cmp':

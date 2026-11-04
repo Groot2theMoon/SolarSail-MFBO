@@ -3,7 +3,7 @@
 
 왜 필요한가
     CAE noGUI 는 스크립트 stdout 을 콘솔로 보내지 않고 버리는 경우가 있고, 프로세스
-    종료코드는 0 으로 돌아온다. 그래서 화면에는 "Exit code: 0" 만 남는다 — HF 가 실제로
+    종료코드는 0 으로 돌아온다. 그래서 화면에는 "Exit code: 0" 만 남는다 - HF 가 실제로
     이렇게 여러 번 죽었고 원인을 볼 수 없었다(§19.33, §19.34).
 
 무엇을 하는가
@@ -88,7 +88,7 @@ def main():
         except Exception:
             pass
         sys.stdout, sys.stderr = old_out, old_err
-        print('[capture] 완료 — 로그: %s' % log)
+        print('[capture] 완료 - 로그: %s' % log)
 
 
 main()

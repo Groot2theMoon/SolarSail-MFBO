@@ -111,7 +111,7 @@ def _zk_lookup(zk, key):
 
 
 def _lf_value(parsed_data, zk, target=None):
-    """RESULTS/ZK 에서 LF 목적값을 고른다. 못 얻으면 FAIL(nan) — 조용한 0 금지."""
+    """RESULTS/ZK 에서 LF 목적값을 고른다. 못 얻으면 FAIL(nan) - 조용한 0 금지."""
     target = target or LF_TARGET
     if target in _LF_IDX:
         try:
@@ -412,7 +412,7 @@ if train_x is None:
 
     # 텐서 변환
     if not train_x_list:
-        raise SystemExit("!!! 초기 관측 0건 — Abaqus 환경/PATH/run_abaqus.py 위치를 확인하십시오. (위 로그의 Abaqus Error 참조)")
+        raise SystemExit("!!! 초기 관측 0건 - Abaqus 환경/PATH/run_abaqus.py 위치를 확인하십시오. (위 로그의 Abaqus Error 참조)")
 
     train_x = torch.stack(train_x_list)
     train_y = torch.tensor(train_y_list, device=device, dtype=dtype).view(-1, 1)

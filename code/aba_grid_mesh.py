@@ -1,4 +1,4 @@
-"""aba_grid_mesh.py — 삼각 막을 '내부 균일 정사각형 + 경계 삼각형' 격자로 채운다.
+"""aba_grid_mesh.py - 삼각 막을 '내부 균일 정사각형 + 경계 삼각형' 격자로 채운다.
 
 목적
     Galhofo(2022) 의 참조 메쉬를 재현한다. 논문은 `10100 quadratic thin-shell
@@ -256,7 +256,7 @@ def clamp_exclude_labels(instance, centers, radius):
 def make_set(assembly, name, instance, labels):
     """라벨 리스트로 어셈블리 노드셋을 만든다.
 
-    a.Set(nodes=...) 는 MeshNodeArray 를 요구한다 — tuple/list 를 넘기면
+    a.Set(nodes=...) 는 MeshNodeArray 를 요구한다 - tuple/list 를 넘기면
     'Feature creation failed.' 로 죽는다(실측 2026-10-06). sequenceFromLabels 로 만든다.
     빈 라벨이면 RuntimeError 를 올린다(조용히 빈 셋을 만들면 BC 가 아무 데도
     안 걸려 물리적으로 다른 문제가 된다).
@@ -350,7 +350,7 @@ def _second_order(nodes, s4, s3):
 
 def write_inp(path, base=20.0, height=10.0, seed_div=200.0, part_name='Membrane',
               elem_order=1):
-    """격자를 `.inp` 로 쓴다 — CAE `PartFromInputFile` 로 **orphan mesh part** 를 만들기 위한 것.
+    """격자를 `.inp` 로 쓴다 - CAE `PartFromInputFile` 로 **orphan mesh part** 를 만들기 위한 것.
 
     elem_order=1 -> S4 + S3 (기존)
     elem_order=2 -> S8R5 + STRI65 (논문 Galhofo 기준 요소, 변 중앙 절점 자동 생성)
@@ -421,7 +421,7 @@ def import_grid_part(model, part_name='Membrane', base=20.0, height=10.0, seed_d
             % sorted(model.parts.keys()))
     #   파트 이름 규칙은 버전/상황에 따라 다르다(*Part 헤딩 vs 파일명). **가정하지 않고 발견한다.**
     #   (2026-10-07 실측: 헤딩을 Membrane 으로 썼는데 parts['Membrane'] 에 없어 KeyError 였다.
-    #    import 자체는 성공했다 — 이름만 달랐다. 그래서 호출부는 **돌려받은 객체**만 쓴다.)
+    #    import 자체는 성공했다 - 이름만 달랐다. 그래서 호출부는 **돌려받은 객체**만 쓴다.)
     key = part_name if part_name in _new else _new[0]
     part = model.parts[key]
     if verbose:

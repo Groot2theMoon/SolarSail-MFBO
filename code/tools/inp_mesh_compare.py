@@ -33,7 +33,7 @@ def parse_inp(path):
     #           (실측: 정합하는 두 덱에서 "좌표 일치 4.78%"). => 좌표는 판정에 쓰지 않는다.
     nodes, elems = {}, {}
     nb = eb = 0
-    blocks = []              # [(블록번호, 노드수)] — 부품별 구조를 눈으로 보기 위함
+    blocks = []              # [(블록번호, 노드수)] - 부품별 구조를 눈으로 보기 위함
     cur_n = 0
     mode, etype = None, None
     with open(path, 'r', errors='replace') as f:
@@ -120,7 +120,7 @@ def main():
     #       [IMPERFECTION] 기하 섭동 적용: <찾은>/<전체> 노드
     #   가 N/N 이면 모드 소스의 라벨을 전부 찾았다는 뜻 = 주입 매핑이 성립한다.
     print('\n' + '-' * 78)
-    print('[판정]  (좌표 비교는 다부품 .inp 에서 성립하지 않아 제외한다 — 위 주석 참조)')
+    print('[판정]  (좌표 비교는 다부품 .inp 에서 성립하지 않아 제외한다 - 위 주석 참조)')
     print('  노드 총수      : A %d / B %d  %s'
           % (len(labA), len(labB), '일치' if len(labA) == len(labB) else '**다름**'))
     print('    A 에만 %d개 %s' % (len(only_A), only_A[:6]))
@@ -132,12 +132,12 @@ def main():
     counts_ok = (len(labA) == len(labB)) and (sA == sB)
     print('\n[결론]')
     if counts_ok and (eA == eB):
-        print('  RESULT:IDENTICAL_COUNTS — 노드 총수와 전체 요소가 같다.')
+        print('  RESULT:IDENTICAL_COUNTS - 노드 총수와 전체 요소가 같다.')
     elif counts_ok:
-        print('  RESULT:COUNT_MATCH — **노드 총수와 셸/막 요소 수가 같다.**')
+        print('  RESULT:COUNT_MATCH - **노드 총수와 셸/막 요소 수가 같다.**')
         print('    -> 임퍼펙션 주입의 필요조건을 만족한다. 전체 요소 차이는 케이블 파트 수 차이다.')
     else:
-        print('  RESULT:COUNT_DIFFER — 노드 총수 또는 셸/막 요소 수가 다르다.')
+        print('  RESULT:COUNT_DIFFER - 노드 총수 또는 셸/막 요소 수가 다르다.')
         print('    -> 두 모델의 메쉬 설정/덱 생성 시점을 맞춰야 한다.')
     print('\n  ※ 최종 기능 판정은 HF 로그의 아래 줄이다(이 도구보다 강한 증거):')
     print('       [IMPERFECTION] 기하 섭동 적용: <찾은>/<전체> 노드')

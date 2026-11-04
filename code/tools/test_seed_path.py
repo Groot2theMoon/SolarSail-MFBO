@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""설계점 시드표 경로/지문 순수함수 단위시험 — Abaqus 불필요(라이선스 0).
+"""설계점 시드표 경로/지문 순수함수 단위시험 - Abaqus 불필요(라이선스 0).
 
     python3 test_seed_path.py        # PASS/FAIL, 실패 시 EXIT=1
 
@@ -114,7 +114,7 @@ def main():
     print("--- 10) 로케일 C(cp949 상당)에서도 UTF-8 모드표를 읽는가 (§19.71) ---")
     _d = tempfile.mkdtemp(prefix='utf8tab_')
     _p = os.path.join(_d, 't.txt')
-    _write(_p, '# 헤더 — 한글 주석\nMODE 1\n1 1.0\n2 -0.5\n')
+    _write(_p, '# 헤더 - 한글 주석\nMODE 1\n1 1.0\n2 -0.5\n')
     _code = ("import sys,aba_imperfection as A;"
              "t=A.load_mode_table(r'%s',(1,));print(sorted(t.keys()),len(t[1]))" % _p)
     _r = subprocess.run([sys.executable, '-c', _code], capture_output=True, text=True,
@@ -211,7 +211,7 @@ def main():
 
     print()
     if FAIL:
-        print("RESULT: FAIL %d / %d — %s" % (len(FAIL), N[0], ', '.join(FAIL)))
+        print("RESULT: FAIL %d / %d - %s" % (len(FAIL), N[0], ', '.join(FAIL)))
         return 1
     print("RESULT: PASS %d/%d" % (N[0], N[0]))
     return 0

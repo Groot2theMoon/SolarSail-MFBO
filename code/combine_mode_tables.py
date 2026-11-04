@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""모드표 **합성기** — 여러 좌굴 모드표에서 모드를 뽑아 가중 합성표 하나를 만든다.
+"""모드표 **합성기** - 여러 좌굴 모드표에서 모드를 뽑아 가중 합성표 하나를 만든다.
 
 [왜 필요한가]  씨드(imperfection) = a * Sum_i w_i * phi_i.
   HF(run_abaqus.py)는 **모드표 하나**만 읽고, 그 표의 모드를 **균일 진폭**으로 더한다
@@ -75,14 +75,14 @@ def read_table(path):
 def parse_spec(spec):
     """'w:table:1,2' -> (w, table, [modes]).
 
-    [2026-10-12] `rsplit(':', 2)` 를 쓴다 — Windows 절대경로의 드라이브 콜론(`C:\...`)을
+    [2026-10-12] `rsplit(':', 2)` 를 쓴다 - Windows 절대경로의 드라이브 콜론(`C:\...`)을
     경로 안에 그대로 두기 위해서다. `split(':', 2)` 는 '1.0:C:\a\b.txt:1,2' 에서 테이블을
     'C' 로 잘라 조용히(런처에 따라 rc=0 으로) 실패했다(실측).
     """
     try:
-        #   가중치는 첫 콜론 앞, 모드목록은 마지막 콜론 뒤 — 가운데(경로)에는 콜론이 있어도 된다.
+        #   가중치는 첫 콜론 앞, 모드목록은 마지막 콜론 뒤 - 가운데(경로)에는 콜론이 있어도 된다.
         #   (Windows 드라이브 'C:' 를 경로 안에 그대로 두기 위한 규칙. `split(':',2)`/`rsplit(':',2)`
-        #    둘 다 드라이브 콜론에서 깨진다 — 실측.)
+        #    둘 다 드라이브 콜론에서 깨진다 - 실측.)
         w_s, rest = spec.split(':', 1)
         table, m_s = rest.rsplit(':', 1)
         w = float(w_s)
@@ -123,7 +123,7 @@ def main(argv):
         if k > 4:
             print("[합성] 경고: 모드 %d개 -> HF 의 IMPERFECTION_MAX_MODES=4 를 넘습니다(상위 4개만 주입됨)" % k)
 
-    #   [2026-10-12 §19.55] HF 로그가 `모드표 출처: source=? / step=? / instance=?` 로 찍었다 —
+    #   [2026-10-12 §19.55] HF 로그가 `모드표 출처: source=? / step=? / instance=?` 로 찍었다 -
     #   mode_table_info 는 `# source=`/`# step=`/`# instance=` 키를 읽는데 합성기는 그 키를 안 썼다.
     #   출처가 로그에 안 남으면 '엉뚱한 표' 교란을 못 잡는다(교란 차단이 이 헤더의 목적이다).
     _i0 = mode_table_info(specs[0][1]) or {}
@@ -145,7 +145,7 @@ def main(argv):
                 f.write("%d %.9e\n" % (lab, combined[m][lab]))
     print("[합성] 저장: %s (모드 %d개)" % (os.path.abspath(out_path), len(combined)))
 
-    # ---- 합성장 요약 (HF 진폭 기준) — 40분 HF 를 쏘기 전에 씨드 크기/구성을 확인한다 ----
+    # ---- 합성장 요약 (HF 진폭 기준) - 40분 HF 를 쏘기 전에 씨드 크기/구성을 확인한다 ----
     #   t = 막 두께 5 µm(THICKNESS=5e-6). *IMPERFECTION 규약: u3_주입 = AMPL_T * t * u3_표.
     _t_um, _ampl_t = 5.0, AMPL_T_DEFAULT
     total = {}
@@ -160,7 +160,7 @@ def main(argv):
     _den = sum(abs(v) for v in per_src.values()) or 1.0
     print("[요약] 합성장: 노드 %d개 / 표 기준 max|Sum w*phi| = %.4g (노드 %d)"
           % (len(total), abs(total[lab_max]), lab_max))
-    print("       HF 진폭 %.2f t (=%.3g µm) 적용 시 주입 max|Δz| = %.3g µm (%.3g t)"
+    print("       HF 진폭 %.2f t (=%.3g um) 적용 시 주입 max|dz| = %.3g um (%.3g t)"
           % (_ampl_t, _t_um, _ampl_t * _t_um * abs(total[lab_max]),
              _ampl_t * abs(total[lab_max])))
     print("       최대노드 기여: " + ", ".join(
@@ -179,7 +179,7 @@ def main(argv):
                 if abs(got[m][lab] - v) > 1e-15:
                     bad += 1
         peak = max(abs(v) for m in combined for v in combined[m].values())
-        print("[검증] load_mode_table 재독 OK — 모드 %s / 노드 %d개/모드 / 원본 대비 불일치 %d건 / peak|u3|=%.4g"
+        print("[검증] load_mode_table 재독 OK - 모드 %s / 노드 %d개/모드 / 원본 대비 불일치 %d건 / peak|u3|=%.4g"
               % (list(want), len(combined[want[0]]), bad, peak))
         return 1 if bad else 0
     print("[검증] aba_imperfection 임포트 실패 -> 형식 검증 생략")

@@ -320,7 +320,7 @@ def main():
         #   [§19.97] 끝의 요약/KV 줄에 쓸 값 보관소(None = 읽지 못함 -> 'nan').
         _v_centre_mean = None    # 중앙 영역 면적가중 평균 면내응력 [Pa]
         _v_centre_minp = None    # 중앙 영역 최소주응력(가장 압축적인 min principal) [Pa]
-        _v_centre_mises = None   # 중앙 영역 면적가중 von Mises [Pa] — Boni2016 운용점(1 psi)과 직접 비교
+        _v_centre_mises = None   # 중앙 영역 면적가중 von Mises [Pa] - Boni2016 운용점(1 psi)과 직접 비교
         _v_frac_meanneg = None   # 전막 면적가중 면내평균<0 비율
         _v_frac_minpneg = None   # 전막 면적가중 minP<0 비율
         _v_uz_max = None         # 부호 있는 u3 최대값 [m]

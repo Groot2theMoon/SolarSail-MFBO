@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""RELEASE_EDGE_U3 A/B 실행기 — 3자유변 u3=0 vs. to-ground 스프링.
+"""RELEASE_EDGE_U3 A/B 실행기 - 3자유변 u3=0 vs. to-ground 스프링.
 
     python ab_softspring.py --dry-run          # 파일 편집/복원만 검증 (Abaqus 호출 없음)
     python ab_softspring.py                    # Arm B 실제 실행
@@ -52,7 +52,7 @@ def read_flag(path):
 
 
 def set_flag(path, value):
-    """바이트 단위 치환 — CRLF/LF 를 그대로 보존한다. 정확히 1곳만 바뀌어야 한다."""
+    """바이트 단위 치환 - CRLF/LF 를 그대로 보존한다. 정확히 1곳만 바뀌어야 한다."""
     raw = open(path, 'rb').read()
     new, n = PAT.subn(rb'\g<1>' + value.encode() + rb'\g<3>', raw)
     if n != 1:
@@ -66,7 +66,7 @@ def git_clean(path):
         out = subprocess.run(['git', 'status', '--porcelain', '--', path],
                              cwd=HERE, capture_output=True, text=True).stdout.strip()
     except Exception as e:                                    # noqa: BLE001
-        print('[AB] git 확인 실패(%s) — 계속하지만 커밋 상태는 직접 확인하세요' % e)
+        print('[AB] git 확인 실패(%s) - 계속하지만 커밋 상태는 직접 확인하세요' % e)
         return True
     if out:
         print('[AB] !!! %s 에 커밋되지 않은 변경이 있습니다:\n%s' % (os.path.basename(path), out))
@@ -106,7 +106,7 @@ def compare(a_path, b_path):
         print('%-22s %14s %14s %12s' % (k, A.get(k, '-'), B.get(k, '-'), rel))
         rows += 1
     if not rows:
-        print('  (비교 가능한 키가 없습니다 — 파일 경로 확인)')
+        print('  (비교 가능한 키가 없습니다 - 파일 경로 확인)')
     print('[AB] A=%s\n[AB] B=%s' % (a_path, b_path))
 
 
@@ -128,7 +128,7 @@ def main(argv=None):
     log = os.path.join(HERE, 'results', 'AB_B_u3spring_%s.log' % stem)
 
     if read_flag(SRC) != 'False':
-        raise SystemExit('[AB] 현재 RELEASE_EDGE_U3 가 False 가 아닙니다 — 먼저 되돌리세요.')
+        raise SystemExit('[AB] 현재 RELEASE_EDGE_U3 가 False 가 아닙니다 - 먼저 되돌리세요.')
     if not git_clean(SRC):
         raise SystemExit('[AB] 중단: run_abaqus.py 가 dirty 합니다.')
     if not os.path.exists(live) and not a.no_archive:

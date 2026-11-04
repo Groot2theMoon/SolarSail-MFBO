@@ -7,7 +7,7 @@
 무엇을 답하나
   ① 어디까지 갔나: 스텝별 프레임 수 + 마지막 프레임의 스텝 시간(=진행률 tau)
   ② 그때 **규정된(prescribed) 케이블/클램프 변위** = tau x 상수 (기본 1e-3 m = GLOBAL_FINAL)
-     — StaticStep 기본 RAMP 이므로 스텝 시간에 선형이다.
+     - StaticStep 기본 RAMP 이므로 스텝 시간에 선형이다.
   ③ 실제 변형: 마지막 프레임의 U 요약(max|U1|,|U2|,|U3| = 주름 진폭 u_z,max) + 노드 위치
   ④ 잡음/반력: RF 가 있으면 최대/합, 그리고 케이블·RP 노드셋이 보이면 그 값도 찍는다.
 
@@ -31,7 +31,7 @@ def main(argv):
         print("!!! ODB 없음: %s" % p)
         return 1
     gfin = float(argv[2]) if len(argv) > 2 else 1.0e-3
-    cfin = float(argv[3]) if len(argv) > 3 else gfin     # 클램프는 d_c 배 — 모르면 같은 값으로 둔다
+    cfin = float(argv[3]) if len(argv) > 3 else gfin     # 클램프는 d_c 배 - 모르면 같은 값으로 둔다
 
     odb = openOdb(path=p, readOnly=True)
     print("=" * 72)
@@ -66,8 +66,8 @@ def main(argv):
         print("  U: max|U1|=%.4e (node %d) / max|U2|=%.4e (node %d) / max|U3|=%.4e (node %d)"
               % (abs(mx[0]), arg[0], abs(mx[1]), arg[1], abs(mx[2]), arg[2]))
         uz = [v.data[2] for v in U]
-        print("     (max|U3| = u_z,max — 두께 5e-06 m 대비 %.1f t)" % (abs(mx[2]) / 5.0e-6))
-        #   논문 대조는 u_z,ave = (|max|+|min|)/2 다(mean|u3| 아님) — 54배 규명의 결론.
+        print("     (max|U3| = u_z,max - 두께 5e-06 m 대비 %.1f t)" % (abs(mx[2]) / 5.0e-6))
+        #   논문 대조는 u_z,ave = (|max|+|min|)/2 다(mean|u3| 아님) - 54배 규명의 결론.
         u_ave = (abs(max(uz)) + abs(min(uz))) / 2.0
         print("  u_z,max=%.4e  u_z,min=%.4e  u_z,ave=(|max|+|min|)/2=%.4e m = %.1f t"
               % (max(uz), min(uz), u_ave, u_ave / 5.0e-6))
@@ -97,7 +97,7 @@ def main(argv):
             ns = odb.rootAssembly.nodeSets[k] if owner == 'assembly' else inst.nodeSets[k]
             vals = last_step.frames[-1].fieldOutputs['U'].getSubset(region=ns).values
             if vals:
-                #   세트 전체 요약(첫 노드만 찍으면 짝을 오해한다 — CL/CR 을 거울로 보게 됨).
+                #   세트 전체 요약(첫 노드만 찍으면 짝을 오해한다 - CL/CR 을 거울로 보게 됨).
                 u1 = [v.data[0] for v in vals]
                 u2 = [v.data[1] for v in vals]
                 u3 = [v.data[2] for v in vals]

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""ctx.py — run_abaqus.py 의 실행 문맥: 로그 경로와 emit.
+"""ctx.py - run_abaqus.py 의 실행 문맥: 로그 경로와 emit.
 
 왜 별도 모듈인가
   `abaqus cae noGUI=script.py` 는 스크립트를 execfile 로 로드하므로 `__file__` 이 없고,
