@@ -21,3 +21,7 @@
 *.pdf   binary
 *.png   binary
 *.jpg   binary
+
+# 시드표는 헤더의 sha 가 **파일 바이트**와 대조된다(aba_imperfection.file_token).
+#   줄바꿈을 정규화하면 seed_gate 가 "소스 모드표가 바뀜"으로 오판한다 -> 바이트 그대로 보존.
+code/seeds/*.txt binary
