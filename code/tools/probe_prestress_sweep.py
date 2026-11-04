@@ -28,8 +28,8 @@ Galhofo 2022 §3.3 의 7000 Pa(Boni 2016 의 von Mises 1 psi)는 **완전 막의
 
 - `clean_lf: true` 로 옛 LF ODB 를 지운다(CABLE_PRESTRESS 는 LF 지문에 포함되지만, 파일명이
   같아 지우는 편이 확실하다).
-- 스윕 후 기준값(`--restore`, 기본 2.69e7 Pa)으로 되돌린다. 안 하면 이후 HF 의 짝 LF ODB 가
-  마지막 스윕 값에 남는다.
+- 스윕 후 기준값(`--restore`, 기본 1.71e7 Pa = 2026-11-04 확정 운용점)으로 되돌린다.
+  안 하면 이후 HF 의 짝 LF ODB 가 마지막 스윕 값에 남는다.
 - 점별 results txt 는 LF 런이 'w' 로 덮어쓰므로, 시작 전에 백업하고 끝나면 되돌린다.
 """
 from __future__ import print_function
@@ -100,8 +100,8 @@ def main(argv=None):
     ap.add_argument('--prestress', type=float, nargs='+',
                     default=[1.4e7, 1.7e7, 2.0e7, 2.3e7],
                     help='케이블 초기응력 [Pa]. 기본값은 1 psi 교차점(선형 추정 1.71e7)을 감싼다')
-    ap.add_argument('--restore', type=float, default=2.69e7,
-                    help='스윕 후 되돌릴 CABLE_PRESTRESS [Pa] (0 이면 생략)')
+    ap.add_argument('--restore', type=float, default=1.71e7,
+                    help='스윕 후 되돌릴 CABLE_PRESTRESS [Pa] (0 이면 생략). 2026-11-04 1 psi 확정값')
     ap.add_argument('--dry-run', action='store_true')
     a = ap.parse_args(argv)
 

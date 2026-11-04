@@ -109,7 +109,9 @@ _CFG_HASH = _AC.config_hash(_CFG)
 #   PAPER_MATCH / PAPER_MESH_ORDER 는 core/constants.py 소관이다(§19.119).
 MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
 LOAD_MODE = 'cable_stress' if PAPER_MATCH else 'disp'   # 'disp' | 'cable_stress'
-CABLE_PRESTRESS = 2.69e7         # Pa - 논문 5PCS Fig. 11, 3케이블 동일
+#   [2026-11-04] 운용점 확정: 5점 LF 스윕(14–23 MPa)이 단조였고, 중심 von Mises 6895 Pa(1 psi)
+#     교차점이 1.71e7 Pa(13.43 N/cable)였다(§19.122). 종전 2.69e7 은 1.571x 과대였다.
+CABLE_PRESTRESS = 1.71e7         # Pa - 1 psi @ centre (3케이블 동일)
 PAPER_STABILIZE = 2.0e-4         # 논문 stability factor
 PAPER_EDGE_BC_FROM_INITIAL = bool(PAPER_MATCH)   # 3변 u3=0 을 Initial 에서 (HF 전용)
 #   [2026-10-20] 논문 재현과 실제 설계를 분리한다.
