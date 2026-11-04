@@ -72,7 +72,10 @@ SHARED = [
     #   check_operating_point() 가 두 값을 직접 읽어 배율을 로그로 남긴다.
     "angle_deg = 28.6",
     # ---- 스텝 GlobalTension (좌굴의 base state 를 만드는 스텝) ----
-    "initialInc=0.0001, minInc=1e-8, maxNumInc=1000",
+    #   initialInc 는 **일부러 다르다** (2026-10-21 paper-match):
+    #     HF   = GlobalTension initialInc 0.001 (HF) / 0.01 (LF) - 조건식이라 문자열 비교 불가
+    #     buckle = 초기 장력 스텝 0.0001
+    #   두 값은 같은 모델 정의가 아니라 스텝 운용 파라미터이므로 SHARED 에서 제외한다.
     # ---- 초기응력 ----
     "sigma11=SIGMA0, sigma22=SIGMA0, sigma33=0.0,",
     # ---- 클램프 케이블 (buckle 이식 부품 - HF 에만 있던 것을 옮겼다) ----
@@ -201,6 +204,12 @@ def main():
 
     bad7 = []
     _case = _bconst(r"^CASE\s*=\s*'([^']+)'")
+    if _case == '(없음)':
+        #   [2026-11-04] CASE 는 이제 CLI/config 파생이다:
+        #     CASE = _CLI_CASE or _CFG.get('CASE', 'paper')
+        #   기본값을 읽어 판정한다(예전 정규식은 리터럴 대입만 봐서 항상 '(없음)' 이었다).
+        _m_case = re.search(r"_CFG\.get\('CASE',\s*'([^']+)'\)", _raw_b)
+        _case = _m_case.group(1) if _m_case else '(없음)'
     _cang = _bconst(r"^CORNER_ANGLE_DEG\s*=\s*([0-9.eE+-]+)")
     print()
     print("--- 하중 케이스 (buckle 단독 상수) ---")
