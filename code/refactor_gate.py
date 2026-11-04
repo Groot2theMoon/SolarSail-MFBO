@@ -423,13 +423,12 @@ def cmd_check(args):
 # snapshot - 소스 트리 지문(무엇이 바뀌었는지 한 파일로)
 # ---------------------------------------------------------------------------
 def _sha256_file(path):
+    #   [2026-11-04] CRLF -> LF 로 정규화한 바이트를 해싱한다. 같은 커밋을 Windows(CRLF
+    #   체크아웃)와 Linux(LF)에서 스냅샷하면 해시가 달라지던 문제(실측: eval_currin_mf.py
+    #   1/23 불일치)를 없앤다. 줄 수(_count_lines)도 개행 문자 기준이라 이미 동일하다.
     h = hashlib.sha256()
     with io.open(path, 'rb') as f:
-        while True:
-            b = f.read(65536)
-            if not b:
-                break
-            h.update(b)
+        h.update(f.read().replace(b'\r\n', b'\n'))
     return h.hexdigest()
 
 

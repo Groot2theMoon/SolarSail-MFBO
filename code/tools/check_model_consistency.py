@@ -311,7 +311,7 @@ def check_operating_point():
 
     2026-11-04: 모드 소스(run_abaqus_mode.py)가 §19.64 로 은퇴해 비교 대상이 하나뿐이다.
     """
-    hf = _live_disp_global('run_abaqus.py')
+    hf = _live_disp_global(NEW)
     print("--- 운용점(DISP_GLOBAL): HF ---")
     print("    HF = %s" % hf)
     if hf is None:
@@ -338,7 +338,7 @@ def check_clamp_edge_overlap():
     """
     #   주의: code_only() 는 공백을 지운 '정규형'을 돌려주므로 ^ 앵커 정규식이 안 맞는다
     #   (실측: 이 게이트가 그래서 상수를 못 읽고 FAIL 로 나왔다). 여기서는 **원문**을 쓴다.
-    with io.open('run_abaqus_buckle.py', encoding='utf-8') as _f:
+    with io.open(BUCKLE, encoding='utf-8') as _f:
         src = _f.read()
     m_excl = re.search(r"^CLAMP_EXCL_R\s*=\s*([0-9.eE+-]+)", src, re.M)
     m_rad = re.search(r"create_rigid_patch\(a, inst_memb, 'CL', V_CL, radius=([0-9.]+)\)", src)

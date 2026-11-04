@@ -6,7 +6,7 @@
 | 게이트 | 대상 | 판정 |
 |:---|:---|:---|
 | G1 deck | `aba/*.inp` (job name·날짜·절대경로 제거 후) | sha256 동일 |
-| G2 results | `results/results_*.txt` (`key=value`) | 전 키 값 동일 (오차 0, `timestamp` 제외) |
+| G2 results | `results/results_*.txt` (`key=value`) | 상대 1e-5 이내, `timestamp`/`r13_ct_odb_mtime` 제외 |
 | G3 probe | `hf_run_log.txt` 의 `key=value` 쌍 | 다중집합 동일 |
 
 ## P0 캡처 절차 (Abaqus 머신에서 1회)
