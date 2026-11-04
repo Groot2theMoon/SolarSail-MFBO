@@ -940,7 +940,7 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
     
     loss_sum = 0.0
     ideal_area_sum = 0.0
-    torque_z = 0.0
+    torque_vec = np.zeros(3, dtype=np.float64)
     force_tot = np.zeros(3, dtype=np.float64)
 
     # 4절점 요소 (Quad) 필터링
@@ -978,7 +978,7 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         actual_thrust = np.dot(np.sum(_ftot, axis=0), U_SUN)
         #   [2026-11-04] cp/cm 오프셋용 z-모멘트: 요소 중심 × 요소 힘.
         _cent = 0.25 * (v0 + v1 + v2 + v3) - _TORQUE_CENTRE
-        torque_z += float(np.sum(_cent[:, 0] * _ftot[:, 1] - _cent[:, 1] * _ftot[:, 0]))
+        torque_vec += np.sum(np.cross(_cent, _ftot), axis=0)
         force_tot += np.sum(_ftot, axis=0)
 
         loss_sum += (np.sum(areas) * IDEAL_THRUST_COEFF - actual_thrust)
@@ -1015,7 +1015,7 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         _ftot = f_abs + f_refl
         actual_thrust = np.dot(np.sum(_ftot, axis=0), U_SUN)
         _cent = (v0 + v1 + v2) / 3.0 - _TORQUE_CENTRE
-        torque_z += float(np.sum(_cent[:, 0] * _ftot[:, 1] - _cent[:, 1] * _ftot[:, 0]))
+        torque_vec += np.sum(np.cross(_cent, _ftot), axis=0)
         force_tot += np.sum(_ftot, axis=0)
 
         loss_sum += (np.sum(areas) * IDEAL_THRUST_COEFF - actual_thrust)
@@ -1035,11 +1035,14 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         _signed = loss_sum / (_den_area * IDEAL_THRUST_COEFF)
         if diag is not None:
             #   [2026-11-04] hf 는 max(...,0) 로 **센서링**된다(음수=이득). 원값과 토크를 함께 남긴다.
-            _fm = float(np.linalg.norm(force_tot))
+            _fm2 = float(np.dot(force_tot, force_tot))
+            _cp = (np.cross(force_tot, torque_vec) / _fm2) if _fm2 > 0.0 else np.zeros(3)
             diag['hf_signed'] = _signed
-            diag['torque_z_nm'] = torque_z
-            diag['force_magnitude_n'] = _fm
-            diag['cp_offset_m'] = (torque_z / _fm) if _fm > 0.0 else float('nan')
+            diag['force_magnitude_n'] = float(np.linalg.norm(force_tot))
+            diag['torque_nm'] = float(np.linalg.norm(torque_vec))
+            diag['cp_offset_m'] = float(np.linalg.norm(_cp))
+            diag['cp_x_m'] = float(_cp[0])
+            diag['cp_y_m'] = float(_cp[1])
         return float(max(_signed, 0.0))
     return float(max(loss_sum, 1e-12))
 
@@ -1128,10 +1131,11 @@ def get_hf(odb_path):
         print("[HF] flip bias: backward area=%.4f%% (%d/%d elem) hf_flip=%.6e "
               "hf_true=%.6e delta=%.3f%%"
               % (_fb, _st['n_backward'], _st['n_total'], hf_metric, hf_true, _dl))
-        #   [2026-11-04] 센서링 전 손실과 토크/압력중심 오프셋.
-        print("[HF] signed: hf_signed=%.6e torque_z=%.6e N*m cp_offset=%.6e m"
-              % (_diag.get('hf_signed', float('nan')), _diag.get('torque_z_nm', float('nan')),
-                 _diag.get('cp_offset_m', float('nan'))))
+        #   [2026-11-04] 센서링 전 손실과 토크/압력중심 오프셋(3성분 모멘트).
+        print("[HF] signed: hf_signed=%.6e torque=%.6e N*m cp=%.6e m (cp_x=%.3e cp_y=%.3e)"
+              % (_diag.get('hf_signed', float('nan')), _diag.get('torque_nm', float('nan')),
+                 _diag.get('cp_offset_m', float('nan')), _diag.get('cp_x_m', float('nan')),
+                 _diag.get('cp_y_m', float('nan'))))
         try:
             with open('flip_bias.txt', 'w') as _bf:
                 _bf.write("backward_area_pct=%.6f\n" % _fb)
@@ -1141,8 +1145,10 @@ def get_hf(odb_path):
                 _bf.write("hf_true_normal=%.10e\n" % hf_true)
                 _bf.write("delta_pct=%.6f\n" % _dl)
                 _bf.write("hf_signed=%.10e\n" % _diag.get('hf_signed', float('nan')))
-                _bf.write("torque_z_nm=%.10e\n" % _diag.get('torque_z_nm', float('nan')))
+                _bf.write("torque_nm=%.10e\n" % _diag.get('torque_nm', float('nan')))
                 _bf.write("cp_offset_m=%.10e\n" % _diag.get('cp_offset_m', float('nan')))
+                _bf.write("cp_x_m=%.10e\n" % _diag.get('cp_x_m', float('nan')))
+                _bf.write("cp_y_m=%.10e\n" % _diag.get('cp_y_m', float('nan')))
         except Exception as _be:
             print("[HF] flip_bias.txt write failed: %s" % _be)
         
