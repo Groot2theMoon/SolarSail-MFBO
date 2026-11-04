@@ -4936,3 +4936,44 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - G1 은 계속 `sha256` 오차 0 이다. 숫자 허용오차는 G2/G3 에만 적용된다.
   - selftest 를 11 -> 13 checks 로 확장: 잡음(8e-9) 무시 / 1e-3 상대 변화 감지 /
     volatile 제외 / 구 baseline mtime 키가 missing 으로 뜨지 않음. **PASS 13/13**.
+
+### 19.116 P2 - 함수 이동: ctx.py / post.py / solver.py (2026-11-04)
+
+[무엇]
+  - `run_abaqus.py` **2893 -> 2321줄**. 세 모듈 신설. `code/*.py` = 23파일 12,777줄(wc -l).
+  - `ctx.py` : `emit` / `emit_start` / `emit_paths` / `first_existing` / `probe_keep_line`.
+                `init(here)` 로 스크립트가 확정한 폴더를 주입한다(execfile 에는 `__file__` 이 없다, §1).
+  - `post.py`: `archive_result` / `archive_slope` / `archive_dn` / `archive_zk` / `r13_ct_keys`.
+                `_HERE`/`_RUN`/`HF_ODB`/`_CFG_SHA1`/`LF_ODB`/`_R13_CT` 전역을 읽지 않고 인자로 받는다.
+  - `solver.py`: `run_patcher(here, ...)`, `job_completed_ok`, `print_job_diag`.
+  - **남긴 것**: `run_job_safely` / `run_job_with_ladder`. `mdb`/`abq` 와 모델 상수 30여 개에 직접 묶여
+    있어, 억지로 빼면 파라미터 표면만 커지고 게이트가 검증하지 못하는 배선이 는다. P5(스텝 분해)에서 다룬다.
+
+[P2가 드러낸 게이트 결함 - 전부 이번에 수정]
+  1. bootstrap 순서: `_resolve_here()` 는 `emit` 정의보다 **먼저** 실행된다. 실패 경로의 `emit` 호출은
+     잠복 NameError 였다 -> `sys.stderr.write` 로 교체(실패 경로 전용).
+  2. `check_model_consistency.py`:
+     - 은퇴한 `run_abaqus_mode.py` 를 계속 읽어 `FileNotFoundError`. 모드소스 검사 4종을 제거했다.
+     - `CASE` 는 `_CLI_CASE or _CFG.get('CASE','paper')` 파생이라 `^CASE='...'` 정규식이 못 읽었다
+       -> config 기본값 fallback.
+     - `initialInc` 는 HF(0.001/0.01 조건식)와 buckle(0.0001)이 **의도적으로 다르다**(§19.80)
+       -> SHARED 에서 제외.
+     - tools/ 에서 실행하면 `sys.path[0]=tools` 라 `import aba_grid_mesh` 가 실패 -> `HERE` 삽입.
+  3. `static_leak_check.py` R3: 호출 창을 `\n\s*\)` 로 자르던 방식이 `sigma23=0.0)` 처럼 닫는 괄호가
+     줄 끝에 붙은 호출에서 700자 폴백으로 떨어졌고, 그 창이 다음 `DisplacementBC` 의 `sets['All']` 까지
+     삼켜 **오탐 2건**을 냈다(§19.114 기록) -> 괄호 깊이 파서로 교체. 이제 `이상 없음`.
+  4. cp949: print 경로의 U+2014 346개 + `⚠`/`µ`/`Δ`/`≈` 3줄. `code/*.py` 전수 스캔 후 ASCII 화.
+     이제 print 줄 전부가 cp949 콘솔에서 인코딩된다(`iconv -t CP949` 전수 검사 0건).
+
+[검증 - Abaqus 실측, 정본 체크아웃]
+  - `py_compile` OK / `static_leak_check` 이상 없음 / `check_model_consistency` **PASS**(HF↔buckle 20).
+  - `refactor_gate.py selftest` **PASS**(절대경로 basename 비교 2 checks 추가).
+  - LF + HF 재해석 -> **G1 3/3 바이트 동일, G2 149키 동일, G3 161kv 동일, [gate] PASS**.
+  - 경로 규칙: baseline 과 check 가 다른 체크아웃에서 돌 수 있으므로 **절대경로 값은 basename 비교**
+    (`r13_ct_odb`, `table`, `cwd`). G1 이 덱 경로를 정규화하는 것과 같은 이유다.
+  - stale `Buckle_Analysis.*`(code/ 루트)가 N-6 λ 로그 줄을 추가해 G3 다중집합을 바꿨다
+    -> `stale_pre_p2/` 로 이동(삭제 아님).
+
+[다음]
+  P3(상수 단일화)는 지문 소스(`source_model_fingerprint`)를 먼저 다뤄야 한다. 상수를 모듈로 옮기는
+  순간 기존 시드표 지문이 전부 무효가 되므로, 지문 입력에 새 모듈을 추가하고 표 재생성 여부를 먼저 정한다.

@@ -1,0 +1,26 @@
+# refactor_gate snapshot label=p2  2026-11-04 16:29:04
+# file                               lines  sha256
+# TOTAL 23 files 12777 lines
+aba_grid_mesh.py                        448  a08c2d63c0799c02dfd7ac3c0410fafe923ccbaf032e05dad00e5a58b22277fa
+aba_imperfection.py                     725  727f3b771db6d511d21239bfebd9ca291b09a09dd5203fa7eb409935acf1ce30
+aba_mode_from_odb.py                    288  d58cd47013bddc6f1c3ca3d2b365f0348de58de1ea8cef93e57d4ef638461aa6
+analysis_config.py                      176  f33b1f77f0b7304803cc13617bfb919406cecccc35d5200b9f757d0a78f7fc2e
+base_state_probe.py                     605  d243406fc3f30846d5ae4567dcc1fa8a8882cee080bdb49edd71039ee689e16b
+buckle_mode_report.py                   450  f7647ebc3704a76f00b54434815b184c62ad319ab34da17d16b7af3989c7a21d
+coalescence_check.py                    765  87265ed832ec40304003be2f77859e37aabf841af4f4b23542cd8e9cf2b71ccc
+combine_mode_tables.py                  190  780b008eeb744ccefbd8e9af11e15c7d764774ab395cc01d079acd372d69030b
+ctx.py                                  128  442c4a92bad2e0b8ca2a185d0762e6e45c30edaaeb070569bcc08594266bbca4
+eval_abaqus.py                         1357  30cc03759333f054da001386a713110872e01d41b79eb4da7b4dc34d725209b3
+eval_currin_mf.py                        31  1515df23235654e7099030e28f2a8886530534e098f8dd6dd747c6dc60551c0a
+make_seed.py                            426  69e6a5602cd350d1bd13930652170eebf323ec61c8b7015cba2d05bab2d9d4e2
+mfbo.py                                 572  ac697ea9aaca32c6bea09d854a224e1bc122851675bccc2d8edcafacfc2e3c78
+parse_buckle_log.py                     230  7634914c05392adb88dad9348e3c0a23987082d5f7cb9e805e3c35515cd64b91
+post.py                                 324  1e9ea45273143cdb46f6c99212d6cd0b210bb36e34db4aad4861ccd8be2d96ef
+probe_energy.py                          94  75a7b8c517fec7f1b1f319a45b9b3cd28c4cffef25f821c7c3dbe717026c7b24
+refactor_gate.py                        674  dfcd4ea39dd3798d4dea08e2f020eebe094491796d8d2abe21a92eb7f8f7d880
+riks_patch_input.py                     313  55a92a4d6a5dd9e77dd5dda723d001204348c227d6812ccf0c2b664caa46a4c0
+run_abaqus.py                          2321  f0c6eefff4aa550a6c69866f38bc90d61fce1cd61f52e5c9ec32a190840b4a7a
+run_abaqus_buckle.py                   1221  e090fdcaa4dd94061510562137a6b29a553ee70b8a1983e3bb44c27e40ef2748
+run_analysis.py                          99  efe4c14a08fc69e5f58f3d10ce51fb98375316c37fb5b0e687b07d8c824199b9
+slope_stats.py                         1145  ab5b173ed46619bbee245b72b4504cb5587f8a4291f25a10cff155fe10be2a9d
+solver.py                               195  85d23f887595fb3161a0ab2dc884e470a0cf22138fe50df4d5408aa10d10a959

@@ -92,5 +92,9 @@ python refactor_gate.py check --label p0 ^
   반올림 허용은 "조용한 모델 변경"을 통과시키므로 게이트가 아니다.
 - `hf_run_log.txt` 는 런마다 truncate 된다(`emit_start`). 캡처는 **HF 런 직후**에 한다.
 - `--label` 은 단계별로 나눈다: `p0`, `p2`, `p4` … 비교는 항상 `p0` 기준.
+- G2/G3 의 **절대경로 값**(`r13_ct_odb`, `table`, `cwd`)은 **basename 으로 비교**한다. baseline 은
+  임시 사본에서, check 는 정본 체크아웃에서 돌 수 있기 때문이다(G1 이 덱 경로를 정규화하는 것과 같은 이유).
+- `code/` 루트의 `Buckle_Analysis.*`(자기 좌굴 잔재)가 있으면 N-6 λ 로그 줄이 추가되어 G3 다중집합이
+  달라진다. 측정 전에 `stale_pre_p2/` 같은 곳으로 옮긴다(삭제하지 않는다).
 - `source_manifest.txt` 는 `snapshot --label p0` 산출물이다(파일별 sha256 + 줄 수).
   코드 변경 자체는 게이트 대상이 아니다 — 덱/결과만 본다.

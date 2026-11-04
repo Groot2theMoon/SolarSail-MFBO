@@ -1,8 +1,10 @@
 # tools/ — 수동 실행 장비 (런타임 경로 밖)
 
 여기 있는 것은 `run_analysis.py` 가 부르지 않는다. 사람이 직접 돌려서 **측정·검증**하는 스크립트다.
-P1(2026-11-03)에서 `code/` 밖으로 옮겼다. `code/*.py` 는 **20개**(게이트 `refactor_gate.py` 포함,
-실행 경로 19개)다. `run_abaqus_mode.py` 는 §19.64 로 비교가 은퇴해 `attic/` 으로 내렸다.
+P1(2026-11-03)에서 `code/` 밖으로 옮겼다. `code/*.py` 는 **23개**(게이트 `refactor_gate.py` 포함,
+실행 경로 22개)다. `run_abaqus_mode.py` 는 §19.64 로 비교가 은퇴해 `attic/` 으로 내렸다.
+P2(2026-11-04)에서 `run_abaqus.py` 의 로그/아카이빙/잡진단 함수를 `ctx.py`·`post.py`·`solver.py`
+로 옮겼다(§19.116). 두 스크립트 모두 `code/` 에 있으므로 import 경로는 그대로다.
 
 ## 경로 규칙
 
@@ -40,6 +42,17 @@ sys.path.insert(0, _CODE)
 | `screen_report.py` / `inp_mesh_compare.py` / `wrinkle_spectrum.py` | `.msg`/`.sta` 판정 / 두 `.inp` 메쉬 정합 / 주름 파장 측정 | 아니오(파일) |
 | `run_abaqus_cable.py` | 클램프 없는 대조 모델(좌굴 오라클). 모드 소스는 `run_abaqus_mode.py` 이며 **`attic/` 으로 은퇴**했다(§19.64) | 예 |
 | `run_hf_capture.py` | `run_abaqus.py` 를 감싸 출력이 삼켜져도 흔적을 남긴다 | 예 |
+
+## 검증 (2026-11-04, P2 직후 - labpc 실측)
+
+```
+python -m py_compile run_abaqus.py ctx.py post.py solver.py   # OK
+python tools/static_leak_check.py                            # 이상 없음
+python tools/check_model_consistency.py                      # PASS (HF<->buckle 20)
+python refactor_gate.py selftest                             # PASS
+# LF + HF 재해석 -> refactor_gate.py check --label p0 ...
+#   G1 3/3 바이트 동일 / G2 149키 / G3 161kv -> [gate] PASS
+```
 
 ## 검증 (2026-11-03, P1 직후)
 
