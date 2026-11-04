@@ -97,4 +97,5 @@ python refactor_gate.py check --label p0 ^
 - `code/` 루트의 `Buckle_Analysis.*`(자기 좌굴 잔재)가 있으면 N-6 λ 로그 줄이 추가되어 G3 다중집합이
   달라진다. 측정 전에 `stale_pre_p2/` 같은 곳으로 옮긴다(삭제하지 않는다).
 - `source_manifest.txt` 는 `snapshot --label p0` 산출물이다(파일별 sha256 + 줄 수).
+  해시는 **CRLF -> LF 정규화 후** 계산한다 - Windows/Linux 체크아웃이 같은 값을 낸다(§19.117).
   코드 변경 자체는 게이트 대상이 아니다 — 덱/결과만 본다.

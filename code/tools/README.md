@@ -52,6 +52,9 @@ python tools/check_model_consistency.py                      # PASS (HF<->buckle
 python refactor_gate.py selftest                             # PASS
 # LF + HF 재해석 -> refactor_gate.py check --label p0 ...
 #   G1 3/3 바이트 동일 / G2 149키 / G3 161kv -> [gate] PASS
+python -c "import aba_imperfection as a; print(a.buckle_fingerprint('run_abaqus_buckle.py'))"
+#   f86df4ef2156d803 (기존 시드표 헤더와 동일 - keys 순서 해싱으로 바꿔도 보존, §19.117)
+python tools/test_fingerprint_api.py                         # PASS 10/10
 ```
 
 ## 검증 (2026-11-03, P1 직후)

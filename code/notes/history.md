@@ -4977,3 +4977,38 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [다음]
   P3(상수 단일화)는 지문 소스(`source_model_fingerprint`)를 먼저 다뤄야 한다. 상수를 모듈로 옮기는
   순간 기존 시드표 지문이 전부 무효가 되므로, 지문 입력에 새 모듈을 추가하고 표 재생성 여부를 먼저 정한다.
+
+### 19.117 지적 3건 + P3 선행조건 - 지문 해시 순서 고정 (2026-11-04)
+
+[1. snapshot 해시가 체크아웃 줄바꿈에 의존했다]
+  - 증상: `baseline/p2/source_manifest.txt` 1/23 불일치 - `eval_currin_mf.py` 만
+    manifest `1515df23...`(CRLF 작업트리) vs 커밋본 `014366f0...`(LF).
+  - 조치: `_sha256_file` 이 **CRLF -> LF 정규화 후** 해싱한다. 줄 수(`_count_lines`)는 이미
+    개행 문자 기준이라 플랫폼 무관이었다. 재생성 후 23/23 이 커밋본과 일치.
+
+[2. `baseline/README.md` 의 G2 서술]
+  - '전 키 값 동일 (오차 0)' -> '상대 1e-5 이내, `timestamp`/`r13_ct_odb_mtime` 제외'.
+    같은 문서 아래의 실측 서술(§19.115)과 일치시켰다.
+
+[3. `check_model_consistency.py` 의 CWD 의존]
+  - `_live_disp_global('run_abaqus.py')`, `open('run_abaqus_buckle.py')` 가 상대경로라
+    `tools/` 에서 실행하면 실패했다 -> `NEW`/`BUCKLE`(절대경로)로 교체.
+  - `cd code\tools && python check_model_consistency.py` -> **PASS** 확인.
+
+[4. P3 선행조건 - 지문이 '파일 등장 순서'를 해싱하고 있었다]
+  - 제안대로 `FINGERPRINT_KEYS` 순서로 바꾸면 digest 가 바뀐다(실측: 파일 순서 != keys 순서).
+    게다가 `run_abaqus_buckle.py` 의 `CLAMP_EXCL_R` 은 **두 번** 대입된다:
+    108행 기본값 `0.21`, 382행 CLI override. 기존 지문은 **두 대입을 모두** 파일 순서로 해싱했다.
+  - 조치:
+    (a) `source_model_fingerprint` 가 **keys 순서**로 값을 소비한다. 같은 키가 여러 번이면
+        keys 안의 그 횟수만큼 **대입 순서대로** 꺼낸다.
+    (b) `BUCKLE_FINGERPRINT_KEYS` 를 2026-11-04 이전의 파일 순서로 **얼렸다**
+        (`CLAMP_EXCL_R` 을 두 번 넣어 108/382행 순서를 보존).
+  - 실측:
+    - `buckle_fingerprint('run_abaqus_buckle.py')` = **f86df4ef2156d803** (기존 시드표 헤더와 동일).
+    - 대입 블록의 **키 그룹 순서를 반전**한 사본도 동일 digest (ORDER-INDEPENDENT True).
+    - `seed_gate(0.2, 0.0001, seeds/modes_xc0p2.txt, ...)` -> **(True, 'OK')**.
+    - `test_fingerprint_api.py` **10/10**, `test_seed_path.py` 47/49(기존 2건: 이 기계에 `python3` 없음).
+  - 주의: `FINGERPRINT_KEYS` 를 쓰는 다른 스크립트(hf/cable/attic)의 digest 는 바뀐다.
+    이 값들은 어디에도 영속되지 않는다(시드표는 `buckle_fp` 만 사용) -> 표 재생성 불필요.
+  - 이제 상수를 `core/constants.py` 로 옮겨도, 값만 같으면 buckle 지문이 유지된다.
