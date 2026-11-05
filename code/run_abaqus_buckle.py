@@ -996,7 +996,8 @@ def build_model(disp):
             stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
     return model_name
 
-ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', M3D4: 'm3d4', M3D3: 'm3d3'}.get(ELEM_CODE_QUAD)
+ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', M3D4: 'm3d4', M3D3: 'm3d3',
+            S8R5: 's8r5', STRI65: 'stri65'}.get(ELEM_CODE_QUAD)   # [T0] 2차 추가
 if ELEM_TAG is None:
     raise RuntimeError('ELEM_TAG 를 유도할 수 없는 요소코드입니다: %r. 잡 이름이 케이스를 '
                        '구분하지 못하면 run_job_safely 가 직전 증거를 지운다.' % (ELEM_CODE_QUAD,))
