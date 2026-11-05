@@ -235,6 +235,7 @@ def main(argv=None):
     ap.add_argument('--tag', default='?')
     ap.add_argument('--hf-odb', type=float, default=0.0,
                     help='results 의 slope_f1_hf_pred (G2b 기준)')
+    ap.add_argument('--all', action='store_true', help='results/odb 의 HF_*.odb 전부')
     ap.add_argument('--out')
     a = ap.parse_args(argv)
 
@@ -253,8 +254,37 @@ def main(argv=None):
                                    ensure_ascii=False, indent=1))
         return 0
 
+    if a.all:
+        import glob
+        rows = []
+        for odb in sorted(glob.glob(os.path.join(HERE, 'results', 'odb', 'HF_*.odb'))):
+            tag = os.path.basename(odb)[3:-len('_u3free.odb')]
+            rp = os.path.join(HERE, 'results', 'results_%s.txt' % tag)
+            hf_pred = 0.0
+            if os.path.exists(rp):
+                d = {}
+                with io.open(rp, encoding='utf-8', errors='replace') as f:
+                    for line in f:
+                        if '=' in line:
+                            k, v = line.strip().split('=', 1)
+                            d[k] = v
+                try:
+                    hf_pred = float(d.get('slope_f1_hf_pred', 0.0))
+                except Exception:
+                    hf_pred = 0.0
+            r = run_odb(odb, tag, a.taper, hf_pred)
+            rows.append(r)
+            print('%-20s g2b=%.3f  B1=%.2e B2=%.2e B3=%.2e B4=%.3f  B5(unres)=%.3f'
+                  % (tag, r['g2b_ratio'] or float('nan'), r['fractions']['B1'],
+                     r['fractions']['B2'], r['fractions']['B3'], r['fractions']['B4'],
+                     r['fraction_b5_unresolved']))
+        if a.out:
+            with io.open(a.out, 'w', encoding='utf-8') as f:
+                f.write(json.dumps(rows, ensure_ascii=False, indent=1))
+        return 0
+
     if not a.odb:
-        raise SystemExit('--odb 또는 --synthetic 이 필요하다')
+        raise SystemExit('--odb 또는 --synthetic 또는 --all 이 필요하다')
     res = run_odb(a.odb, a.tag, a.taper, a.hf_odb)
     print(json.dumps(res, ensure_ascii=False, indent=1))
     if a.out:
