@@ -273,16 +273,19 @@ def decompose_slopes(SX, SY, AA, width):
         d = np.minimum(np.minimum(Y, X - Y), BASE - X - Y)
         t = np.clip(d / float(width), 0.0, 1.0)
         m = (0.5 * (1.0 - np.cos(np.pi * t))) * m
-    Ux = np.fft.fft2(SX * m)
-    Uy = np.fft.fft2(SY * m)
+    #   셀 면적가중: 삼각형 경계 셀은 면적이 h^2 의 절반이다. sqrt(AA/h^2) 를 곱해야
+    #   Parseval 합이 요소 면적가중 평균과 정확히 일치한다(균일 가중은 저손실 점에서 19% 오차).
+    wa = AA / (H * H)
+    sw = np.sqrt(np.maximum(wa, 0.0))
+    Ux = np.fft.fft2(SX * sw * m)
+    Uy = np.fft.fft2(SY * sw * m)
     kx = 2 * math.pi * np.fft.fftfreq(nx, d=H)
     ky = 2 * math.pi * np.fft.fftfreq(ny, d=H)
     KX, KY = np.meshgrid(kx, ky)
     K = np.sqrt(KX ** 2 + KY ** 2)
     power = (np.abs(Ux) ** 2 + np.abs(Uy) ** 2) / float(nx * ny) ** 2
-    #   면적 정규화: 셀 수 n_valid → 삼각형 면적. slope 는 셀 평균이므로 N/n_valid.
-    n_valid = float(np.count_nonzero(valid))
-    scale = float(nx * ny) / n_valid if n_valid else 1.0
+    _sum_a = float(np.sum(AA))
+    scale = (H * H * float(nx * ny) / _sum_a) if _sum_a > 0 else 1.0
     hf_t = K_SLOPE * float(np.sum(power)) * scale
     lam = np.full_like(K, np.inf)
     nz = K > 0
