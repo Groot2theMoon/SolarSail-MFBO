@@ -110,8 +110,10 @@ _CFG_HASH = _AC.config_hash(_CFG)
 MESH_ORDER = PAPER_MESH_ORDER if PAPER_MATCH else 1
 LOAD_MODE = 'cable_stress' if PAPER_MATCH else 'disp'   # 'disp' | 'cable_stress'
 #   [2026-11-04] 운용점 확정: 5점 LF 스윕(14–23 MPa)이 단조였고, 중심 von Mises 6895 Pa(1 psi)
-#     교차점이 1.71e7 Pa(13.43 N/cable)였다(§19.122). 종전 2.69e7 은 1.571x 과대였다.
-CABLE_PRESTRESS = 1.71e7         # Pa - 1 psi @ centre (3케이블 동일)
+#     교차점이 1.71e7 Pa(초기조건 등가 13.43 N/cable)였다(§19.122). 종전 2.69e7 은 1.571x 과대였다.
+#   [2026-11-05] 13.43 N은 **초기조건의 등가값**이지 운용 장력이 아니다. 평형 장력은 ~0.32 N이고
+#     막 중앙 von Mises 6.9-7.1 kPa x t x 폭과 일치한다(§19.131). Boni 19 N(가한 힘)과 직접 비교 금지.
+CABLE_PRESTRESS = 1.71e7         # Pa - 초기조건 (1 psi @ centre, 3케이블 동일)
 PAPER_STABILIZE = 2.0e-4         # 논문 stability factor
 PAPER_EDGE_BC_FROM_INITIAL = bool(PAPER_MATCH)   # 3변 u3=0 을 Initial 에서 (HF 전용)
 #   [2026-10-20] 논문 재현과 실제 설계를 분리한다.
@@ -1312,7 +1314,8 @@ if LOAD_MODE == 'cable_stress' and _PAPER_PATH:
             sigma11=CABLE_PRESTRESS,
             sigma22=0.0, sigma33=0.0,
             sigma12=0.0, sigma13=0.0, sigma23=0.0)
-    emit("[LOAD] cable_stress: sigma11=%.4g Pa x 3 cables (A=%.4g m2 -> F=%.4g N/cable)"
+    emit("[LOAD] cable_stress: sigma11=%.4g Pa x 3 cables (A=%.4g m2 -> "
+         "initial-condition equivalent F=%.4g N/cable; equilibrium ~0.32 N)"
          % (CABLE_PRESTRESS, CABLE_AREA, CABLE_PRESTRESS * CABLE_AREA))
     #   [2026-10-20] 클램프도 초기응력. d_c = 클램프/꼭짓점 케이블 응력비.
     #     인스턴스 이름은 connect_cable('cable_CL', ...) -> 'Inst_cable_CL' (소문자 c).

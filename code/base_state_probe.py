@@ -141,7 +141,11 @@ def _aggregate(rows):
 
 
 def _mises(s11, s22, s12):
-    """평면응력 von Mises. Boni2016 의 운용점 정의(중앙 von Mises ≈ 1 psi)와 직접 비교하려면 필요하다."""
+    """평면응력 von Mises. Boni2016 의 운용점 정의(중앙 von Mises ≈ 1 psi)와 직접 비교하려면 필요하다.
+
+    Boni 19 N과 우리 케이블 힘을 비교하지 않는다 - 19 N은 가한 힘, 우리 0.32 N은 평형 힘이다.
+    비교 가능한 것은 막 응력(1 psi)뿐이다(§19.131).
+    """
     return math.sqrt(max(0.0, s11 * s11 - s11 * s22 + s22 * s22 + 3.0 * s12 * s12))
 
 

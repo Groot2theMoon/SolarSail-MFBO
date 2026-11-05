@@ -11,11 +11,11 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 | Item | Paper | This branch |
 |---|---|---|
 | Membrane elements | STRI65 + S8R5 (2nd order), 10,100 | **S4/S3 (1st order), 10,100 / 10,201 nodes** (default); 2nd-order generator exists but is experimental |
-| Pre-tension load | cable initial stress 2.69e7 Pa (5PCS), cable ends fixed | **3 cables, sigma11 = 2.69e7 Pa**, ends fixed, no displacement ramp |
+| Pre-tension load | cable initial stress 2.69e7 Pa (5PCS), cable ends fixed | **3 cables, sigma11 = 1.71e7 Pa** (initial condition; equilibrium ≈0.32 N), ends fixed, no displacement ramp |
 | Prescribed displacement | static 0.001 / 0.0005 m (2:1), buckle 0.10 m (all five) | buckle **0.01 m** (paper 0.10 m reference; λ×P invariant); static **shape** 2:1, magnitude **0.0001 m** (symmetric 10-mode base); **LF and HF post-buckling: no vertex displacement** (initial stress only) |
 | BC | three edges u3 = 0 | **LF: full-membrane u3=0 from Initial; HF paper: three edges only (u3-free); HF old disp: hold -> release** |
 | Stabilization | 2e-4 | **LF GlobalTension 1.0; paper HF GlobalTension 2e-4 ladder (2e-4/1e-3/1e-2) + line search; old disp HF Postbuckle 5e-4 ladder (5e-4/2e-3/1e-2)** |
-| Clamps | none (5PCS) | paper reproduction: `NO_CLAMP = True`; physical model: `PAPER_INCLUDE_CLAMPS = True` (clamps + vertex cables; clamp prestress = `d_c × 2.69e7 Pa`) |
+| Clamps | none (5PCS) | paper reproduction: `NO_CLAMP = True`; physical model: `PAPER_INCLUDE_CLAMPS = True` (clamps + vertex cables; clamp prestress = `d_c × 1.71e7 Pa`; at d_c=1e-4 this is 1710 Pa, effectively no clamp) |
 | Imperfection | first 4 modes, 0.10 t | same; mode table = **seed + clamp_only composite** (2+2) |
 
 ## Constants (edit only these)
@@ -24,7 +24,7 @@ It is a research branch: the MFBO baseline is preserved behind `PAPER_MATCH = Fa
 ```python
 PAPER_MATCH = True
 PAPER_MESH_ORDER = 1        # 1차 기본 (2차는 실험용)
-CABLE_PRESTRESS = 2.69e7    # Pa; calibrate to 7000 Pa at CENTRE
+CABLE_PRESTRESS = 1.71e7    # Pa; initial condition calibrated to ~6900 Pa at CENTRE
 PAPER_STABILIZE = 2.0e-4
 USE_COMPOSITE_MODE_TABLE = True   # seed + clamp_only 합성표
 # [2026-10-21] u3-free HF 분기
@@ -149,8 +149,10 @@ The old disp HF path keeps the old full hold and releases `BC_Stabilize_Z` in
 
 `PAPER_HOLD_U3_GLOBAL` is no longer a switch; `_HOLD_U3_ALL` is the fidelity-based policy.
 
-- vertex cable initial stress **2.69e7 Pa**, ends fixed;
-- clamp cable initial stress **`d_c × 2.69e7 Pa`**, ends fixed.
+- vertex cable initial stress **1.71e7 Pa** (initial condition; equilibrium ≈0.32 N), ends fixed;
+- clamp cable initial stress **`d_c × 1.71e7 Pa`**, ends fixed. At d_c=1e-4 this is 1710 Pa,
+  effectively no clamp; T3D2 also carries compression, so this is a model defect for physical claims
+  (see history §19.131).
 
 That is the Galhofo Fig. 11/17 path, with the clamps added as the physical design. The old MFBO
 baseline (`LOAD_MODE='disp'`) keeps the 1 mm `GLOBAL_FINAL`; it is not the paper path.
@@ -159,7 +161,7 @@ baseline (`LOAD_MODE='disp'`) keeps the 1 mm `GLOBAL_FINAL`; it is not the paper
 
 | Fidelity | Final step for metrics | Loads / BC | Output |
 |---|---|---|---|
-| LF (paper, `PAPER_INCLUDE_CLAMPS=True`) | `Step-GlobalTension` | cable 2.69e7 Pa + clamp `d_c*2.69e7 Pa`; full-membrane `u3=0`; no displacement | `RESULTS:lf1,lf2,lf3` + `ZK:` |
+| LF (paper, `PAPER_INCLUDE_CLAMPS=True`) | `Step-GlobalTension` | cable 1.71e7 Pa (initial) + clamp `d_c*1.71e7 Pa`; full-membrane `u3=0`; no displacement | `RESULTS:lf1,lf2,lf3` + `ZK:` |
 | LF (old baseline) | `Step-HighTension` | displacement-driven; preserved when `PAPER_MATCH=False` | `RESULTS:lf1,lf2,lf3` (+ `ZK:` diagnostic) |
 | HF (paper) | `Step-GlobalTension` (last frame; Postbuckle removed) | no full u3=0 from Initial; three edges only; wrinkles form in GlobalTension | `RESULTS:lf1,lf2,lf3,hf`, `DN:`, `ZK:` from the paired LF ODB |
 | HF (old disp) | `Step-Postbuckle` (last frame) | full u3=0 hold -> release; final load ramp | same, archived as `HF_<tag>_u3free.odb` for paper |
