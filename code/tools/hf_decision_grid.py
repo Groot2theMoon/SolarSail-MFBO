@@ -77,13 +77,27 @@ def run_abq(fid, x_c, d_c):
     return p.returncode, dt
 
 
+def fill_ratios(kv):
+    """pred/hf, fluct/hf 를 채운다(센서링 hf=0 은 빈 값)."""
+    try:
+        _hf = float(kv.get('hf'))
+        _p = float(kv.get('slope_f1_hf_pred'))
+        _f = float(kv.get('slope_hf_pred_fluct'))
+        if _hf > 1e-12:
+            kv['pred_over_hf'] = '%.6f' % (_p / _hf)
+            kv['fluct_over_hf'] = '%.6f' % (_f / _hf)
+    except Exception:
+        pass
+    return kv
+
+
 def collect_point(x_c, d_c, resume):
     path, tag = point_paths(x_c, d_c)
     if resume:
         cur = read_kv(path)
         if cur.get('hf') not in (None, '', 'nan'):
             print('[GRID] skip %s (hf=%s)' % (tag, cur.get('hf')))
-            return {'x_c': x_c, 'd_c': d_c, 'tag': tag, 'skipped': True, **cur}
+            return fill_ratios({'x_c': x_c, 'd_c': d_c, 'tag': tag, 'skipped': True, **cur})
     print('\n[GRID] %s  (x_c=%g d_c=%g)' % (tag, x_c, d_c))
     rc_lf, t_lf = run_abq('LF', x_c, d_c)
     if rc_lf:
@@ -94,6 +108,7 @@ def collect_point(x_c, d_c, resume):
         kv['error'] = 'HF rc=%d' % rc_hf
     kv.update({'x_c': x_c, 'd_c': d_c, 'tag': tag, 't_lf_s': round(t_lf, 1),
                't_hf_s': round(t_hf, 1)})
+    fill_ratios(kv)
     print('  -> hf=%s  t=%.1f+%.1f s' % (kv.get('hf'), t_lf, t_hf))
     return kv
 
@@ -212,9 +227,12 @@ def main(argv=None):
                 merged[r['tag']] = r
         with io.open(pj, 'w', encoding='utf-8') as f:
             f.write(json.dumps(list(merged.values()), ensure_ascii=False, indent=1))
-        cols = ['x_c', 'd_c', 'tag', 'hf', 'slope_backward_area_pct',
-                'zk_state_wrinkled_frac', 'slope_mean_neg_frac', 'dn_deg',
-                'energy_verdict', 'stabilize_used', 't_lf_s', 't_hf_s', 'error']
+        cols = ['x_c', 'd_c', 'tag', 'hf', 'hf_signed', 'slope_f1_hf_pred',
+                'slope_hf_pred_fluct', 'pred_over_hf', 'fluct_over_hf',
+                'slope_backward_area_pct', 'zk_state_wrinkled_frac',
+                'slope_mean_neg_frac', 'dn_deg', 'torque_nm', 'cp_offset_m',
+                'lf_model_fp', 'config_sha1', 'energy_verdict', 'stabilize_used',
+                't_lf_s', 't_hf_s', 'error']
         with io.open(os.path.join(OUTDIR, 'points.csv'), 'w', encoding='utf-8',
                      newline='') as f:
             w = csv.DictWriter(f, fieldnames=cols, extrasaction='ignore')
