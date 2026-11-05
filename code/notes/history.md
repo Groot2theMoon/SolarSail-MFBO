@@ -5324,3 +5324,25 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
     T0d를 하려면 먼저 CASE='seed'를 고쳐야 하고, 그 전에는 A를 판정할 수 없다.
   - hf 목적함수 경로는 계속 닫아 둔다(§19.124/19.125). 재개 조건은 (i) CASE seed 복구 후 T0d,
     또는 (ii) `*BUCKLE`을 건너뛴 2차 HF + prescribed imperfection 1런.
+
+### 19.127 T0e - 경계 회전 구속도 2차 0모드를 고치지 못함 (2026-11-05)
+
+[설정]
+  임시 복제본에서 2차 + `_edge_u3` 의 `BC_Edges_Only_Z` 에 `ur1=0, ur2=0` 추가.
+  덱 확인: `*Boundary` 에 `All_Edges_NoClamp, 4,4` / `5,5` 가 실제로 들어갔다(구속 적용됨).
+
+[결과]
+  - 0모드. neg 12회, sys 24-276, diff **164,385** (T0a 161,435 와 거의 동일).
+  - `***ERROR: THE EIGENVALUES CANNOT BE FOUND`.
+  - 즉 **경계 회전 구속은 원인이 아니다.** 음수 회전 강성은 내부 전체에 걸쳐 있다.
+
+[해석]
+  - 2차(S8R5/STRI65) + 5 um 막 + 이 압축 base 조합에서 **셸 회전 자유도 조건수**가
+    구조적으로 무너진다. 1차(S4/S3)는 같은 base 에서 4-10모드가 나오므로 base 자체의
+    전역 좌굴은 아니다.
+  - Galhofo와 BC·solver·변위(작은 쪽)가 같은데도 우리만 실패하므로, 차이는 **셸 단면/요소
+    제어/메쉬 전이** 또는 모드 추출 모델의 하중 경로에 있다. 케이블 가설은 CASE seed 가
+    1차에서도 0모드라 여전히 미검증.
+  - Plan 2의 2차 경로는 **중단**. hf 목적함수는 계속 닫고, Step 3a A(토크 목적)로 이동한다.
+    재개하려면 (i) 셸 단면/controls 를 Galhofo와 맞춘 별도 모델, 또는 (ii) `*BUCKLE` 없이
+    prescribed imperfection 으로 2차 postbuckling 1런이 필요하다.
