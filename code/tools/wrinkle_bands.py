@@ -187,6 +187,137 @@ def read_odb(path):
         odb.close()
 
 
+def read_element_slopes(path):
+    """요소 법선 기울기 s=(n_x/|n_z|, n_y/|n_z|), 참조 중심, 면적, theta².
+
+    slope_stats 의 theta_abs 와 같은 정의(요소 법선 vs z축)를 쓴다. 노드 u3 미분보다
+    hf_pred_abs 와 직접 대응한다. Abaqus python 전용.
+    """
+    from odbAccess import openOdb
+    odb = openOdb(path=path, readOnly=True)
+    try:
+        step = None
+        for nm in ('Step-GlobalTension', 'Step-Postbuckle'):
+            if nm in odb.steps:
+                step = odb.steps[nm]
+                break
+        if step is None:
+            step = odb.steps[list(odb.steps.keys())[-1]]
+        frame = step.frames[-1]
+        inst = odb.rootAssembly.instances['MEMBRANE-1']
+        c = dict((v.nodeLabel, v.data) for v in frame.fieldOutputs['COORD'].values)
+        d = dict((v.nodeLabel, v.data) for v in frame.fieldOutputs['U'].values)
+        sx, sy, cx, cy, ar, th2 = [], [], [], [], [], []
+        for e in inst.elements:
+            conn = list(e.connectivity)
+            if len(conn) not in (3, 4):
+                continue
+            if any(n not in c or n not in d for n in conn):
+                continue
+            ref = np.array([c[n] - d[n] for n in conn])       # 참조좌표
+            cur = np.array([c[n] for n in conn])              # 변형좌표
+            if len(conn) == 4:
+                cr = np.cross(cur[2] - cur[0], cur[3] - cur[1])
+                area = 0.5 * float(np.linalg.norm(cr))
+            else:
+                cr = np.cross(cur[1] - cur[0], cur[2] - cur[0])
+                area = 0.5 * float(np.linalg.norm(cr))
+            nrm = float(np.linalg.norm(cr))
+            if area <= 1e-14 or nrm <= 0.0:
+                continue
+            n = cr / nrm
+            if n[2] < 0.0:                                    # 면외 반전 제거(hf 와 동일)
+                n = -n
+            nz = abs(float(n[2]))
+            if nz < 1e-9:
+                continue
+            sx.append(float(n[0] / nz))
+            sy.append(float(n[1] / nz))
+            cen = ref.mean(axis=0)
+            cx.append(float(cen[0]))
+            cy.append(float(cen[1]))
+            ar.append(area)
+            th2.append(math.atan2(math.hypot(n[0], n[1]), nz) ** 2)
+        return (np.array(sx), np.array(sy), np.array(cx), np.array(cy),
+                np.array(ar), np.array(th2), step.name, frame.frameValue)
+    finally:
+        odb.close()
+
+
+def grid_slopes(sx, sy, cx, cy, ar):
+    """요소 중심 -> 200x100 셀. 셀별 면적가중 평균 sx,sy, 면적합."""
+    SX = np.zeros((NY - 1, NX - 1))
+    SY = np.zeros((NY - 1, NX - 1))
+    AA = np.zeros((NY - 1, NX - 1))
+    for a, b, x, y, w in zip(sx, sy, cx, cy, ar):
+        ix = min(int(x / H), NX - 2)
+        iy = min(int(y / H), NY - 2)
+        SX[iy, ix] += a * w
+        SY[iy, ix] += b * w
+        AA[iy, ix] += w
+    ok = AA > 0.0
+    SX[ok] /= AA[ok]
+    SY[ok] /= AA[ok]
+    return SX, SY, AA, ok
+
+
+def decompose_slopes(SX, SY, AA, width):
+    """slope 벡터장 -> 대역별 hf_b. sum_b hf_b = K*mean(|s|^2) (면적가중)."""
+    ny, nx = SX.shape
+    m = np.zeros((ny, nx))
+    valid = AA > 0.0
+    m[valid] = 1.0
+    if width > 0:
+        X, Y = np.meshgrid((np.arange(nx) + 0.5) * H, (np.arange(ny) + 0.5) * H)
+        m = taper_weights(X, Y, width) * m
+    Ux = np.fft.fft2(SX * m)
+    Uy = np.fft.fft2(SY * m)
+    kx = 2 * math.pi * np.fft.fftfreq(nx, d=H)
+    ky = 2 * math.pi * np.fft.fftfreq(ny, d=H)
+    KX, KY = np.meshgrid(kx, ky)
+    K = np.sqrt(KX ** 2 + KY ** 2)
+    power = (np.abs(Ux) ** 2 + np.abs(Uy) ** 2) / float(nx * ny) ** 2
+    #   면적 정규화: 셀 수 n_valid → 삼각형 면적. slope 는 셀 평균이므로 N/n_valid.
+    n_valid = float(np.count_nonzero(valid))
+    scale = float(nx * ny) / n_valid if n_valid else 1.0
+    hf_t = K_SLOPE * float(np.sum(power)) * scale
+    lam = np.full_like(K, np.inf)
+    nz = K > 0
+    lam[nz] = 2 * math.pi / K[nz]
+    out = {'hf_taper': hf_t, 'bands': {}, 'unresolved': 0.0}
+    covered = np.zeros_like(K, dtype=bool)
+    for name, lo, hi in BANDS:
+        sel = (K > 0) & (lam > lo) & (lam <= hi)
+        out['bands'][name] = K_SLOPE * float(np.sum(power[sel])) * scale
+        covered |= sel
+    sel5 = (lam > B5[1]) & (lam <= B5[2])
+    out['unresolved_b5'] = K_SLOPE * float(np.sum(power[sel5])) * scale
+    covered |= sel5
+    out['residual'] = K_SLOPE * float(np.sum(power[(K > 0) & ~covered])) * scale
+    #   taper 없는 참조값(면적가중 mean |s|²) — G2b 비교용
+    wsum = float(np.sum(AA[valid]))
+    out['hf_ref'] = (K_SLOPE * float(np.sum(AA[valid] * (SX[valid] ** 2 + SY[valid] ** 2)))
+                     / wsum) if wsum > 0 else 0.0
+    return out
+
+
+def run_odb_slope(path, tag, width, hf_odb):
+    sx, sy, cx, cy, ar, th2, step, fv = read_element_slopes(path)
+    SX, SY, AA, ok = grid_slopes(sx, sy, cx, cy, ar)
+    d = decompose_slopes(SX, SY, AA, width)
+    total = sum(d['bands'].values()) + d['unresolved_b5'] + d['residual']
+    res = {'tag': tag, 'odb': os.path.basename(path), 'step': step, 'frame': fv,
+           'mode': 'element_slope', 'taper_m': width, 'hf_taper': d['hf_taper'],
+           'hf_ref': d['hf_ref'], 'hf_odb_reported': hf_odb,
+           'g2b_ratio': (d['hf_taper'] / hf_odb) if hf_odb else None,
+           'bands': d['bands'], 'b5_unresolved': d['unresolved_b5'],
+           'residual': d['residual'], 'sum_bands': total,
+           'fractions': dict((k, (v / total if total else 0.0)) for k, v in d['bands'].items()),
+           'fraction_b5_unresolved': (d['unresolved_b5'] / total if total else 0.0)}
+    res['fractions']['residual'] = d['residual'] / total if total else 0.0
+    return res
+
+
 def grid_from_nodes(xs, ys, u3):
     """노드를 201x101 격자에 매핑. 격자 밖/중복은 오류로 드러낸다."""
     ix = np.rint(xs / H).astype(int)
@@ -232,6 +363,7 @@ def main(argv=None):
     ap.add_argument('--taper', type=float, default=1.0, help='taper 폭 [m]')
     ap.add_argument('--taper-study', default='0.5,1.0,1.5,2.0')
     ap.add_argument('--odb')
+    ap.add_argument('--mode', choices=('element_slope', 'u3'), default='element_slope')
     ap.add_argument('--tag', default='?')
     ap.add_argument('--hf-odb', type=float, default=0.0,
                     help='results 의 slope_f1_hf_pred (G2b 기준)')
@@ -272,7 +404,8 @@ def main(argv=None):
                     hf_pred = float(d.get('slope_f1_hf_pred', 0.0))
                 except Exception:
                     hf_pred = 0.0
-            r = run_odb(odb, tag, a.taper, hf_pred)
+            r = (run_odb_slope if a.mode == 'element_slope' else run_odb)(
+                odb, tag, a.taper, hf_pred)
             rows.append(r)
             print('%-20s g2b=%.3f  B1=%.2e B2=%.2e B3=%.2e B4=%.3f  B5(unres)=%.3f'
                   % (tag, r['g2b_ratio'] or float('nan'), r['fractions']['B1'],
@@ -285,7 +418,8 @@ def main(argv=None):
 
     if not a.odb:
         raise SystemExit('--odb 또는 --synthetic 또는 --all 이 필요하다')
-    res = run_odb(a.odb, a.tag, a.taper, a.hf_odb)
+    res = (run_odb_slope if a.mode == 'element_slope' else run_odb)(
+        a.odb, a.tag, a.taper, a.hf_odb)
     print(json.dumps(res, ensure_ascii=False, indent=1))
     if a.out:
         with io.open(a.out, 'w', encoding='utf-8') as f:
