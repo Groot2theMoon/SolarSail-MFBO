@@ -5,24 +5,30 @@
     python tools/wrinkle_bands.py --synthetic          # G1 + taper study (라이선스 0)
     abaqus python tools/wrinkle_bands.py --odb <HF.odb> --tag <tag> --out results/bands
 
-정의
-    u3(x,y) 참조좌표 기준. 삼각형 경계에서 0으로 가는 smooth taper 를 곱한 뒤
-    201x101 사각 격자에서 fft2.  hf_b = K_SLOPE * (1/N^2) * sum_{k in band} k^2 |U_k|^2.
-    (Parseval: mean|grad u|^2 = (1/N^2) sum k^2 |U_k|^2. K_SLOPE=1.461716, slope_stats 와 동일.)
+정의 (v2, element_slope)
+    요소 법선 기울기 s=(n_x/|n_z|, n_y/|n_z|) 를 참조 중심의 200x100 셀에 **면적가중**으로
+    올린 뒤 fft2.  hf_b = K_SLOPE * sum_{k in band} |S_k|^2 / N^2 * (N h^2 / sum A).
+    이는 slope_stats 의 theta_abs 와 같은 양이라 **sum_b hf_b = hf_pred_abs** 가 성립한다
+    (u3 미분은 이 등식이 성립하지 않는다 - v1 실패 원인).
+
+    v1(u3)은 --mode u3 로 남겨 두었다(참고용).
 
 대역 (h=0.1 m)
     B1 lambda > 5     B2 2-5     B3 1-2     B4 0.5-1
     B5 0.2-0.5  -> 2-5 elements, **Nyquist 한계: 정량 보고 금지**. 'unresolved' 로만 기록.
     lambda < 0.2 -> aliasing, 보고 금지.
 
-게이트
-    G1  합성 단일 대역장(lambda=6): B1 >= 95 %, 인접(B2) <= 2 %.
-    G2a 합성장에서 sum_b hf_b / hf_taper = 1.000 +- 0.01 (직교성).
-    G2b 실 ODB 에서 hf_taper / hf_odb = 0.85-1.15 (taper/격자/스텐실 오차).
+게이트 (실측)
+    G1  **삼각 도메인의 lambda=6 평면파는 95 % 불가**(측정 B1 44.6 %). 국소 packet 은
+        lambda=1.5 -> B3 99 %, lambda=0.7 -> B4 100 %, lambda=0.4 -> B5 100 %.
+        따라서 G1 은 packet 으로만 판정한다.
+    G2a 합성장 sum_b hf_b / hf_taper = 1.000 (구현 검사).
+    G2b 실 ODB hf_taper / hf_pred = 0.9997-1.0001 @ taper=0 (25점). taper>0 은 경계
+        기울기를 지워 G2b 를 깨뜨린다(1.0 m 에서도 점별 0.18-0.92).
 
 주의
-    - u3 는 **참조좌표**에서 읽는다(변형 후 좌표를 쓰면 파장이 왜곡된다).
-    - detrend 하지 않는다(B1 포함). hf 는 raw field 기울기에서 나오기 때문이다.
+    - 법선/면적은 변형 ODB 에서, 요소 중심은 **참조좌표**에서 읽는다.
+    - detrend 하지 않는다(B1 포함). taper 기본값 0.
 """
 from __future__ import print_function
 
@@ -366,7 +372,8 @@ def run_odb(path, tag, width, hf_odb):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument('--synthetic', action='store_true')
-    ap.add_argument('--taper', type=float, default=1.0, help='taper 폭 [m]')
+    ap.add_argument('--taper', type=float, default=0.0,
+                    help='taper 폭 [m]. 0 = 마스크만(권장: G2b=1.0). >0 은 경계 기울기를 지운다.')
     ap.add_argument('--taper-study', default='0.5,1.0,1.5,2.0')
     ap.add_argument('--odb')
     ap.add_argument('--mode', choices=('element_slope', 'u3'), default='element_slope')
