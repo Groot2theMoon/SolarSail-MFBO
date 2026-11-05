@@ -20,9 +20,9 @@ BASE = 20.0                            # m
 HEIGHT = 10.0                          # m
 
 # ---- 요소/격자 ----
-#   [T0 2026-11-05] 2차 요소 실험: S8R5 + STRI65 (논문 Galhofo 기준).
-ELEM_CODE_QUAD = S8R5                  # 2차 셸. (1차 S4 는 git 이력 참조)
-ELEM_CODE_TRI = STRI65                 # 2차 삼각 셸
+ELEM_CODE_QUAD = S4                    # 1차 셸(S4). 막 계열(M3D4/M3D3)은 기각(notes §4·§24).
+ELEM_CODE_TRI = S3                     # 3절점 1차 셸
+#   [T0 2026-11-05] 2차(S8R5/STRI65)는 buckle base state 0모드로 실패 -> §19.125. 기본은 1차.
 SEED_DIV = 200.0                       # seed = BASE/SEED_DIV -> 약 1.82만 요소 (실측 2026-09-28)
 
 # ---- 두께 ----
@@ -40,6 +40,6 @@ PERTURBATION = 0.01                    # m - Buckle 스텝 섭동(λ×P 불변, 
 
 # ---- 프리셋/실행 ----
 PAPER_MATCH = True                     # 논문 정합 프리셋 스위치(HF 는 파생값을 이 값으로 만든다).
-PAPER_MESH_ORDER = 2                   # [T0] 2차. 1차는 git 이력 참조.
+PAPER_MESH_ORDER = 1                   # 기본 1차 S4/S3. 2차는 T0에서 0모드(§19.125).
 INSTANCE_NAME = 'MEMBRANE-1'
 NUMCPUS = 4

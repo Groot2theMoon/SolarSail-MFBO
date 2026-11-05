@@ -82,7 +82,7 @@ _CFG_HASH = _AC.config_hash(_CFG)
 #   지금은 각 상수가 독립이다 - 바꾸려면 그 줄만 고친다. (2026-10-22)
 #   !! 값을 바꾸면 시드표(modes_*.txt)를 재생성해야 한다 - make_seed.py 를 먼저 실행.
 #   PAPER_MATCH / PAPER_MESH_ORDER 는 core/constants.py 소관이다(§19.119).
-MESH_ORDER = 2                # [T0 2026-11-05] 2차. 실패 이력(0모드)은 §19.125 에 기록.
+MESH_ORDER = 1                # 1차 S4/S3. 2차는 T0에서 0모드(§19.125) - 재시도 전 근거 필요.
 #   [2026-10-20 실측] 논문 정적 스텝의 코너 0.0005 m 는 이 모델에서 **base state 가 불안정**하다:
 #     SYSTEM MATRIX 592 negative eigenvalues / DIFFERENTIAL MATRIX 166,009 negative diagonals
 #     -> subspace "THE EIGENVALUES CANNOT BE FOUND" (0 modes). 1e-3 m 에서도 0개였던 §8 실측과 같은 영역.
@@ -996,8 +996,8 @@ def build_model(disp):
             stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
     return model_name
 
-ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', M3D4: 'm3d4', M3D3: 'm3d3',
-            S8R5: 's8r5', STRI65: 'stri65'}.get(ELEM_CODE_QUAD)   # [T0] 2차 추가
+ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', M3D4: 'm3d4', M3D3: 'm3d3'}.get(ELEM_CODE_QUAD)
+#   [T0 2026-11-05] 2차 재시도 시 S8R5/STRI65 태그를 여기에 추가해야 한다(§19.125).
 if ELEM_TAG is None:
     raise RuntimeError('ELEM_TAG 를 유도할 수 없는 요소코드입니다: %r. 잡 이름이 케이스를 '
                        '구분하지 못하면 run_job_safely 가 직전 증거를 지운다.' % (ELEM_CODE_QUAD,))
