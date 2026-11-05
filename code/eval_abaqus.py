@@ -944,9 +944,9 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
     force_tot = np.zeros(3, dtype=np.float64)
 
     # 4절점 요소 (Quad) 필터링
-    quad_conns = [c for c in connectivity if len(c) == 4]
+    quad_conns = [c for c in connectivity if len(c) in (4, 8)]
     if quad_conns:
-        quads = np.array(quad_conns, dtype=np.int32)
+        quads = np.array([c[:4] for c in quad_conns], dtype=np.int32)
         v0 = node_coords[quads[:, 0]]
         v1 = node_coords[quads[:, 1]]
         v2 = node_coords[quads[:, 2]]
@@ -985,9 +985,9 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         ideal_area_sum += np.sum(areas)
 
     # 3절점 요소 (Tri) 필터링
-    tri_conns = [c for c in connectivity if len(c) == 3]
+    tri_conns = [c for c in connectivity if len(c) in (3, 6)]
     if tri_conns:
-        tris = np.array(tri_conns, dtype=np.int32)
+        tris = np.array([c[:3] for c in tri_conns], dtype=np.int32)
         v0 = node_coords[tris[:, 0]]
         v1 = node_coords[tris[:, 1]]
         v2 = node_coords[tris[:, 2]]
