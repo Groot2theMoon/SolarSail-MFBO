@@ -38,7 +38,9 @@ import numpy as np
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
-from slope_stats import K_SLOPE                                         # noqa: E402
+#   slope_stats.py 는 import 시 odbAccess 를 요구한다(Abaqus 밖에서 실패). 상수만 복제한다.
+#   값/의미는 slope_stats.py:115 와 동일하다.
+K_SLOPE = 1.461716
 
 BASE, HEIGHT, H = 20.0, 10.0, 0.1
 NX, NY = int(round(BASE / H)) + 1, int(round(HEIGHT / H)) + 1   # 201 x 101
