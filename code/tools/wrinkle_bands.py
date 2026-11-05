@@ -1,0 +1,260 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""wrinkle_bands.py - HF ODB 의 u3 를 파장 대역으로 분해한다 (Plan 1).
+
+    python tools/wrinkle_bands.py --synthetic          # G1 + taper study (라이선스 0)
+    abaqus python tools/wrinkle_bands.py --odb <HF.odb> --tag <tag> --out results/bands
+
+정의
+    u3(x,y) 참조좌표 기준. 삼각형 경계에서 0으로 가는 smooth taper 를 곱한 뒤
+    201x101 사각 격자에서 fft2.  hf_b = K_SLOPE * (1/N^2) * sum_{k in band} k^2 |U_k|^2.
+    (Parseval: mean|grad u|^2 = (1/N^2) sum k^2 |U_k|^2. K_SLOPE=1.461716, slope_stats 와 동일.)
+
+대역 (h=0.1 m)
+    B1 lambda > 5     B2 2-5     B3 1-2     B4 0.5-1
+    B5 0.2-0.5  -> 2-5 elements, **Nyquist 한계: 정량 보고 금지**. 'unresolved' 로만 기록.
+    lambda < 0.2 -> aliasing, 보고 금지.
+
+게이트
+    G1  합성 단일 대역장(lambda=6): B1 >= 95 %, 인접(B2) <= 2 %.
+    G2a 합성장에서 sum_b hf_b / hf_taper = 1.000 +- 0.01 (직교성).
+    G2b 실 ODB 에서 hf_taper / hf_odb = 0.85-1.15 (taper/격자/스텐실 오차).
+
+주의
+    - u3 는 **참조좌표**에서 읽는다(변형 후 좌표를 쓰면 파장이 왜곡된다).
+    - detrend 하지 않는다(B1 포함). hf 는 raw field 기울기에서 나오기 때문이다.
+"""
+from __future__ import print_function
+
+import argparse
+import io
+import json
+import math
+import os
+import sys
+
+import numpy as np
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+from slope_stats import K_SLOPE                                         # noqa: E402
+
+BASE, HEIGHT, H = 20.0, 10.0, 0.1
+NX, NY = int(round(BASE / H)) + 1, int(round(HEIGHT / H)) + 1   # 201 x 101
+AREA = 0.5 * BASE * HEIGHT
+BANDS = [
+    ('B1', 5.0, float('inf')),
+    ('B2', 2.0, 5.0),
+    ('B3', 1.0, 2.0),
+    ('B4', 0.5, 1.0),
+]
+B5 = ('B5', 0.2, 0.5)
+
+
+def triangle_mask():
+    x = np.arange(NX) * H
+    y = np.arange(NY) * H
+    X, Y = np.meshgrid(x, y)
+    inside = (Y <= X + 1e-9) & (Y <= (BASE - X) + 1e-9) & (Y >= 0)
+    return X, Y, inside
+
+
+def taper_weights(X, Y, width):
+    """삼각형 세 변까지의 거리로 만든 smoothstep 곱. width=0 이면 mask(0/1)."""
+    if width <= 0:
+        _, _, m = triangle_mask()
+        return m.astype(float)
+    d = np.minimum(np.minimum(Y, X - Y), BASE - X - Y)     # 세 변까지 거리
+    t = np.clip(d / float(width), 0.0, 1.0)
+    w = 0.5 * (1.0 - np.cos(np.pi * t))
+    _, _, inside = triangle_mask()
+    return np.where(inside, w, 0.0)
+
+
+def k_grid():
+    kx = 2.0 * math.pi * np.fft.fftfreq(NX, d=H)
+    ky = 2.0 * math.pi * np.fft.fftfreq(NY, d=H)
+    KX, KY = np.meshgrid(kx, ky)
+    return np.sqrt(KX ** 2 + KY ** 2)
+
+
+def decompose(u3, width):
+    """u3 (NY,NX) -> dict: bands hf_b, fractions, total, taper ratio inputs."""
+    w = taper_weights(*triangle_mask()[:2], width=width)
+    ut = np.asarray(u3, dtype=np.float64) * w
+    U = np.fft.fft2(ut)
+    K = k_grid()
+    power = (K ** 2) * (np.abs(U) ** 2) / float(NX * NY) ** 2
+    hf_taper = K_SLOPE * float(np.sum(power))
+    out = {'hf_taper': hf_taper, 'bands': {}, 'unresolved': 0.0}
+    lam = np.full_like(K, np.inf)
+    nz = K > 0
+    lam[nz] = 2.0 * math.pi / K[nz]
+    covered = np.zeros_like(K, dtype=bool)
+    for name, lo, hi in BANDS:
+        sel = (K > 0) & (lam > lo) & (lam <= hi)
+        out['bands'][name] = K_SLOPE * float(np.sum(power[sel]))
+        covered |= sel
+    sel5 = (lam > B5[1]) & (lam <= B5[2])
+    out['unresolved_b5'] = K_SLOPE * float(np.sum(power[sel5]))
+    covered |= sel5
+    out['residual'] = K_SLOPE * float(np.sum(power[(K > 0) & ~covered]))
+    return out, ut
+
+
+def synthetic_field(modes):
+    """modes: [(lambda_m, amplitude)] -> u3 on triangle (no taper)."""
+    X, Y, inside = triangle_mask()
+    u = np.zeros_like(X)
+    for lam, amp in modes:
+        u += amp * np.sin(2.0 * math.pi * X / lam)
+    return np.where(inside, u, 0.0)
+
+
+def synthetic_report(width):
+    rows = []
+    tests = [
+        ('single_B1', [(6.0, 1.0)], 'B1', None),
+        ('single_B3', [(1.5, 1.0)], 'B3', None),
+        ('multi', [(6.0, 1.0), (1.5, 0.5), (0.4, 0.25)], None, None),
+    ]
+    for name, modes, main, _ in tests:
+        u = synthetic_field(modes)
+        d, _ = decompose(u, width)
+        total = sum(d['bands'].values()) + d['unresolved_b5'] + d['residual']
+        frac = dict((k, (v / total if total else 0.0)) for k, v in d['bands'].items())
+        frac['B5'] = d['unresolved_b5'] / total if total else 0.0
+        frac['residual'] = d['residual'] / total if total else 0.0
+        row = {'test': name, 'width': width, 'total_over_taper': total / d['hf_taper'],
+               'fractions': frac}
+        if main:
+            others = sorted(((k, v) for k, v in frac.items() if k != main),
+                            key=lambda kv: -kv[1])
+            row['main_frac'] = frac[main]
+            row['adjacent_frac'] = others[0][1]
+        rows.append(row)
+    return rows
+
+
+def taper_study(widths):
+    rows = []
+    for w in widths:
+        r = synthetic_report(w)
+        s = [x for x in r if x['test'] == 'single_B1'][0]
+        rows.append({'width': w, 'B1_frac': s['main_frac'],
+                     'leak_max': s['adjacent_frac'],
+                     'G2a_err': abs(s['total_over_taper'] - 1.0)})
+    return rows
+
+
+# --------------------------------------------------------------------------- ODB
+def read_odb(path):
+    """(x_ref, y_ref, u3) — 참조좌표와 면외변위. Abaqus python 전용."""
+    from odbAccess import openOdb
+    odb = openOdb(path=path, readOnly=True)
+    try:
+        step = None
+        for nm in ('Step-GlobalTension', 'Step-Postbuckle'):
+            if nm in odb.steps:
+                step = odb.steps[nm]
+                break
+        if step is None:
+            step = odb.steps[list(odb.steps.keys())[-1]]
+        frame = step.frames[-1]
+        inst = odb.rootAssembly.instances['MEMBRANE-1']
+        coord = frame.fieldOutputs['COORD']
+        disp = frame.fieldOutputs['U']
+        c = dict((v.nodeLabel, v.data) for v in coord.values)
+        d = dict((v.nodeLabel, v.data) for v in disp.values)
+        xs, ys, zs = [], [], []
+        for lab in inst.nodes:
+            n = lab.label
+            if n not in c or n not in d:
+                continue
+            xs.append(c[n][0] - d[n][0])
+            ys.append(c[n][1] - d[n][1])
+            zs.append(d[n][2])
+        return np.array(xs), np.array(ys), np.array(zs), step.name, frame.frameValue
+    finally:
+        odb.close()
+
+
+def grid_from_nodes(xs, ys, u3):
+    """노드를 201x101 격자에 매핑. 격자 밖/중복은 오류로 드러낸다."""
+    ix = np.rint(xs / H).astype(int)
+    iy = np.rint(ys / H).astype(int)
+    ok = (ix >= 0) & (ix < NX) & (iy >= 0) & (iy < NY)
+    if not np.all(ok):
+        raise RuntimeError('격자 밖 노드 %d개' % int(np.sum(~ok)))
+    u = np.zeros((NY, NX), dtype=np.float64)
+    seen = np.zeros((NY, NX), dtype=bool)
+    for i, j, z in zip(iy, ix, u3):
+        if seen[i, j]:
+            raise RuntimeError('중복 노드 매핑 (%d,%d)' % (i, j))
+        seen[i, j] = True
+        u[i, j] = z
+    _, _, inside = triangle_mask()
+    if int(np.count_nonzero(seen)) != int(np.count_nonzero(inside)):
+        raise RuntimeError('노드 수 %d != 삼각 격자 %d'
+                           % (int(np.count_nonzero(seen)), int(np.count_nonzero(inside))))
+    return u
+
+
+def run_odb(path, tag, width, hf_odb):
+    xs, ys, u3, step, fv = read_odb(path)
+    u = grid_from_nodes(xs, ys, u3)
+    d, _ = decompose(u, width)
+    total = sum(d['bands'].values()) + d['unresolved_b5'] + d['residual']
+    res = {'tag': tag, 'odb': os.path.basename(path), 'step': step, 'frame': fv,
+           'taper_m': width, 'hf_taper': d['hf_taper'],
+           'hf_odb_reported': hf_odb,
+           'g2b_ratio': (d['hf_taper'] / hf_odb) if hf_odb else None,
+           'bands': d['bands'], 'b5_unresolved': d['unresolved_b5'],
+           'residual': d['residual'], 'sum_bands': total,
+           'fractions': dict((k, (v / total if total else 0.0))
+                             for k, v in d['bands'].items()),
+           'fraction_b5_unresolved': (d['unresolved_b5'] / total if total else 0.0)}
+    res['fractions']['residual'] = d['residual'] / total if total else 0.0
+    return res
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--synthetic', action='store_true')
+    ap.add_argument('--taper', type=float, default=1.0, help='taper 폭 [m]')
+    ap.add_argument('--taper-study', default='0.5,1.0,1.5,2.0')
+    ap.add_argument('--odb')
+    ap.add_argument('--tag', default='?')
+    ap.add_argument('--hf-odb', type=float, default=0.0,
+                    help='results 의 slope_f1_hf_pred (G2b 기준)')
+    ap.add_argument('--out')
+    a = ap.parse_args(argv)
+
+    if a.synthetic:
+        widths = [float(x) for x in a.taper_study.split(',') if x.strip()]
+        study = taper_study(widths)
+        print('width  B1_frac  leak_max  G2a_err')
+        for r in study:
+            print('  %.2f   %.4f   %.4f    %.2e'
+                  % (r['width'], r['B1_frac'], r['leak_max'], r['G2a_err']))
+        chosen = [r for r in study if r['B1_frac'] >= 0.95 and r['leak_max'] <= 0.02]
+        print('chosen widths (G1 pass):', [r['width'] for r in chosen] or 'NONE')
+        if a.out:
+            with io.open(a.out, 'w', encoding='utf-8') as f:
+                f.write(json.dumps({'study': study, 'detail': synthetic_report(a.taper)},
+                                   ensure_ascii=False, indent=1))
+        return 0
+
+    if not a.odb:
+        raise SystemExit('--odb 또는 --synthetic 이 필요하다')
+    res = run_odb(a.odb, a.tag, a.taper, a.hf_odb)
+    print(json.dumps(res, ensure_ascii=False, indent=1))
+    if a.out:
+        with io.open(a.out, 'w', encoding='utf-8') as f:
+            f.write(json.dumps(res, ensure_ascii=False, indent=1))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
