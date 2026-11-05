@@ -5379,3 +5379,38 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
     (a) HF 모델(케이블/클램프, 1.71e7)에 `*BUCKLE` 스텝을 추가해 2차 모드 추출,
     (b) 기존 1차 모드를 2차 격자에 보간해 2차 HF 만 실행 (B4/B5 비중 변화 질문에 직접 답),
     (c) hf 목적함수를 닫고 Step 3a 토크 목적함수로 이동.
+
+### 19.129 α=0 25점 토크/CP 후처리 + 용어 확정 (2026-11-05)
+
+[용어 - 사용자 지시]
+  1차 S4/S3 의 `*BUCKLE` 결과는 진짜 좌굴모드가 아니라 **imperfection shape basis** 다.
+  강성이 인위적으로 보강된 이산화의 모드이므로, 논문/코드에서 "buckling modes" 로 쓰지 않는다.
+  2차 base state 는 LANCZOS 가 "PRELOADED ABOVE THE BIFURCATION LOAD" 로 거부했고,
+  케이블 없는 코너 구동 막은 압축 영역이 생기는 순간 임계하중이 사실상 0이다.
+
+[Galhofo 차이]
+  셸 단면/controls 는 회전 강성 크기만 바꾸고, base state 가 분기 위인지는 응력 상태가 결정한다.
+  남는 설명은 **하중 경로**(그들의 base 는 케이블 인장, 우리 surrogate 는 코너 구동 압축)이다.
+  재현은 케이블 모델 복구라는 별건이며, CASE='seed' 는 1차에서도 0모드라 지금은 미검증이다.
+
+[25 ODB 후처리 - solve 0]
+  대상: results/odb/HF_*.odb (25개, 전부 α=0). 방법: eval_abaqus.get_hf 의 diag 경로
+  (`_TORQUE_CENTRE=(10, 3.333, 0)`, cp=|M|/|F|). 런타임 5.2초. 결과: results/decision_grid/torque_cp.csv,
+  points.csv 의 torque_nm/cp_offset_m 를 채움(백업 points_pre_torque.csv).
+  | 양 | min | median | mean | max |
+  |---|---:|---:|---:|---:|
+  | cp_offset | 0.842 um | 6.654 um | 14.76 um | 66.44 um |
+  | torque | 0.163 mN*m | 1.282 mN*m | 2.842 mN*m | 12.80 mN*m |
+  | hf (points) | 0 | 3.153e-7 | 1.325e-6 | 1.165e-5 |
+  | hf_signed | -1.73e-14 | 6.48e-14 | 2.90e-7 | 8.688e-7 |
+  - corr(hf, cp)=0.813, corr(cp, torque)=1.000 (정의상). cp/torque 는 hf 와 같은 주름 비대칭에서
+    나오지만 완전 중복은 아니다 - `x0p5_dc0p1` 은 hf=0(센서링)인데 cp=3.675 um, torque=0.708 mN*m.
+  - 8.42 um / hf=8.688e-7 은 `x0p2_dc0p0001` 한 점이다. 25점 전체는 0.84-66.4 um 로 **79배** 퍼진다.
+
+[판정]
+  - 최대 cp 66.4 um = 0.066 mm 로, 사전 기준 "0.1-10 mm" 에 못 미친다. α=0 에서 토크는 여전히
+    µm/mN*m 급이고, hf 와 0.81 상관이라 **독립 성능 목적함수가 아니다**(보조 진단은 가능).
+  - 따라서 선택지 3(토크 목적함수)은 α=0 프레임에서 성립하지 않는다. α 를 여는 것은 스코프 변경이며
+    지도교수 협의가 먼저다.
+  - 지금 데이터로 방어 가능한 경로는 (A) 방법론 논문 - hf 를 성능 지표가 아니라 **수렴/대역 진단
+    대상**으로 쓰고, MFBO·게이트·리팩토링·25점 대역 분해를 재료로 사용. 선택지 2(2차 HF)는 보류.
