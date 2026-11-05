@@ -87,8 +87,13 @@ def decompose(u3, width):
     ut = np.asarray(u3, dtype=np.float64) * w
     U = np.fft.fft2(ut)
     K = k_grid()
+    #   Parseval: (1/N^2) sum_k k^2|U_k|^2 = mean over the **rectangular** grid.
+    #   실제 돛은 삼각형(노드 n_in)이므로 사각형 평균을 n_in 기준으로 환산한다.
+    _, _, inside = triangle_mask()
+    n_in = float(np.count_nonzero(inside))
+    scale = float(NX * NY) / n_in
     power = (K ** 2) * (np.abs(U) ** 2) / float(NX * NY) ** 2
-    hf_taper = K_SLOPE * float(np.sum(power))
+    hf_taper = K_SLOPE * float(np.sum(power)) * scale
     out = {'hf_taper': hf_taper, 'bands': {}, 'unresolved': 0.0}
     lam = np.full_like(K, np.inf)
     nz = K > 0
@@ -96,12 +101,12 @@ def decompose(u3, width):
     covered = np.zeros_like(K, dtype=bool)
     for name, lo, hi in BANDS:
         sel = (K > 0) & (lam > lo) & (lam <= hi)
-        out['bands'][name] = K_SLOPE * float(np.sum(power[sel]))
+        out['bands'][name] = K_SLOPE * float(np.sum(power[sel])) * scale
         covered |= sel
     sel5 = (lam > B5[1]) & (lam <= B5[2])
-    out['unresolved_b5'] = K_SLOPE * float(np.sum(power[sel5]))
+    out['unresolved_b5'] = K_SLOPE * float(np.sum(power[sel5])) * scale
     covered |= sel5
-    out['residual'] = K_SLOPE * float(np.sum(power[(K > 0) & ~covered]))
+    out['residual'] = K_SLOPE * float(np.sum(power[(K > 0) & ~covered])) * scale
     return out, ut
 
 
