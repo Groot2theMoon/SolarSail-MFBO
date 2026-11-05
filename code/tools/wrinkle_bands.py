@@ -269,7 +269,10 @@ def decompose_slopes(SX, SY, AA, width):
     m[valid] = 1.0
     if width > 0:
         X, Y = np.meshgrid((np.arange(nx) + 0.5) * H, (np.arange(ny) + 0.5) * H)
-        m = taper_weights(X, Y, width) * m
+        #   셀 격자(200x100)용 테이퍼: 노드 격자(201x101)와 shape 가 다르다.
+        d = np.minimum(np.minimum(Y, X - Y), BASE - X - Y)
+        t = np.clip(d / float(width), 0.0, 1.0)
+        m = (0.5 * (1.0 - np.cos(np.pi * t))) * m
     Ux = np.fft.fft2(SX * m)
     Uy = np.fft.fft2(SY * m)
     kx = 2 * math.pi * np.fft.fftfreq(nx, d=H)
