@@ -5346,3 +5346,36 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - Plan 2의 2차 경로는 **중단**. hf 목적함수는 계속 닫고, Step 3a A(토크 목적)로 이동한다.
     재개하려면 (i) 셸 단면/controls 를 Galhofo와 맞춘 별도 모델, 또는 (ii) `*BUCKLE` 없이
     prescribed imperfection 으로 2차 postbuckling 1런이 필요하다.
+
+### 19.128 T0f/g + LANCZOS - 큰 변위도 2차 0모드를 열지 못함 (2026-11-05)
+
+[2026-10-20 기록의 차수]
+  `run_abaqus_buckle.py:87` 주석의 SYSTEM 592 / DIFFERENTIAL 166,009 는 **MESH_ORDER=1(1차)**
+  의 0.0005 m 런이다. 같은 주석에 1e-3 m 도 0모드였다고 적혀 있다. 즉 "2차 x 큰 변위"는
+  이번 T0f/g 가 처음이다.
+
+[T0f/g - 2차, paper]
+  | 런 | disp | SYSTEM neg | DIFFERENTIAL neg | 모드 |
+  |---|---:|---|---:|---:|
+  | T0f | 5e-4 | 120, 252, 376 | 166,603 | 0 |
+  | T0g | 1e-3 | 2, 24, 120, 236, 324, 412 | 164,453 | 0 |
+  - 변위를 키우면 SYSTEM neg 는 늘고(16-84 -> 24-276 -> 120-376 -> 24-412), 미분행렬
+    음수 대각은 ~161k-175k 로 평평하다. 압축은 SYSTEM 쪽을 키우지만, 80% 회전 음강성은
+    변위와 무관하게 고정이다.
+
+[LANCZOS]
+  `*BUCKLE, EIGENSOLVER=LANCZOS` (vectors/maxIterations 제거) 로 1e-4 재실행.
+  `***ERROR: THE LANCZOS SOLVER CANNOT BE USED FOR BUCKLING ANALYSIS IN WHICH A MODEL:
+  (1) IS PRELOADED ABOVE THE BIFURCATION (BUCKLING) LOAD, OR; (2) HAS RIGID BODY MODES,
+  OR (3) IS OVERCONSTRAINED OR (4) CONTAINS ...`
+  => solver 선택 문제가 아니다. 모델 자체가 rigid body/과도 프리로드 상태로 판정됐다.
+
+[판정]
+  - 2차 + 5 um 막 + 이 압축 base 의 모드 추출은 **불가**. 큰 변위/작은 변위, 경계 회전 구속,
+    LANCZOS 모두 실패했다. Plan 2 의 2차 모드 추출 경로는 최종 중단.
+  - Galhofo 와의 차이는 남은 후보(셸 단면/controls, 메쉬 전이, 모델 상세) 중 하나이며,
+    현재 구현만으로는 재현할 수 없다.
+  - 다음 중 하나로 우회한다:
+    (a) HF 모델(케이블/클램프, 1.71e7)에 `*BUCKLE` 스텝을 추가해 2차 모드 추출,
+    (b) 기존 1차 모드를 2차 격자에 보간해 2차 HF 만 실행 (B4/B5 비중 변화 질문에 직접 답),
+    (c) hf 목적함수를 닫고 Step 3a 토크 목적함수로 이동.
