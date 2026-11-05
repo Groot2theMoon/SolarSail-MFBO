@@ -5256,3 +5256,35 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [산출물]
   - 도구: `tools/wrinkle_bands.py` (v2 element_slope, --all, taper=0 기본).
   - 요약: `results/wrinkle_bands/bands_v2_all_w0.json` (25점).
+
+### 19.125 Plan 2 T0 - 2차 요소는 buckle base state 에서 0모드 (2026-11-05)
+
+[설정 - 계획의 4곳 + 1곳]
+  `ELEM_CODE_QUAD=S8R5`, `ELEM_CODE_TRI=STRI65`, `PAPER_MESH_ORDER=2`,
+  `run_abaqus_buckle.py MESH_ORDER=2` 로 바꾸자 **즉시** `ELEM_TAG` 매핑에서 죽었다
+  (`s8r5` 태그 없음). 계획의 "4곳"은 **5곳**이었다 - `ELEM_TAG` 에 `S8R5/STRI65` 추가.
+  (되돌릴 때 이 사실을 재시도용 주석으로 남겼다.)
+
+[실행]
+  `abaqus cae noGUI=run_abaqus_buckle.py -- --case paper 0.2 0.0001 0`
+  잡 `Buckle_xc0p2_d100um_dc0_f100_s8r5_grid2_paper_normal_ex210_plv01000`.
+  24 증분, 26초, 라이선스 정상.
+
+[결과 - 실패]
+  - `.msg`: `***ERROR: THE EIGENVALUES CANNOT BE FOUND. THIS COULD BE CAUSED DUE TO
+    INSTABILITIES IN THE BASE STATE`.
+  - 부정정 경고 12회, 시스템 음수 고유값 **24-276**, 미분행렬 음수 대각 **161,435**.
+  - `.dat`: `MODE NO` 0회, `CONVERGED` 0회 -> **추출 모드 0개**.
+  - 사전 등록 기준 `n_modes > 0` 실패.
+
+[판정 - Plan 2 종료]
+  - 계획의 폐기 분기대로 **T1/T2/7x7 확장을 하지 않는다**. 2차는 이 base state 에서
+    모드 자체를 못 내므로, 2차로 주름 파장을 늘리는 실험은 성립하지 않는다.
+  - v2 대역 분해(§19.124)와 일치: 고손실 설계의 hf 는 2-5 요소(unresolved) 지배이고,
+    이는 메쉬/모델 한계다. **hf 를 목적함수로 쓰는 경로는 여기서 접는다.**
+  - 다음은 Step 3a A: `hf <= 1e-4` 제약 + 목적 `tau_rel`(CP/cm 오프셋). 토크 센서는
+    `eval_abaqus` 에 이미 있다(`torque_nm`, `cp_x_m`, `cp_y_m`).
+
+[복원 - 검증]
+  - ELEM/ORDER/TAG 를 1차로 되돌렸다. `buckle_fingerprint` = **f86df4ef2156d803**,
+    `seed_gate(0.2,1e-4)` = **(True,'OK')**. 기존 그리드/p5 기준선은 그대로 유효하다.
