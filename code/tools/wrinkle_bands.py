@@ -215,19 +215,22 @@ def read_element_slopes(path):
         d = dict((v.nodeLabel, v.data) for v in frame.fieldOutputs['U'].values)
         sx, sy, cx, cy, ar, th2 = [], [], [], [], [], []
         for e in inst.elements:
-            conn = list(e.connectivity)
-            if len(conn) not in (3, 4):
+            conn = [getattr(n, 'label', n) for n in e.connectivity]
+            if len(conn) in (4, 8):
+                corner = conn[:4]
+            elif len(conn) in (3, 6):
+                corner = conn[:3]
+            else:
                 continue
-            if any(n not in c or n not in d for n in conn):
+            if any(n not in c or n not in d for n in corner):
                 continue
-            ref = np.array([c[n] - d[n] for n in conn])       # 참조좌표
-            cur = np.array([c[n] for n in conn])              # 변형좌표
-            if len(conn) == 4:
+            ref = np.array([c[n] - d[n] for n in corner])       # 참조좌표
+            cur = np.array([c[n] for n in corner])              # 변형좌표
+            if len(corner) == 4:
                 cr = np.cross(cur[2] - cur[0], cur[3] - cur[1])
-                area = 0.5 * float(np.linalg.norm(cr))
             else:
                 cr = np.cross(cur[1] - cur[0], cur[2] - cur[0])
-                area = 0.5 * float(np.linalg.norm(cr))
+            area = 0.5 * float(np.linalg.norm(cr))
             nrm = float(np.linalg.norm(cr))
             if area <= 1e-14 or nrm <= 0.0:
                 continue

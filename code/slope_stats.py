@@ -281,12 +281,12 @@ def _pristine_area_ref(odb, instance, connectivity, max_label):
         cf = f0.fieldOutputs['COORD'].getSubset(region=instance)
         nc = _node_coords(cf, max_label)
         s = 0.0
-        q = [c for c in connectivity if len(c) == 4]
+        q = [c[:4] for c in connectivity if len(c) in (4, 8)]
         if q:
             a = np.array(q, dtype=np.int32)
             s += 0.5 * np.linalg.norm(
                 np.cross(nc[a[:, 2]] - nc[a[:, 0]], nc[a[:, 3]] - nc[a[:, 1]]), axis=1).sum()
-        t = [c for c in connectivity if len(c) == 3]
+        t = [c[:3] for c in connectivity if len(c) in (3, 6)]
         if t:
             a = np.array(t, dtype=np.int32)
             s += 0.5 * np.linalg.norm(
@@ -363,11 +363,11 @@ def read_slope_geometry(odb_path, step_arg, frame_arg):
         quads, labels_q = [], []
         tris, labels_t = [], []
         for i, c in enumerate(conns):
-            if len(c) == 4:
-                quads.append(c)
+            if len(c) in (4, 8):
+                quads.append(c[:4])
                 labels_q.append(el_labels[i])
-            elif len(c) == 3:
-                tris.append(c)
+            elif len(c) in (3, 6):
+                tris.append(c[:3])
                 labels_t.append(el_labels[i])
         if not quads and not tris:
             print(_PFX + " !!! 쓸 수 있는 요소(4절점/3절점)가 없다: 요소 %d개 (연결성 길이 %s)"

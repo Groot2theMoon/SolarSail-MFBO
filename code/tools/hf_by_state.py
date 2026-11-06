@@ -97,11 +97,14 @@ def elem_areas_normals(frame, conns, maxlab):
     areas = np.zeros(n, dtype=np.float64)
     normals = np.zeros((n, 3), dtype=np.float64)
     for i, c in enumerate(conns):
-        v = nc[np.asarray(c, dtype=np.int64)]
-        if len(c) == 4:
+        if len(c) in (4, 8):
+            v = nc[np.asarray(c[:4], dtype=np.int64)]
             cr = np.cross(v[2] - v[0], v[3] - v[1])
-        else:
+        elif len(c) in (3, 6):
+            v = nc[np.asarray(c[:3], dtype=np.int64)]
             cr = np.cross(v[1] - v[0], v[2] - v[0])
+        else:
+            continue
         nrm = float(np.linalg.norm(cr))
         areas[i] = 0.5 * nrm
         if nrm > 1e-12:
