@@ -5719,3 +5719,25 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [78.9x]
   - min cp 0.842 um 는 0 근처라 비율이 폭발. 헤드라인은 **max/median 9.98x**,
     full range 78.9x 는 각주.
+
+### 19.140 baseline pilot in main - config/fingerprint/t_run (2026-11-06)
+
+[실행]
+  - `configs/baseline_noclamp.json`: PAPER_INCLUDE_CLAMPS=false, 3 cables, 1.71e7.
+  - main `run_abaqus.py`의 NO_CLAMP raise를 config-gated 허용으로 바꾸고, 클램프
+    파트/RP/tie/BC/초기응력/연결을 `if not NO_CLAMP`로 guard.
+  - `abaqus cae noGUI=run_abaqus.py -- HF 0.2 0.0001 --config configs/baseline_noclamp.json`
+
+[결과]
+  - hf = **2.0666625259e-7** (기존 baseline 재현).
+  - config_sha1 = b054a9696ac2 (clamp bf21a9e8fbc5와 다름).
+  - lf_model_fp = 1a58405d10b2 (clamp e05953a65592와 다름).
+  - .inp T3D2=3 / S4=9900 / S3=200 (클램프 없음, 메쉬 10,100 유지).
+  - **t_run = 1399 s (약 23분)**. 기존 추정 47 s와 크게 다르다. no-clamp baseline은
+    더 느리다(자유 막/주름). S2 비용 계산을 다시 해야 한다.
+  - 25점 ODB/CSV는 백업 후 복원했다. pilot ODB는
+    `results/variants/uq_s2_pilot/baseline_HF.odb`.
+
+[다음]
+  - S2 80런: baseline 10 x 23분 = 3.8 h; clamp 70런은 별도 t_run 측정 필요.
+  - seed generator(부호 난수화, 정규화, manifest)를 먼저 구현.

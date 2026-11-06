@@ -300,8 +300,9 @@ HF_ODB = HF_JOB + '.odb'
 _CFG_FORBIDDEN = ('RUN_DIR_NAME',)
 _CFG_APPLY = _AC.apply_globals(globals(), _CFG, forbidden=_CFG_FORBIDDEN)
 #   [P4] 제거된 모델 분기 - 설정으로 켜면 조용히 다른 모델이 되므로 즉시 중단한다(§19.121).
+#   [S2 2026-11-06] paired clamp-free baseline을 위해 config로 명시할 때만 허용한다.
 if NO_CLAMP:
-    raise RuntimeError('NO_CLAMP 클램프-프리 HF 모델은 제거됐다 - tools/run_abaqus_cable.py 를 쓰라.')
+    print('[S2] NO_CLAMP=True: paired clamp-free baseline (3 cables, no clamp hardware)')
 if not USE_GRID_MESH:
     raise RuntimeError('USE_GRID_MESH=False 자유메쉬 경로는 제거됐다(§19.121).')
 #   config 신원(sha1). LF sidecar 와 점별 results txt 에 남겨 "이 점이 어느 config 였나"를 추적한다.
@@ -1082,8 +1083,9 @@ def create_cable_part(name, length):
 p_cable_top = create_cable_part('Cable_Top', LEN_TOP)
 p_cable_bot_l = create_cable_part('Cable_BotL', LEN_BOT)
 p_cable_bot_r = create_cable_part('Cable_BotR', LEN_BOT)
-p_cable_cl = create_cable_part("Cable_CL", CLAMP_CABLE_LEN)
-p_cable_cr = create_cable_part("Cable_CR", CLAMP_CABLE_LEN)
+if not NO_CLAMP:
+    p_cable_cl = create_cable_part("Cable_CL", CLAMP_CABLE_LEN)
+    p_cable_cr = create_cable_part("Cable_CR", CLAMP_CABLE_LEN)
 
 a = my_model.rootAssembly
 a.DatumCsysByDefault(CARTESIAN)
@@ -1170,18 +1172,19 @@ rp3_obj, rp3_reg = create_rigid_patch('Left', V3, radius=0.2)
 #   [2026-10-12 §19.58] 0.2 -> 0.21: 거리 0.2 노드에서 부동소수 경계로 좌우 패치 노드 수가
 #   달라져(L6/R7) 클램프 부근 최소 주응력이 비대칭이었다. 0.21 은 8/8 대칭(실측)이고
 #   CLAMP_EXCL_R 과 같아 제외가 패치를 덮는다. 빌드 시점에 대칭을 강제 검사한다.
-rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=PATCH_R_CLAMP)
-rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=PATCH_R_CLAMP)
-_clm = aba_grid_mesh.patch_coords_from_set(a.sets['CL_Nodes'])
-_crm = aba_grid_mesh.patch_coords_from_set(a.sets['CR_Nodes'])
-if _clm is None or _crm is None:
-    print("[대칭] 경고: Set 노드좌표 API 없음 -> 클램프 패치 좌우 대칭 검사 건너뜀(스텁 전용 경고).")
-else:
-    _okm, _msgm = aba_grid_mesh.patch_nodes_mirror_ok(_clm, _crm)
-    if not _okm:
-        raise RuntimeError("[클램프 패치 대칭] %s - 좌우 클램프 부근 응력이 달라진다(§19.58)."
-                           % _msgm)
-    print("[대칭] 클램프 패치 미러검사 %s" % _msgm)
+if not NO_CLAMP:
+    rp_cl_obj, rp_cl_reg = create_rigid_patch('CL', V_CL, radius=PATCH_R_CLAMP)
+    rp_cr_obj, rp_cr_reg = create_rigid_patch('CR', V_CR, radius=PATCH_R_CLAMP)
+    _clm = aba_grid_mesh.patch_coords_from_set(a.sets['CL_Nodes'])
+    _crm = aba_grid_mesh.patch_coords_from_set(a.sets['CR_Nodes'])
+    if _clm is None or _crm is None:
+        print("[대칭] 경고: Set 노드좌표 API 없음 -> 클램프 패치 좌우 대칭 검사 건너뜀(스텁 전용 경고).")
+    else:
+        _okm, _msgm = aba_grid_mesh.patch_nodes_mirror_ok(_clm, _crm)
+        if not _okm:
+            raise RuntimeError("[클램프 패치 대칭] %s - 좌우 클램프 부근 응력이 달라진다(§19.58)."
+                               % _msgm)
+        print("[대칭] 클램프 패치 미러검사 %s" % _msgm)
 
 # 케이블 연결
 # V1(Top): 위로 (0, 1)
@@ -1191,9 +1194,10 @@ start_c2, end_c2 = connect_cable('Cable_Right', p_cable_bot_r, V2, (cos_val, -si
 # V3(Left): 좌하향 (-cos, -sin)
 start_c3, end_c3 = connect_cable('Cable_Left', p_cable_bot_l, V3, (-cos_val, -sin_val, 0.0))
 # V_CL : 좌상향 (-1, 1)
-start_cl, end_cl = connect_cable('cable_CL', p_cable_cl, V_CL, (-1.0, 1.0, 0.0))
-# V_CR : 우상향 (1, 1)
-start_cr, end_cr = connect_cable('cable_CR', p_cable_cr, V_CR, (1.0, 1.0, 0.0))
+if not NO_CLAMP:
+    start_cl, end_cl = connect_cable('cable_CL', p_cable_cl, V_CL, (-1.0, 1.0, 0.0))
+    # V_CR : 우상향 (1, 1)
+    start_cr, end_cr = connect_cable('cable_CR', p_cable_cr, V_CR, (1.0, 1.0, 0.0))
 
 a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
 a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))

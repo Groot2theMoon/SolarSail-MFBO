@@ -1,0 +1,16 @@
+{
+  "_comment": "Paired clamp-free baseline for the current paper path: 3 cables, initial stress 1.71e7, no clamp hardware. Explicit config so config_sha1 differs from clamp runs.",
+  "PAPER_INCLUDE_CLAMPS": false,
+  "USE_COMPOSITE_MODE_TABLE": true,
+  "SEED_DIV": 200.0,
+  "MESH_ORDER": 1,
+  "RUN": {
+    "x_c": 0.2,
+    "d_c": 0.0001,
+    "fidelities": ["HF"],
+    "make_seed": false,
+    "force_seed": false,
+    "buckle": false,
+    "clean_lf": true
+  }
+}
