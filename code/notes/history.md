@@ -5751,3 +5751,10 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   total ~**6.8 h** (not 1.3 h).
 - 5-design variant (50 clamp +10 baseline) ~**6.0 h**.
 - 다음 병목은 런타임이 아니라 **공통 seed generator**(부호 난수화, 정규화, manifest).
+
+### 19.142 baseline 재실행 - 1102 s, hf 동일 (2026-11-06)
+
+- 두 번째 baseline: hf=2.0666625259e-7 (첫 런과 동일), t_run=1102 s.
+- 첫 런 1399 s와 합쳐 **18–23분**이 구조적이다(첫 런 컴파일만의 문제 아님).
+- 25점 ODB/CSV 복원 완료. pilot: results/variants/uq_s2_pilot/baseline2_*.
+- 80런 비용은 baseline 10 x ~20분 = 3.3 h + clamp 70 x 2.6분 = 3.0 h ≈ 6.3 h.
