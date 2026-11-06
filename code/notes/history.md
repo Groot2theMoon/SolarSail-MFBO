@@ -5783,3 +5783,13 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 - 25점 ODB/CSV 복원 완료.
 - 결론: UQ 80런 전에 draw별 **stability precheck**(timeout/증분 cap, 또는 amplitude 축소/재샘플)가 필수.
   seed_gate는 형식/출처 검사일 뿐 수렴 보장이 아니다.
+
+### 19.145 single-CPU normalized draw0 clamp - 완료, timeouts는 라이선스 큐 (2026-11-06)
+
+- 이전 20/60분 timeout은 **Standard 라이선스 큐** 때문이었다. `lmstat`: abaqus 16 중 13 사용,
+  우리 호스트가 8 토큰 요청으로 큐 대기. 수치 불안정 결론은 철회.
+- `NUMCPUS=1` config로 재실행: **완료**, wall 1741 s, hf=**8.6796696e-7**.
+  (`config_sha1=da893418571c`, clamp mode table 유지).
+- single-CPU 70 clamp는 비현실적(약 34 h). 4-CPU/라이선스가 빌 때 실행해야 한다.
+- 25점 ODB/CSV 복원 완료. 결과는
+  `results/variants/uq_s2_pilot/clamp_d0_norm_*`.

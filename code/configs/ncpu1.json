@@ -1,0 +1,4 @@
+{
+  "_comment": "Single-CPU override for license-constrained UQ runs.",
+  "NUMCPUS": 1
+}
