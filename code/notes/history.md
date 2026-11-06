@@ -5741,3 +5741,13 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [다음]
   - S2 80런: baseline 10 x 23분 = 3.8 h; clamp 70런은 별도 t_run 측정 필요.
   - seed generator(부호 난수화, 정규화, manifest)를 먼저 구현.
+
+### 19.141 S2 runtime - clamp 156 s, baseline 1399 s (2026-11-06)
+
+- clamp x0.2/dc0.0001: **156 s**, hf=8.6875e-7. ODB/log copied to
+  `results/variants/uq_s2_pilot/clamp_*`; 25점 ODB/CSV restored.
+- baseline: **1399 s**, hf=2.0667e-7.
+- 80-run S2 cost: baseline 10 x 23 min = 3.8 h; clamp 70 x 2.6 min = 3.0 h;
+  total ~**6.8 h** (not 1.3 h).
+- 5-design variant (50 clamp +10 baseline) ~**6.0 h**.
+- 다음 병목은 런타임이 아니라 **공통 seed generator**(부호 난수화, 정규화, manifest).
