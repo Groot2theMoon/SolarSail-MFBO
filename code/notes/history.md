@@ -5622,3 +5622,25 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
     먼저 B5 필터/2 mm 서브그리드 중 하나로 미해상 대역을 분리해야 한다.
   - 요소 차수만으로 hf가 2배 변하므로, 절대 hf 주장에는要素 수렴 근거가 필요하다.
     상대 비교는 같은 요소 차수끼리 해야 한다.
+
+### 19.136 작업공간 정리 - 클론 금지, 결과는 results/variants (2026-11-06)
+
+[왜 클론을 썼나]
+  설정 상수(ELEM_CODE/MESH_ORDER/NO_CLAMP/seed gate)를 동시에 바꾸는 실험을
+  기존 25점과 분리하려고 임시 복제본을 썼다. 그러나 결과 추적이 나빠졌다.
+
+[정리]
+  - `mfbo-baseline`, `mfbo-clampseed`, `mfbo-o2`, `mfbo-o2base` 삭제.
+  - ODB/결과 로그를 원본 저장소 아래로 이동:
+      code/results/variants/o1_baseline_clampfree/
+      code/results/variants/o1_clamp_seedonly/
+      code/results/variants/o2_clamp/
+      code/results/variants/o2_baseline_clampfree/
+    각 디렉터리에 HF ODB, results_xc...txt, run_log.txt.
+  - 중단된 RVE 도구 `tools/subgrid_*` 제거.
+  - `tools/multiscale_s0.py`, `tools/interp_mode_table.py` 는 유지(S0/2차 모드 보간).
+
+[앞으로]
+  - 작업은 원본 `SolarSail-MFBO` 안에서만 한다.
+  - 변형 실험은 `code/results/variants/<name>/` 에만 저장하고, 기존 `results/odb/` 25점과
+    섞지 않는다. 같은 job 이름을 덮어쓰지 않도록 variant 이름을 job/ODB에 붙인다.
