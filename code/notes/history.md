@@ -5758,3 +5758,18 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 - 첫 런 1399 s와 합쳐 **18–23분**이 구조적이다(첫 런 컴파일만의 문제 아님).
 - 25점 ODB/CSV 복원 완료. pilot: results/variants/uq_s2_pilot/baseline2_*.
 - 80런 비용은 baseline 10 x ~20분 = 3.3 h + clamp 70 x 2.6분 = 3.0 h ≈ 6.3 h.
+
+### 19.143 UQ draw0 - corner-only baseline OK, clamp timeout (2026-11-06)
+
+- common seed draw0:
+  - baseline (corner-only): **258 s**, hf=2.04563e-7. 기존 1399 s보다 훨씬 빠르다
+    (composite table의 clamp mode가 baseline 수렴을 악화시켰던 것으로 보인다).
+  - clamp (corner + clamp modes, signed w1=1,w2=0.7): **>1800 s timeout**, terminate.
+    hf 없음. sign 조합/합성 진폭이 국부 좌굴을 악화시킨 것으로 보인다.
+- 25점 ODB/CSV 복원 확인(hf=8.6875e-7).
+
+[판정]
+  - seed generator/gate 자체는 통과하지만, **모든 draw가 수렴 가능한 것은 아니다.**
+  - S2 80런 전에 draw별 **stability precheck**(짧은 런/증분 cap) 또는
+    combined-table 정규화(max|u3|=1) 정책이 필요하다.
+  - clamp t_run 156 s는 **기본 composite table** 기준이다. UQ draw는 t_run이 더 길 수 있다.
