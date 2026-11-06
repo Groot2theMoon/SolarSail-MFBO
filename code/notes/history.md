@@ -5773,3 +5773,13 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - S2 80런 전에 draw별 **stability precheck**(짧은 런/증분 cap) 또는
     combined-table 정규화(max|u3|=1) 정책이 필요하다.
   - clamp t_run 156 s는 **기본 composite table** 기준이다. UQ draw는 t_run이 더 길 수 있다.
+
+### 19.144 UQ draw0 clamp - 정규화 후에도 timeout (2026-11-06)
+
+- baseline(corner-only d0): 258 s, hf=2.04563e-7.
+- clamp(d0, raw and combined-max|=1 normalized): **>1200/1800 s timeout**, terminated.
+  - seed_gate는 통과했지만 수렴하지 않았다.
+  - 원인 후보: signed corner weights + design clamp modes의 조합이 국부 좌굴/압축을 악화.
+- 25점 ODB/CSV 복원 완료.
+- 결론: UQ 80런 전에 draw별 **stability precheck**(timeout/증분 cap, 또는 amplitude 축소/재샘플)가 필수.
+  seed_gate는 형식/출처 검사일 뿐 수렴 보장이 아니다.

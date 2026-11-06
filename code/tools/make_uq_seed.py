@@ -71,6 +71,8 @@ def main():
     ap.add_argument('--header-table', default=None,
                     help='header/fingerprint source (required for clamp-free baseline)')
     ap.add_argument('--out', required=True)
+    ap.add_argument('--normalize-total', action='store_true',
+                    help='normalize the combined field to max|u3|=1')
     ap.add_argument('--manifest', default='results/uq_s2/seed_manifest.csv')
     a = ap.parse_args()
     if not 0 <= a.draw < len(DRAWS):
@@ -97,6 +99,17 @@ def main():
         modes[2] = dict(cm[1])
         modes[3] = dict(cm[2])
     # mode 4 stays zero; run_abaqus loads four modes uniformly.
+    if a.normalize_total:
+        total = {}
+        for m in modes:
+            for lab, v in modes[m].items():
+                total[lab] = total.get(lab, 0.0) + v
+        mx = max(abs(v) for v in total.values()) or 1.0
+        for m in modes:
+            modes[m] = {lab: v / mx for lab, v in modes[m].items()}
+        norm_note = 'combined max|u3|=1 (scale=1/%.6g)' % mx
+    else:
+        norm_note = 'corner-only max|u3|=1 (clamp added unnormalized)'
 
     # header from clamp table (has x_c/fingerprint); update SEED line
     header = list(ch)
@@ -110,7 +123,7 @@ def main():
         out.append(h)
     if not seed_done:
         out.append('# SEED x_c=%.10g d_c_ref=%.10g' % (a.x_c, a.d_c))
-    out.append('# UQ draw=%d w1=%.6g w2=%.6g norm=max|corner|=1' % (a.draw, w1, w2))
+    out.append('# UQ draw=%d w1=%.6g w2=%.6g norm=%s' % (a.draw, w1, w2, norm_note))
     out.append('# UQ clamp=%s' % (a.clamp_table or 'none'))
     write_table(a.out, out, modes)
 
