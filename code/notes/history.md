@@ -6099,3 +6099,30 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
     mid-side slope/integration 기반 재정의가 필요하다.
   - C1 반증, 에너지 반증, taper undersampling 반증은 유지.
   - 2차 total hf 절대 지표 금지 유지. B1-B4도 closure 보정 전에는 상대 비교로만.
+
+### 19.161 C1 보간 검증 - corner 정확, 선형 재현, C0와 MAC 0.974-0.996 (2026-11-09)
+
+[검증 도구]
+  - `tools/validate_c1_interp.py` (normal Python + scipy).
+  - source `seeds/modes_xc0p2.txt` (10,201) -> C1 `modes_xc0p2_o2_c1.txt` (30,501).
+
+[결과]
+  | 항목 | 값 |
+  |---|---:|
+  | corner max abs error | 1.4e-17 (M1), 2.1e-17 (M2), 2.2e-19 (M3), 2.7e-20 (M4) |
+  | 선형장 max abs error | **5.08e-9** |
+  | C1 mid vs C0 mid max diff | 0.130 / 0.125 / 0.206 / 0.249 |
+  | C1 mid vs C0 mid RMS | 0.0111 / 0.0111 / 0.00496 / 0.00575 |
+  | MAC(C1, C0) | **0.99646 / 0.99648 / 0.97358 / 0.97643** |
+  | finite / non-zero mid | all finite, 20,300 mid nodes |
+
+  - C1은 **같은 corner 값을 정확히 보존**하고 mid-side만 매끄럽게 바꾼다.
+  - C1과 C0는 같은 1차 표본의 두 보간이므로 MAC 0.97-0.996 (동일 모드, mid-side 차이).
+  - C1 HF: hf=2.225935e-6, cp=8.456 um (C0: 2.229391e-6, 8.448 um).
+  - C1 HF는 source fingerprint drift 때문에 `SOLARSAIL_SKIP_SEED_GATE=1`로 실행했다.
+    이는 **보간 검증에는 유효**하지만, 생산 경로에서는 gate/fingerprint를 다시 맞춰야 한다.
+
+[한계]
+  - C1은 1차 모드의 C1 보간이지 **2차 native 고유모드가 아니다**.
+  - 50 µm 2차 모드와 1차 모드 MAC은 0.002 (§19.157). 따라서 "2차 native"라고 부를 수 없다.
+  - C1 HF 1점만 실행. 25점 확장/재현은 아직.
