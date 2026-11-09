@@ -5956,3 +5956,29 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - 주의: cp 분산이 수치 바닥(1e-9)과 구분되는지는 10 seed로 확인해야 한다.
   - d_c=1.0은 UQ에 부적합(clamp 지배). UQ는 d_c<=0.5에서.
   - S2 80런의 설계점은 baseline 10 + clamp 7점 x 10 seed로 명시해야 한다. 아직 실행 안 함.
+
+### 19.156 T0h-j - 2차 clamp base 5e-5/2e-5/1e-5 모두 0모드 (2026-11-09)
+
+[동기]
+  - Galhofo 는 λ(임계 3-6% 아래)와 축퇴(0.036%)를 보려고 buckling 을 썼다.
+  - 우리 2차 실패가 "base state가 임계 위"라면 변위를 낮춰 모드가 나와야 한다.
+
+[실측 - 2차 S8R5/STRI65, clamp_only, patch 유지]
+  | DISP | wall | converged eigenvalues | 결론 |
+  |---:|---:|---:|---|
+  | 5e-5 | 80 s | **0** | 실패 |
+  | 2e-5 | 229 s | **0** | 실패 |
+  | 1e-5 | 229 s | **0** | 실패 |
+  - 세 런 모두 `THE EIGENVALUES CANNOT BE FOUND` + 음수 고유값 경고 9회.
+  - 2차 paper 는 이미 1e-4/1e-5 에서 0모드였다(§19.126 T0a/b).
+
+[판정]
+  - **base-state 변위가 원인이 아니다.** 1e-5(운용점의 1/10)에서도 0모드.
+  - "PRELOADED ABOVE BIFURCATION" 메시지는 원인 설명이 아니라 결과다.
+  - 2차 셸(S8R5/STRI65) + 5 µm 막의 회전 자유도/조건수가 buckling 고유값을 막는 쪽이 더 유력.
+  - 따라서 tie 제거(B1)만으로 2차 buckle 모드가 살아난다는 보장은 없다.
+  - Galhofo λ 비교는 **1차 모델**에서만 가능하다. 2차 native 모드는 별도 경로 필요.
+
+[다음]
+  - B1(node tie)는 1차 buckle에서 먼저 검증 - 2차와 분리.
+  - 2차 모드는 `*BUCKLE` 대신 이미 성공한 1차 모드 보간/HF prescribed imperfection 경로를 유지.

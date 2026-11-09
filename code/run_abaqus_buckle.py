@@ -137,6 +137,10 @@ DISP_GLOBAL = MODE_PRESTRESS    # 모드 추출 base state. 논문 0.0005 m 는 
 CORNER_ANGLE_DEG = 28.6
 
 CLAMP_DC = 0.0556  # d_c - 클램프 당김 비율 (CLAMP_PULL = 코너 당김 * d_c).
+#   CLAMP_ATTACH='patch': 강체패치(반경 0.21 m) + RP Coupling, 케이블은 RP에 Tie (기존).
+#   CLAMP_ATTACH='node' : 패치 없이 클램프 케이블 시작단을 돛의 최근접 절점 1개에 Tie.
+#     B1 진단용 - 하중 도입이 점 하중이 되므로 물리 모델이 아니라 원인 분리 실험이다.
+CLAMP_ATTACH = 'patch'
 #   클램프 당김 방향은 DIR_CL/DIR_CR 로 고정이다(CL=(-1,+1)/√2, CR=(+1,+1)/√2).
 #   과거 CLAMP_DIR 상수는 job 이름의 'normal' 리터럴만 남기고 제거했다(2026-10-21).
 
@@ -158,6 +162,11 @@ N_EIG_BUCKLE = 10   # 추출 요청 고유값 수
 BUCKLE_VECTORS = 25   # subspace 기저 벡터 수
 BUCKLE_MAXITER = 5000
 #   [2026-10-21] LANCZOS 분기는 제거했다(한 번도 실행/검증되지 않음). SUBSPACE 고정.
+
+#   [2026-11-09] EIG_MODE='frequency' - *BUCKLE 대신 *FREQUENCY(LANCZOS, UNSYMM=YES).
+#     base state가 불안정해도 모드 형상은 나온다(Boni 2016 경로). 2차 메쉬는 MESH_ORDER=2.
+#     'buckle' 기본 경로/덱은 그대로다. config 로만 켠다.
+EIG_MODE = 'buckle'
 
 MODE_STABILIZATION = 5.0e-4   # 2e-4(논문)와 5e-4 모두 PASS. 검증 런이 전부 5e-4 였으므로
                               #   그 값을 고정값으로 쓴다(λ 에는 영향 없음 - 실측).
@@ -236,6 +245,7 @@ def _resolve_here():
 
 _HERE = _resolve_here()
 _AC.log_config(print, _CFG, CASE)
+EIG_STEP_NAME = 'Step-Frequency' if EIG_MODE == 'frequency' else 'Step-Buckle'
 # 작업 디렉터리: 좌굴 산출물 전용.
 #   HF/LF 산출물(code/aba)과 섞으면 두 가지가 조용히 망가진다:
 #     (a) *IMPERFECTION, FILE=... 이 stale .fil 을 읽을 수 있다
@@ -284,6 +294,8 @@ CLAMP_LOAD = _ROUTE['clamp_load']   # 'none' (클램프 없음: seed/paper) | 'b
 CORNER_DIR = _ROUTE['corner_dir']   # 모든 현행 케이스가 'hf'(28.6도)
 LIVE_DRIVER = _ROUTE.get('live_driver', 'corner')   # 'corner'(기존 케이스) | 'clamp'(clamp_live)
 HAS_CLAMP_CABLES = bool(_ROUTE.get('clamp_cable', False))
+if CLAMP_ATTACH not in ('patch', 'node'):
+    raise RuntimeError("CLAMP_ATTACH must be 'patch' or 'node' (got %r)" % (CLAMP_ATTACH,))
 PRETENSION_MODE = _ROUTE['pretension']   # CASE 가 소유한다 - 자유 상수 아님.
 if PRETENSION_MODE not in ('corner2', 'paper3'):
     raise RuntimeError("CASE=%r: pretension must be 'corner2' or 'paper3' (got %r)"
@@ -739,10 +751,13 @@ def build_model(disp):
     # 클램프 RP : 우측 빗변 중점 (15, 5), 좌측 빗변 중점 (5, 5)
     if not HAS_CLAMPS:
         rp_cl_obj = rp_cr_obj = None
+    elif CLAMP_ATTACH == 'node':
+        rp_cl_obj = rp_cr_obj = None
+        print("%s [B1] CLAMP_ATTACH=node -> 클램프 강체패치/Coupling 없음" % TAG)
     else:
         rp_cl_obj, rp_cl_reg = create_rigid_patch(a, inst_memb, 'CL', V_CL, radius=0.21)
         rp_cr_obj, rp_cr_reg = create_rigid_patch(a, inst_memb, 'CR', V_CR, radius=0.21)
-    if HAS_CLAMPS:
+    if HAS_CLAMPS and CLAMP_ATTACH == 'patch':
         _cl = aba_grid_mesh.patch_coords_from_set(a.sets['CL_Nodes'])
         _cr = aba_grid_mesh.patch_coords_from_set(a.sets['CR_Nodes'])
         if _cl is None or _cr is None:
@@ -769,9 +784,19 @@ def build_model(disp):
     a.Set(name='RP_Top_Set', referencePoints=(a.referencePoints[rp1_obj.id],))
     a.Set(name='RP_Right_Set', referencePoints=(a.referencePoints[rp2_obj.id],))
     a.Set(name='RP_Left_Set', referencePoints=(a.referencePoints[rp3_obj.id],))
-    if HAS_CLAMPS:
+    if HAS_CLAMPS and CLAMP_ATTACH == 'patch':
         a.Set(name='RP_CL_Set', referencePoints=(a.referencePoints[rp_cl_obj.id],))
         a.Set(name='RP_CR_Set', referencePoints=(a.referencePoints[rp_cr_obj.id],))
+    if HAS_CLAMPS and CLAMP_ATTACH == 'node':
+        #   B1: 패치 대신 클램프 위치의 돛 절점 1개. 케이블 시작단과 Tie 한다.
+        for _set_name, _coord in (('CL_Node_Set', V_CL), ('CR_Node_Set', V_CR)):
+            _nd = inst_memb.nodes.getClosest(coordinates=_coord)
+            if isinstance(_nd, (tuple, list)):
+                _nd = _nd[0]
+            a.Set(name=_set_name,
+                  nodes=inst_memb.nodes.sequenceFromLabels((int(_nd.label),)))
+            print("%s [B1] %s -> node %d %s"
+                  % (TAG, _set_name, int(_nd.label), tuple(_nd.coordinates)))
     # Tie (RP <-> 케이블 시작단) - mode.py 와 동일. cload 라우트에는 케이블이 없다.
     if HAS_CABLES:
         my_model.Tie(name='Tie_Top', main=a.sets['RP_Top_Set'], secondary=start_c1,
@@ -781,10 +806,14 @@ def build_model(disp):
         my_model.Tie(name='Tie_Left', main=a.sets['RP_Left_Set'], secondary=start_c3,
                      positionToleranceMethod=COMPUTED)
     if HAS_CLAMP_CABLES:
-        #   HF 와 같은 이름(Tie_CL/Tie_CR). main=RP(강체패치) <-> secondary=케이블 시작단.
-        my_model.Tie(name='Tie_CL', main=a.sets['RP_CL_Set'], secondary=start_cl,
+        #   patch: RP(강체패치) <-> 케이블 시작단 / node(B1): 돛 절점 1개 <-> 케이블 시작단.
+        _cl_main = (a.sets['CL_Node_Set'] if CLAMP_ATTACH == 'node'
+                    else a.sets['RP_CL_Set'])
+        _cr_main = (a.sets['CR_Node_Set'] if CLAMP_ATTACH == 'node'
+                    else a.sets['RP_CR_Set'])
+        my_model.Tie(name='Tie_CL', main=_cl_main, secondary=start_cl,
                      positionToleranceMethod=COMPUTED)
-        my_model.Tie(name='Tie_CR', main=a.sets['RP_CR_Set'], secondary=start_cr,
+        my_model.Tie(name='Tie_CR', main=_cr_main, secondary=start_cr,
                      positionToleranceMethod=COMPUTED)
     a.regenerate()
 
@@ -817,8 +846,9 @@ def build_model(disp):
     # ---- Step 2: Buckle - Trigger 스텝을 대체한다 ----
     #   클램프 하중은 GlobalTension 스텝에 이미 들어 있다(별도 ClampTension 스텝 없음).
     # 대조 스크립트(run_abaqus_cable.py)에서 완주한 설정을 그대로 사용:
-    if 'Step-Buckle' in my_model.steps:
-        del my_model.steps['Step-Buckle']
+    for _old_step in ('Step-Buckle', 'Step-Frequency'):
+        if _old_step in my_model.steps:
+            del my_model.steps[_old_step]
     # EVOL 필수 - 없으면 base_state_probe 가 면적가중 대신 균등가중으로 떨어진다.
     my_model.FieldOutputRequest(name='F-Output-1',
                                 createStepName='Step-GlobalTension',
@@ -826,15 +856,43 @@ def build_model(disp):
     # RF = 앵커 반력. 각 앵커가 당김을 얼마나 흡수하는가(하중 경로 분담)를 읽는다.
     #   출력 요청은 해석 결과를 바꾸지 않는다.
 
-    # ---- 좌굴 스텝: SUBSPACE 고정 (LANCZOS 분기는 2026-10-21 제거) ----
-    _eig = dict(name='Step-Buckle', previous='Step-GlobalTension',
-                numEigen=N_EIG_BUCKLE, eigensolver=SUBSPACE,
-                vectors=BUCKLE_VECTORS, maxIterations=BUCKLE_MAXITER)
-    print("%s eigensolver=SUBSPACE numEigen=%d : %s"
-          % (TAG, N_EIG_BUCKLE,
-             ', '.join('%s=%s' % (_k, _eig[_k]) for _k in sorted(_eig)
-                       if _k not in ('name', 'previous'))))
-    my_model.BuckleStep(**_eig)
+    # ---- 좌굴 스텝: 기본 SUBSPACE / EIG_MODE=frequency 면 LANCZOS+UNSYMM ----
+    if EIG_MODE == 'frequency':
+        #   B2: *FREQUENCY, EIGENSOLVER=LANCZOS, UNSYMM=YES.
+        #   CAE API 의 FrequencyStep 에 UNSYMM 인자가 없으므로, 스텝 생성 후 keywordBlock
+        #   의 *Frequency 블록만 교체한다. 데이터 라인은 '요청 모드 수'.
+        _freq_name = EIG_STEP_NAME
+        my_model.FrequencyStep(
+            name=_freq_name, previous='Step-GlobalTension',
+            numEigen=N_EIG_BUCKLE, eigensolver=LANCZOS,
+            normalization=MASS,
+        )
+        if hasattr(my_model, 'keywordBlock'):
+            my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
+            for _bi, _blk in enumerate(my_model.keywordBlock.sieBlocks):
+                if _blk.strip().lower().startswith('*frequency'):
+                    my_model.keywordBlock.replace(
+                        _bi,
+                        '*Frequency, eigensolver=LANCZOS, sim=NO, '
+                        'normalization=DISPLACEMENT\n%d, , ,' % N_EIG_BUCKLE)
+                    print("%s [EIG] *Frequency SIM=NO DISPLACEMENT-normalized "
+                          "numEigen=%d" % (TAG, N_EIG_BUCKLE))
+                    break
+            else:
+                raise RuntimeError('EIG_MODE=frequency: *Frequency keyword block not found')
+        else:
+            raise RuntimeError('EIG_MODE=frequency: model has no keywordBlock')
+        _eig = dict(name=_freq_name, numEigen=N_EIG_BUCKLE,
+                    eigensolver='LANCZOS', unsymm='YES')
+    else:
+        _eig = dict(name=EIG_STEP_NAME, previous='Step-GlobalTension',
+                    numEigen=N_EIG_BUCKLE, eigensolver=SUBSPACE,
+                    vectors=BUCKLE_VECTORS, maxIterations=BUCKLE_MAXITER)
+        print("%s eigensolver=SUBSPACE numEigen=%d : %s"
+              % (TAG, N_EIG_BUCKLE,
+                 ', '.join('%s=%s' % (_k, _eig[_k]) for _k in sorted(_eig)
+                           if _k not in ('name', 'previous'))))
+        my_model.BuckleStep(**_eig)
 
     # ---- 초기응력 (수렴 보조) - 동일 ----
     my_model.Stress(
@@ -889,7 +947,7 @@ def build_model(disp):
         #   [paper-match] 논문 Buckle 스텝은 **5개 지정변위를 모두 0.10 m** 로 올린다.
         #     정적 스텝의 2:1 비율을 Buckle 스텝에 그대로 쓰면 안 된다(상단만 0.001 에 남는다).
         my_model.boundaryConditions['BC_Anchor_Top'].setValuesInStep(
-            stepName='Step-Buckle',
+            stepName=EIG_STEP_NAME,
             u1=0.0, u2=PATTERN_SIGN * PERTURBATION
         )
     if PRETENSION_MODE == 'paper3':
@@ -920,13 +978,13 @@ def build_model(disp):
             #   LIVE = 이 가족이 프로브 대상일 때만; 아니면 0 명시.
             _p = PATTERN_SIGN * PERTURBATION if LIVE_DRIVER == 'clamp' else 0.0
             my_model.boundaryConditions[_nm].setValuesInStep(
-                stepName='Step-Buckle', u1=_p * _d1, u2=_p * _d2)
+                stepName=EIG_STEP_NAME, u1=_p * _d1, u2=_p * _d2)
         print("%s [%s] base=코너 %.4g m + 클램프 %.4g m(전량) / LIVE=%s 가족 프로브 %.4g m"
               % (TAG, CASE, DISP, CLAMP_PULL, LIVE_DRIVER, PATTERN_SIGN * PERTURBATION))
         #   코너는 좌굴 스텝에서 0 명시 - LIVE = 클램프 단독.
         for _nm in ('Disp_Control_Right', 'Disp_Control_Left'):
             my_model.boundaryConditions[_nm].setValuesInStep(
-                stepName='Step-Buckle', u1=0.0, u2=0.0)
+                stepName=EIG_STEP_NAME, u1=0.0, u2=0.0)
         print("%s [%s] LIVE=클램프 가족 프로브 %.4g m x DIR (코너 0 명시)"
               % (TAG, CASE, PATTERN_SIGN * PERTURBATION))
 
@@ -991,12 +1049,14 @@ def build_model(disp):
         #   corner_lf: 좌굴 스텝 값 = 프로브(PERTURBATION). 모드 형상은 크기에 불변, lambda 만 스케일.
         _ns = PATTERN_SIGN * PERTURBATION
         my_model.boundaryConditions['Disp_Control_Right'].setValuesInStep(
-            stepName='Step-Buckle', u1=_ns * cos_val, u2=-_ns * sin_val)
+            stepName=EIG_STEP_NAME, u1=_ns * cos_val, u2=-_ns * sin_val)
         my_model.boundaryConditions['Disp_Control_Left'].setValuesInStep(
-            stepName='Step-Buckle', u1=-_ns * cos_val, u2=-_ns * sin_val)
+            stepName=EIG_STEP_NAME, u1=-_ns * cos_val, u2=-_ns * sin_val)
     return model_name
 
-ELEM_TAG = {S4: 's4', S4R: 's4r', S3: 's3', M3D4: 'm3d4', M3D3: 'm3d3'}.get(ELEM_CODE_QUAD)
+ELEM_TAG = ('s8r5' if MESH_ORDER == 2
+            else {S4: 's4', S4R: 's4r', S3: 's3',
+                  M3D4: 'm3d4', M3D3: 'm3d3'}.get(ELEM_CODE_QUAD))
 #   [T0 2026-11-05] 2차 재시도 시 S8R5/STRI65 태그를 여기에 추가해야 한다(§19.125).
 if ELEM_TAG is None:
     raise RuntimeError('ELEM_TAG 를 유도할 수 없는 요소코드입니다: %r. 잡 이름이 케이스를 '
@@ -1024,6 +1084,8 @@ JOB_NAME = 'Buckle_xc%s_d%03dum_dc%s_f%03d_%s_%s_%s_normal%s%s' % (_value_tag(x_
                                                        _f_tag,
                                                        ELEM_TAG, MESH_TAG, CASE,
                                                        _excl_tag, _live_tag)
+if CLAMP_ATTACH == 'node':
+    JOB_NAME += '_node'
 if len(JOB_NAME) > 80:
     raise RuntimeError("[잡이름] %d자 > 80자 한계: %s\n   -> 케이스/태그 이름을 줄이세요."
                        % (len(JOB_NAME), JOB_NAME))
@@ -1137,7 +1199,7 @@ try:
     import buckle_mode_report as _bmr                 # _HERE 는 sys.path 에 있다
     _datp = os.path.join(_RUN, '%s.dat' % JOB_NAME)
     _nodes, _disps, _lams, _msgs = _bmr.read_odb_modes(
-        os.path.join(_RUN, '%s.odb' % JOB_NAME), 'Step-Buckle',
+        os.path.join(_RUN, '%s.odb' % JOB_NAME), EIG_STEP_NAME,
         n_modes=max(1, min(8, N_EIG_BUCKLE)), instance=INSTANCE_NAME,
         dat_hint=_datp if os.path.exists(_datp) else None)
     for _m in _msgs:
@@ -1210,8 +1272,8 @@ print("   C3 모드가 면외 성분을 가짐 (u3 비율)   (면내 모드 배�
 print("   C4 |u3| 무게중심이 클램프 부착점 근처  (경계조건 아티팩트 배제)")
 print("%s eigen table : %s.dat" % (TAG, JOB_NAME))
 print("%s ledger      : %s%sbuckle_ledger.jsonl" % (TAG, RUN_DIR_NAME, os.sep))
-print("%s 모드 형상 판정: abaqus python buckle_mode_report.py %s.odb Step-Buckle"
-      % (TAG, JOB_NAME))
+print("%s 모드 형상 판정: abaqus python buckle_mode_report.py %s.odb %s"
+      % (TAG, JOB_NAME, EIG_STEP_NAME))
 print("%s HF 소비(주의): HF(run_abaqus.py)는 기본 IMPERFECTION_MODE='odb_direct' 로" % TAG)
 print("                 ..\\ClampFree_Buckle.odb 를 읽는다 - 이 잡을 쓰려면 MODE_SOURCE_ODB 교체.")
 print("=" * 78)

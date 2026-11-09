@@ -1,0 +1,6 @@
+{
+  "CASE": "clamp_only",
+  "PAPER_MATCH": false,
+  "CLAMP_ATTACH": "node",
+  "CLAMP_EXCL_R": 0.0
+}

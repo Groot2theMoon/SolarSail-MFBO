@@ -1,0 +1,7 @@
+{
+  "CASE": "clamp_only",
+  "PAPER_MATCH": false,
+  "MESH_ORDER": 2,
+  "CLAMP_ATTACH": "patch",
+  "CLAMP_EXCL_R": 0.21
+}
