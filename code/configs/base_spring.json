@@ -1,0 +1,6 @@
+{
+  "_comment": "T2: spring only on the base edge (y=0); diagonal symmetry edges keep u3=0. alpha=1e-3.",
+  "RELEASE_EDGE_U3": true,
+  "SEED_DIV": 200.0,
+  "MESH_ORDER": 1
+}

@@ -5906,3 +5906,21 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   centroid가 base 근처다.
 - 단, centroid만으로 BC 아티팩트를 확정할 수 없다. T2(base만 spring)와 T3(paired Δhf)가 필요.
 - T2 전제: 현재 `All_Edges_NoClamp`가 세 변 전체라 BASE/DIAG set 분리가 아직 없다.
+
+### 19.153 T2/T3 - base-only spring BC 효과 7.2%, 설계 범위의 3.8% (2026-11-09)
+
+[T2]
+  - `RELEASE_EDGE_U3=True`를 base(y=0)만 spring, 대각 절단면은 u3=0 으로 분리.
+  - alpha=1e-3, d_c=1.0, 4-mode seed. 556 s.
+  - hf=**6.69436e-6**; u3=0 같은 조건 hf=6.24647e-6.
+  - Δhf(BC)=+4.479e-7 (**+7.17%**).
+  - 이전 all-edge spring 구현은 대각 대칭변까지 풀어 T2가 아니었다. 이번에 분리했다.
+[T3]
+  - 25점 hf 범위(=max-min) 1.165e-5 (0~1.165e-5).
+  - Δhf(BC)/range = 3.84% → **<10%**.
+  - 판정: BC는 각주 수준. Galhofo 재현에는 u3=0 유지가 타당.
+  - T4(all-edge symmetry release), T5(alpha), T6(k scaling)는 조건부였으므로 생략.
+[코드]
+  - `BASE_EDGE`(201) / `DIAG_EDGES`(201) set 분리.
+  - spring은 BASE_EDGE만; DIAG_EDGES는 u3=0.
+  - spring 개수 guard도 201로 수정.
