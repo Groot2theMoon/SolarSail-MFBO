@@ -25,7 +25,8 @@ import sys
 
 from odbAccess import openOdb
 
-WANT = ('ALLIE', 'ALLSD', 'ALLKE', 'ETOTAL', 'ALLSE', 'ALLPD', 'ALLWK', 'ALLVD')
+WANT = ('ALLIE', 'ALLSD', 'ALLKE', 'ETOTAL', 'ALLSE', 'ALLPD', 'ALLWK', 'ALLVD',
+        'ALLAE')
 
 
 def main(argv):
@@ -80,6 +81,17 @@ def main(argv):
                              100.0 * rmax, tmaxr))
                     print("       판정: max < 1%% 양호 / < 5%% 허용 / >= 5%% 결과 의심"
                           "(안정화가 물리를 대신했을 수 있음)")
+            if 'ALLAE' in vals and 'ALLIE' in vals:
+                ae = {round(t, 10): v for t, v in vals['ALLAE']}
+                ie = {round(t, 10): v for t, v in vals['ALLIE']}
+                common = sorted(set(ae) & set(ie))
+                ratios = [(abs(ae[t]) / abs(ie[t]), t) for t in common if abs(ie[t]) > 0.0]
+                if ratios:
+                    rmax, tmaxr = max(ratios)
+                    print("    ** ALLAE/ALLIE  last=%.4g%%  max=%.4g%% (t=%.4g) **"
+                          % (100.0 * (abs(ae[common[-1]]) / abs(ie[common[-1]])
+                                      if abs(ie[common[-1]]) > 0 else 0.0),
+                             100.0 * rmax, tmaxr))
     if not found_any:
         print("!!! 전체모델 에너지 이력이 ODB 에 없습니다.")
         print("    -> HF 스텝에 에너지 출력이 요청되지 않았습니다. patcher 의 스텝 블록에")
