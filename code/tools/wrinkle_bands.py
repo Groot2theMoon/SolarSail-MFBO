@@ -58,6 +58,8 @@ BANDS = [
     ('B4', 0.5, 1.0),
 ]
 B5 = ('B5', 0.2, 0.5)
+B5A = ('B5a', 0.3, 0.5)
+B5B = ('B5b', 0.2, 0.3)
 
 
 def triangle_mask():
@@ -112,6 +114,9 @@ def decompose(u3, width):
     sel5 = (lam > B5[1]) & (lam <= B5[2])
     out['unresolved_b5'] = K_SLOPE * float(np.sum(power[sel5])) * scale
     covered |= sel5
+    for _nm, _lo, _hi in (B5A, B5B):
+        _sel = (lam > _lo) & (lam <= _hi)
+        out[_nm] = K_SLOPE * float(np.sum(power[_sel])) * scale
     out['residual'] = K_SLOPE * float(np.sum(power[(K > 0) & ~covered])) * scale
     return out, ut
 
@@ -308,6 +313,9 @@ def decompose_slopes(SX, SY, AA, width):
     sel5 = (lam > B5[1]) & (lam <= B5[2])
     out['unresolved_b5'] = K_SLOPE * float(np.sum(power[sel5])) * scale
     covered |= sel5
+    for _nm, _lo, _hi in (B5A, B5B):
+        _sel = (lam > _lo) & (lam <= _hi)
+        out[_nm] = K_SLOPE * float(np.sum(power[_sel])) * scale
     out['residual'] = K_SLOPE * float(np.sum(power[(K > 0) & ~covered])) * scale
     #   taper 없는 참조값(면적가중 mean |s|²) — G2b 비교용
     wsum = float(np.sum(AA[valid]))
@@ -326,6 +334,7 @@ def run_odb_slope(path, tag, width, hf_odb):
            'hf_ref': d['hf_ref'], 'hf_odb_reported': hf_odb,
            'g2b_ratio': (d['hf_taper'] / hf_odb) if hf_odb else None,
            'bands': d['bands'], 'b5_unresolved': d['unresolved_b5'],
+           'b5a': d.get('B5a'), 'b5b': d.get('B5b'),
            'residual': d['residual'], 'sum_bands': total,
            'fractions': dict((k, (v / total if total else 0.0)) for k, v in d['bands'].items()),
            'fraction_b5_unresolved': (d['unresolved_b5'] / total if total else 0.0)}
@@ -364,6 +373,7 @@ def run_odb(path, tag, width, hf_odb):
            'hf_odb_reported': hf_odb,
            'g2b_ratio': (d['hf_taper'] / hf_odb) if hf_odb else None,
            'bands': d['bands'], 'b5_unresolved': d['unresolved_b5'],
+           'b5a': d.get('B5a'), 'b5b': d.get('B5b'),
            'residual': d['residual'], 'sum_bands': total,
            'fractions': dict((k, (v / total if total else 0.0))
                              for k, v in d['bands'].items()),
@@ -379,6 +389,8 @@ def main(argv=None):
                     help='taper 폭 [m]. 0 = 마스크만(권장: G2b=1.0). >0 은 경계 기울기를 지운다.')
     ap.add_argument('--taper-study', default='0.5,1.0,1.5,2.0')
     ap.add_argument('--odb')
+    ap.add_argument('--cell', type=float, default=0.1,
+                    help='slope-grid cell size [m] (default 0.1; use 0.05 for 2nd-order closure)')
     ap.add_argument('--mode', choices=('element_slope', 'u3'), default='element_slope')
     ap.add_argument('--tag', default='?')
     ap.add_argument('--hf-odb', type=float, default=0.0,
@@ -386,6 +398,14 @@ def main(argv=None):
     ap.add_argument('--all', action='store_true', help='results/odb 의 HF_*.odb 전부')
     ap.add_argument('--out')
     a = ap.parse_args(argv)
+
+    global H, NX, NY
+    if a.cell <= 0.0:
+        raise SystemExit('--cell must be > 0')
+    H = float(a.cell)
+    NX = int(round(BASE / H)) + 1
+    NY = int(round(HEIGHT / H)) + 1
+    print('[bands] cell=%.3g m -> %d x %d samples' % (H, NX, NY))
 
     if a.synthetic:
         widths = [float(x) for x in a.taper_study.split(',') if x.strip()]
