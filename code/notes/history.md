@@ -5885,3 +5885,15 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   cp: corner 8.416 um -> mid-side 8.448 um; cp_x -3.85e-6 -> -0.61e-6, cp_y -7.49e-6 -> -8.43e-6.
 - 즉 2차의 촘촘한 주름을 코너-only가 과소평가했다. 2차 hf는 더 커졌고, B5 의존은 유지.
 - 0.05 m 1차/2차 수렴 비교가 다음 단계. 25/UQ는 아직.
+
+### 19.151 0.05 m 1차 HF - hf=1.2075e-6 (2026-11-06)
+
+- 0.1 m 4모드 seed를 0.05 m 1차 격자(40,401 노드)로 선형 보간:
+  `tools/interp_fine_mode.py`, mode table `seeds/uq_s2/modes_xc0p2_fine400.txt`.
+- `SEED_DIV=400`, MESH_ORDER=1, x0.2/dc0.0001, 4모드 composite:
+  - wall 311 s, hf=**1.207524e-6**.
+- 0.1 m 1차 8.6875e-7 -> 0.05 m 1차 1.2075e-6 (+39%).
+  0.1 m 2차 mid-side 2.229e-6 (0.05 m 1차의 1.85x).
+- 즉 0.05 m 1차는 0.1 m 1차보다 손실이 크지만, 0.1 m 2차에는 아직 못 미친다.
+  B5가 0.05 m에서 어디까지 유지되는지 bands 재계산이 필요하다.
+- 25점 ODB/CSV 복원 완료. 결과 `results/variants/uq_s2_pilot/fine005_o1_*`.

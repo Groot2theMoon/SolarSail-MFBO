@@ -1,0 +1,5 @@
+{
+  "_comment": "0.05 m first-order grid for B5 convergence check; mode table is interpolated from 0.1 m modes.",
+  "SEED_DIV": 400.0,
+  "MESH_ORDER": 1
+}
