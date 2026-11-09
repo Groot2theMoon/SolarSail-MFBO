@@ -85,20 +85,16 @@ def main():
         ch, _ = read_table(a.header_table)
 
     # common corner field (modes 1,2), signed and normalized to max|u3|=1
-    corner = {}
-    for lab, v in sm[1].items():
-        corner[lab] = w1 * v
-    for lab, v in sm[2].items():
-        corner[lab] = corner.get(lab, 0.0) + w2 * v
-    mx = max(abs(v) for v in corner.values()) or 1.0
-    corner = {k: v / mx for k, v in corner.items()}
-
-    modes = {m: {lab: 0.0 for lab in corner} for m in (1, 2, 3, 4)}
-    modes[1] = dict(corner)
+    labels = set(sm[1]) | set(sm[2])
+    modes = {m: {lab: 0.0 for lab in labels} for m in (1, 2, 3, 4)}
+    # Keep the two corner modes independent (the original composite uses seed 1,2 +
+    # clamp 1,2 = four modes). Do not merge them into one mode.
+    modes[1] = {lab: w1 * v for lab, v in sm[1].items()}
+    modes[2] = {lab: w2 * v for lab, v in sm[2].items()}
     if a.clamp_table:
-        modes[2] = dict(cm[1])
-        modes[3] = dict(cm[2])
-    # mode 4 stays zero; run_abaqus loads four modes uniformly.
+        modes[3] = dict(cm[1])
+        modes[4] = dict(cm[2])
+    # mode 3/4 are zero for a corner-only baseline; run_abaqus loads four modes uniformly.
     if a.normalize_total:
         total = {}
         for m in modes:
@@ -109,7 +105,7 @@ def main():
             modes[m] = {lab: v / mx for lab, v in modes[m].items()}
         norm_note = 'combined max|u3|=1 (scale=1/%.6g)' % mx
     else:
-        norm_note = 'corner-only max|u3|=1 (clamp added unnormalized)'
+        norm_note = 'seed modes 1,2 weighted; clamp modes 3,4 added unnormalized'
 
     # header from clamp table (has x_c/fingerprint); update SEED line
     header = list(ch)
