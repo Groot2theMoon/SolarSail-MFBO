@@ -5824,3 +5824,33 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - corner modes 1,2만으로는 부족. 모드 3,4 또는 random field를 포함해야 한다.
   - 또는 amplitude를 키우되, 먼저 **모드별 cp 기여**를 측정해 실제 민감도를 확인.
   - 이 문제를 고치기 전 80런 금지.
+
+### 19.148 seed table vs cp - 표는 다른데 cp는 불변 (2026-11-06)
+
+[seed code]
+  - `tools/make_uq_seed.py`: modes_seed의 **mode 1,2만** 사용.
+    corner = w1*phi1 + w2*phi2 -> max|u3|=1 정규화.
+    clamp table의 mode 1,2를 mode 2,3으로 붙임; mode 4=0.
+  - `run_abaqus.py` -> `aba_imperfection.build_perturbation`:
+    dz = amplitude * Σ_{m=1..4} phi_m, amplitude=0.10*t=5e-7 m.
+  - DRAWS 고정(signed w). d0=(1,0.7), d1=(-1,0.8).
+
+[실측 - d0 vs d1]
+  - base/clamp seed table mode1: **max diff 1.6416, RMS 0.2203**. 표는 실제로 다르다.
+  - 그런데 ODB cp_x/cp_y 차이는 1e-9 수준:
+    base cp_x -3.731200e-6 vs -3.731193e-6; clamp -3.845796e-6 vs -3.845736e-6.
+  - hf만 0.01-1% 변한다.
+
+[cp code]
+  - `eval_abaqus.calc_thrust_loss`:
+      F = Σ(A0 cosθ + 2R0 cos²θ) ; M = Σ (r-r0)×f
+      cp = (F×M)/|F|² ; cp_x/cp_y, torque=|M|
+  - 벡터 공식은 맞다. S4 코너/변형좌표/n_z>0 flip 사용; 현재 1차 요소.
+  - 버그로 보이지 않는다. **mode1/2의 토크 범함수가 거의 0**(대칭 모드)이거나
+    cp가 clamp/geometry 고정 성분에 지배되는 것으로 보인다.
+  - 단정 금지: mode별 cp 기여를 직접 측정해야 한다.
+
+[다음]
+  - mode 1/2/3/4 단독 런으로 cp 민감도 측정 (각 1런).
+  - 비대칭 모드/random field를 seed에 포함.
+  - cp 분산이 수치 바닥보다 커지기 전 80런 금지.
