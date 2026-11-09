@@ -5875,3 +5875,13 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [다음]
   - d_c=1.0을 후보 설계공간에 넣고 seed 10개로 sign/ICC.
   - 4-mode generator로 10 draw 재생성.
+
+### 19.150 2차 mid-side 적분 - hf 1.707e-6 -> 2.229e-6 (2026-11-06)
+
+- `eval_abaqus.calc_thrust_loss`에 S8R5(4 sub-quad) / STRI65(4 sub-tri) mid-side 적분 추가.
+  기존 코너-only 경로는 2차 곡률을 무시했다.
+- 1차 clamp hf는 **8.687545e-7 불변**.
+- 2차 clamp (o1 보간 모드): corner-only 1.707e-6 -> **2.229391e-6**.
+  cp: corner 8.416 um -> mid-side 8.448 um; cp_x -3.85e-6 -> -0.61e-6, cp_y -7.49e-6 -> -8.43e-6.
+- 즉 2차의 촘촘한 주름을 코너-only가 과소평가했다. 2차 hf는 더 커졌고, B5 의존은 유지.
+- 0.05 m 1차/2차 수렴 비교가 다음 단계. 25/UQ는 아직.

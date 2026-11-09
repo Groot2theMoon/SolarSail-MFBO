@@ -917,6 +917,93 @@ def write_zk_metrics(zk, odb_path):
 _TORQUE_CENTRE = np.array([10.0, 10.0 / 3.0, 0.0])
 
 
+def _calc_thrust_loss_second_order(frame, instance, connectivity, max_node_label,
+                                   area_ref=None, flip_normals=True,
+                                   extra_out=None, diag=None):
+    """S8R5/STRI65: integrate the quadratic element as corner/mid-side facets.
+
+    The old corner-only path ignored mid-side curvature.  Here each S8R5 is split
+    into four sub-quads and each STRI65 into four sub-triangles (corner+mid-side
+    center).  First-order elements are handled as one facet per element.
+    """
+    coord_field = frame.fieldOutputs['COORD']
+    node_coords = np.zeros((max_node_label + 1, 3), dtype=np.float64)
+    for block in coord_field.bulkDataBlocks:
+        if block.nodeLabels is not None:
+            node_coords[block.nodeLabels] = block.data
+
+    loss_sum = 0.0
+    ideal_area_sum = 0.0
+    torque_vec = np.zeros(3, dtype=np.float64)
+    force_tot = np.zeros(3, dtype=np.float64)
+
+    def add_facet(verts):
+        nonlocal loss_sum, ideal_area_sum
+        p = np.asarray(verts, dtype=np.float64)
+        if len(p) == 4:
+            cr = np.cross(p[2] - p[0], p[3] - p[1])
+        else:
+            cr = np.cross(p[1] - p[0], p[2] - p[0])
+        nrm = float(np.linalg.norm(cr))
+        if nrm <= 1e-14:
+            return
+        area = 0.5 * nrm
+        n = cr / nrm
+        if extra_out is not None:
+            extra_out['n_total'] += 1
+            extra_out['area_total'] += area
+            if n[2] < 0.0:
+                extra_out['n_backward'] += 1
+                extra_out['area_backward'] += area
+        if flip_normals and n[2] < 0.0:
+            n = -n
+        cos_t = float(np.clip(np.dot(n, -U_SUN), 0.0, 1.0))
+        f_abs = A0 * cos_t * area * U_SUN
+        f_refl = 2.0 * R0 * (cos_t ** 2) * area * (-n)
+        f = f_abs + f_refl
+        actual = float(np.dot(f, U_SUN))
+        loss_sum += area * IDEAL_THRUST_COEFF - actual
+        ideal_area_sum += area
+        c = p.mean(axis=0) - _TORQUE_CENTRE
+        torque_vec[:] += np.cross(c, f)
+        force_tot[:] += f
+
+    for conn in connectivity:
+        c = [int(x) for x in conn]
+        p = node_coords[c]
+        if len(c) == 8:
+            ctr = p[:4].mean(axis=0)
+            add_facet([p[0], p[4], ctr, p[7]])
+            add_facet([p[4], p[1], p[5], ctr])
+            add_facet([ctr, p[5], p[2], p[6]])
+            add_facet([p[7], ctr, p[6], p[3]])
+        elif len(c) == 6:
+            ctr = p[:3].mean(axis=0)
+            add_facet([p[0], p[3], p[5]])
+            add_facet([p[3], p[1], p[4]])
+            add_facet([p[5], p[4], p[2]])
+            add_facet([p[3], p[4], p[5]])
+        elif len(c) == 4:
+            add_facet([p[0], p[1], p[2], p[3]])
+        elif len(c) == 3:
+            add_facet([p[0], p[1], p[2]])
+
+    den = area_ref if (area_ref and area_ref > 0.0) else ideal_area_sum
+    if den > 0.0 and IDEAL_THRUST_COEFF > 0.0:
+        signed = loss_sum / (den * IDEAL_THRUST_COEFF)
+        if diag is not None:
+            fm2 = float(np.dot(force_tot, force_tot))
+            cp = (np.cross(force_tot, torque_vec) / fm2) if fm2 > 0.0 else np.zeros(3)
+            diag['hf_signed'] = signed
+            diag['force_magnitude_n'] = float(np.linalg.norm(force_tot))
+            diag['torque_nm'] = float(np.linalg.norm(torque_vec))
+            diag['cp_offset_m'] = float(np.linalg.norm(cp))
+            diag['cp_x_m'] = float(cp[0])
+            diag['cp_y_m'] = float(cp[1])
+        return float(max(signed, 0.0))
+    return float(max(loss_sum, 1e-12))
+
+
 def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=None,
                      flip_normals=True, extra_out=None, diag=None):
     """
@@ -937,7 +1024,12 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
     for block in coord_field.bulkDataBlocks:
         if block.nodeLabels is not None:
             node_coords[block.nodeLabels] = block.data
-    
+
+    if any(len(c) in (6, 8) for c in connectivity):
+        return _calc_thrust_loss_second_order(
+            frame, instance, connectivity, max_node_label, area_ref=area_ref,
+            flip_normals=flip_normals, extra_out=extra_out, diag=diag)
+
     loss_sum = 0.0
     ideal_area_sum = 0.0
     torque_vec = np.zeros(3, dtype=np.float64)
