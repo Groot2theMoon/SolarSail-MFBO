@@ -5982,3 +5982,31 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [다음]
   - B1(node tie)는 1차 buckle에서 먼저 검증 - 2차와 분리.
   - 2차 모드는 `*BUCKLE` 대신 이미 성공한 1차 모드 보간/HF prescribed imperfection 경로를 유지.
+
+### 19.157 T-a - 50 µm 2차 buckle 10모드, 그러나 5 µm 모드와 MAC 0.002 (2026-11-09)
+
+[조건수 스케일]
+  - D = E t^3/(12(1-ν²)) = 2.95e-8 N·m (t=5 µm), K = E t = 1.25e4 N/m.
+  - D/(K L²) = 5.9e-15 (L=20 m). t=50 µm 면 5.9e-13 (100배).
+  - **조건수 자체가 아니라 굽힘/막 강성비 대리지표**다.
+
+[T-a - 2차 clamp, t=50 µm, DISP=1e-4]
+  - 298 s 완주. **10모드** (t=5 µm 에서는 0모드).
+  - λ: 9.03570e-5 (1,2), 9.03764e-5 (3), 9.03765e-5 (4),
+       5.98258e-4 (5,6), 5.98368e-4 (7,8), 1.13367e-3 (9,10).
+  - λ1-4 축퇴 = 0.022%. 50 µm에서는 축퇴 모드가 실제로 나온다.
+  - job: Buckle_xc0p2_d100um_dc0p0556_f100_s8r5_grid2_clamp_only_normal_ex210_plv01000_t5.
+
+[MAC - 50 µm 2차 모드 vs 5 µm 1차 모드]
+  - 1차 clamp 4모드를 2차 격자로 보간 후 u3 MAC.
+  - max MAC = **0.0019** (A2,B1). 임계 0.9 대비 사실상 직교.
+  - 50 µm 모드는 형상 기저로 **사용할 수 없다**. 두께가 모드 자체를 바꾼다.
+
+[T-b - hourglass]
+  - `*SECTION CONTROLS`를 CAE API(`SectionControls`)로 넣으려 했으나 Model 에 메서드가 없다.
+  - part 의 `*Shell Section`은 model keywordBlock 에 없어 replace 도 불가.
+  - 따라서 T-b 는 **미실행**. .inp 후처리로만 가능.
+
+[다음]
+  - 2차 native 모드는 50 µm 전이가 아니라 5 µm에서 hourglass/완전적분(S8) 경로로 직접 시도.
+  - B1(1차 node tie)는 기저 정당화용으로만. MAC ≥0.9 게이트 유지.

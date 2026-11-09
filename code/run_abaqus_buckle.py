@@ -83,6 +83,7 @@ _CFG_HASH = _AC.config_hash(_CFG)
 #   !! 값을 바꾸면 시드표(modes_*.txt)를 재생성해야 한다 - make_seed.py 를 먼저 실행.
 #   PAPER_MATCH / PAPER_MESH_ORDER 는 core/constants.py 소관이다(§19.119).
 MESH_ORDER = 1                # 1차 S4/S3. 2차는 T0에서 0모드(§19.125) - 재시도 전 근거 필요.
+HOURGLASS_CONTROL = ''        # ''=기본, 'enhanced'=*SECTION CONTROLS hourglass=ENHANCED
 #   [2026-10-20 실측] 논문 정적 스텝의 코너 0.0005 m 는 이 모델에서 **base state 가 불안정**하다:
 #     SYSTEM MATRIX 592 negative eigenvalues / DIFFERENTIAL MATRIX 166,009 negative diagonals
 #     -> subspace "THE EIGENVALUES CANNOT BE FOUND" (0 modes). 1e-3 m 에서도 0개였던 §8 실측과 같은 영역.
@@ -208,6 +209,7 @@ EDGE_SPRING_K = EDGE_SPRING_ALPHA * EDGE_SPRING_SIGMA_T_REF
 # ---- misc (어느 그룹에도 안 들어가는 이름/경로/병렬 설정) ----
 TAG = '[run_abaqus_buckle]'
 RUN_DIR_NAME = "buckle"
+JOB_SUFFIX = ''          # config 전용 - 두께/hourglass 변형이 기존 산출물을 덮지 않게 한다.
 #   NUMCPUS / INSTANCE_NAME 은 core/constants.py 소관이다(§19.119).
 
 MODEL_PREFIX = 'SailModel_Buckle'
@@ -703,7 +705,26 @@ def build_model(disp):
     mat = my_model.Material(name='Kapton')
     mat.Density(table=((1420.0, ),))
     mat.Elastic(table=((2.5e9, 0.34),))
-    my_model.HomogeneousShellSection(name='Section-Membrane', material='Kapton', thickness=THICKNESS)   # 1차 셸 섹션(막 계열 기각)
+    my_model.HomogeneousShellSection(name='Section-Membrane', material='Kapton',
+                                     thickness=THICKNESS)
+    if HOURGLASS_CONTROL:
+        #   CAE API 에 SectionControls/controls 가 없다. keyword block 에서 직접 넣는다.
+        my_model.keywordBlock.synchVersions(storeNodesAndElements=False)
+        for _bi, _blk in enumerate(my_model.keywordBlock.sieBlocks):
+            if _blk.strip().lower().startswith('*shell section'):
+                _lines = _blk.splitlines()
+                _head = _lines[0]
+                if 'controls=' not in _head.lower():
+                    _head += ', controls=ShellHourglass'
+                _new = ('*Section Controls, name=ShellHourglass, hourglass=ENHANCED\n'
+                        + _head + '\n' + '\n'.join(_lines[1:]))
+                my_model.keywordBlock.replace(_bi, _new)
+                print("%s [SECTION] *Section Controls HOURGLASS=ENHANCED" % TAG)
+                break
+        else:
+            _heads = [_b.splitlines()[0][:90] for _b in my_model.keywordBlock.sieBlocks]
+            raise RuntimeError('hourglass: *Shell Section keyword block not found; blocks=%r'
+                               % (_heads[:30],))
 
     mat_cable = my_model.Material(name='Kevlar')
     mat_cable.Elastic(table=((62.0e9, 0.36),))
@@ -1086,6 +1107,8 @@ JOB_NAME = 'Buckle_xc%s_d%03dum_dc%s_f%03d_%s_%s_%s_normal%s%s' % (_value_tag(x_
                                                        _excl_tag, _live_tag)
 if CLAMP_ATTACH == 'node':
     JOB_NAME += '_node'
+if JOB_SUFFIX:
+    JOB_NAME += JOB_SUFFIX
 if len(JOB_NAME) > 80:
     raise RuntimeError("[잡이름] %d자 > 80자 한계: %s\n   -> 케이스/태그 이름을 줄이세요."
                        % (len(JOB_NAME), JOB_NAME))
