@@ -6010,3 +6010,29 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 [다음]
   - 2차 native 모드는 50 µm 전이가 아니라 5 µm에서 hourglass/완전적분(S8) 경로로 직접 시도.
   - B1(1차 node tie)는 기저 정당화용으로만. MAC ≥0.9 게이트 유지.
+
+### 19.158 C1 대조 - 씨앗의 C0 킹크는 B5를 바꾸지 않는다 (2026-11-09)
+
+[설계]
+  - 같은 2차 HF 모델(x0.2/dc0.0001, S8R5/STRI65, 30501 노드), 같은 4모드, 같은 진폭.
+  - A: 기존 bilinear C0 씨앗 (corner 복사 + mid-side 평균).
+  - B: 같은 corner 값을 지나는 Clough-Tocher C1 보간 (`tools/interp_mode_table_c1.py`).
+  - B는 `SOLARSAIL_SKIP_SEED_GATE=1`로 실행했다: 기존 1차 표의 source fingerprint가
+    현재 코드와 달라 gate가 막았고, 모드 자체는 같은 1차 ODB에서 나온 것이다.
+
+[결과 - `wrinkle_bands.py`, element_slope]
+  | | bilinear C0 | Clough-Tocher C1 |
+  |---|---:|---:|
+  | hf (mid-side eval) | 2.229391e-6 | **2.225935e-6** |
+  | B5 unresolved frac | 0.731121 | **0.731609** |
+  | B4 frac | 0.223022 | 0.222508 |
+  | B1-B4 | 1.70717e-6 합 | 1.70370e-6 합 |
+  - B5 차이 = **+0.00049 (절대 frac)**, 약 0.07% 상대. 유의하지 않다.
+  - 총 hf 차이 = -0.15%; cp 8.448 -> 8.456 um.
+
+[판정]
+  - **C0 킹크가 B5를 지배한다는 가설은 반증됐다.**
+  - B5는 씨앗의 매끄러움 문제가 아니라 **요소 자체(S8R5/STRI65 감차분/hourglass)의
+    고주파 응답**이다. 2차 HF의 B5 73%는 모델/요소에서 나온다.
+  - "C1 씨앗이 필요하다"는 주장은 이제 정확성(수학)에는 맞지만, B5 원인/충분성과는 무관하다.
+  - 다음은 T-b(hourglass 제어) 또는 완전적분 S8. 씨앗 교체로 B5를 줄이는 경로는 닫는다.

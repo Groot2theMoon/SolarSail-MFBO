@@ -1,0 +1,5 @@
+{
+  "_comment": "0.1 m second-order HF, same model as o2_clamp; only the seed table differs (C1 vs bilinear).",
+  "SEED_DIV": 200.0,
+  "MESH_ORDER": 2
+}
