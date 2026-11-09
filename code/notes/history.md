@@ -5793,3 +5793,13 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 - single-CPU 70 clamp는 비현실적(약 34 h). 4-CPU/라이선스가 빌 때 실행해야 한다.
 - 25점 ODB/CSV 복원 완료. 결과는
   `results/variants/uq_s2_pilot/clamp_d0_norm_*`.
+
+### 19.146 CPU4 normalized draw0 - 253 s, hf 동일 (2026-11-06)
+
+- 동일한 normalized draw0 clamp를 **NUMCPUS=4**(default)로 재실행:
+  - wall **253 s**, hf=**8.6796698e-7** (CPU1 1741 s와 동일).
+  - CPU1 대비 **6.9x** 빠름. 라이선스 큐가 없을 때 4 CPU가 정답.
+- 25점 ODB/CSV 복원. 결과:
+  `results/variants/uq_s2_pilot/clamp_d0_norm_cpu4_*`.
+- 80런 비용(큐 제외): clamp 70 x 253 s = 4.9 h + baseline 10 x 258 s = 0.7 h
+  ≈ **5.6 h**. 라이선스 큐는 별도.
