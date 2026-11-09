@@ -5897,3 +5897,12 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
 - 즉 0.05 m 1차는 0.1 m 1차보다 손실이 크지만, 0.1 m 2차에는 아직 못 미친다.
   B5가 0.05 m에서 어디까지 유지되는지 bands 재계산이 필요하다.
 - 25점 ODB/CSV 복원 완료. 결과 `results/variants/uq_s2_pilot/fine005_o1_*`.
+
+### 19.152 T1 - 압축 무게중심 재측정 (2026-11-09)
+
+- base_d0 (clamp-free, u3=0): minP<0 3.76%, centroid **(10.00, 0.32)**, max|u3| 0.2647 mm.
+- clamp_d0 (u3=0): minP<0 3.61%, centroid **(10.00, 0.33)**, max|u3| 1.329 mm.
+- §19.111의 "압축이 base 중앙(10,0)에 몰린다"가 현재도 재현된다. clamp 유무와 무관하게
+  centroid가 base 근처다.
+- 단, centroid만으로 BC 아티팩트를 확정할 수 없다. T2(base만 spring)와 T3(paired Δhf)가 필요.
+- T2 전제: 현재 `All_Edges_NoClamp`가 세 변 전체라 BASE/DIAG set 분리가 아직 없다.
