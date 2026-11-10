@@ -6407,3 +6407,57 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - 프록시 실패와 목적함수 타당성은 별개라는 지적은 맞다.
   - τ_y 게이트는 |τ| 기준으로 재설계해야 한다.
   - 그러나 V4(요소 차수)가 미완료이므로 τ를 최종 목적함수로 확정하지 않는다.
+
+### 19.171 V4 τ 요소차수 검증 + V5 (2026-11-10)
+
+[V4 - 동일 seed, x0.2/x0.8, d_c=0.0001]
+  | 점 | τ_1st | τ_2nd | 비 | cp 비 | hf 비 |
+  |---|---:|---:|---:|---:|---:|
+  | x0.2 | 1.621221e-3 | 1.627340e-3 | **1.0038** | 1.0038 | 2.566 |
+  | x0.8 | 6.754641e-4 | 6.725902e-4 | **0.9957** | 0.9957 | 2.063 |
+  - 두 점 모두 0.8-1.25, **순위 보존**.
+  - τ는 요소 차수에 거의 불변; hf는 2배 이상 변한다.
+  - 단 2점만 검증. 25점 전체 V4는 아직 아님.
+
+[V5 - 25점]
+  - τ vs hf: Pearson **0.813**, Spearman **0.889**.
+  - 같은 정보는 아니지만 강하게 연관. hf 대체는 아님.
+
+[τ_y]
+  - 0→10° 부호는 1.00; Spearman 0.142는 τ_y가 τ_x의 ~19%인 작은 성분이라
+    순위 잡음. |τ| 기준 게이트가 적절.
+  - LF scalar moment는 vector cosine 0.983이나 y Spearman 0.142로 BO 부적합.
+
+[운영]
+  - V4 초기 4런은 Abaqus Viewer가 ODB를 잠그고 있어 즉시 종료됨.
+    Viewer 종료 후 정상 완료(577 s).
+  - labpc git push: HTTPS credential store를 설정하고, non-fast-forward를
+    `git pull --ff-only`로 해소. `test_V4_runner` push 성공(2fd1b9c).
+
+### 19.172 강클램프 V4 + 런타임 (2026-11-10)
+
+[강클램프 V4 - d_c=0.5, same seed]
+  | 점 | τ_1st | τ_2nd | τ₂/τ₁ | hf₂/hf₁ | wall 1st/2nd |
+  |---|---:|---:|---:|---:|---:|
+  | x0.2 | 8.489200e-3 | 8.785850e-3 | **1.0349** | 3.259 | 66 / 161 s |
+  | x0.8 | 1.166791e-2 | 1.247441e-2 | **1.0691** | 1.073 | 67 / 281 s |
+
+  - 둘 다 0.8–1.25, 순위 보존.
+  - 1차 V4(2점)와 합쳐 **4점 모두 통과**. 25점 전체는 아직.
+  - τ₂/τ₁가 1.04–1.07로 1차/2차 차이가 작다. hf는 1.07–3.26배.
+  - x0.8 2차가 281 s로 가장 느림.
+
+[런타임]
+  - `tools/run_v4.py`, `run_v4_strong.py`에 `wall_s` 기록.
+  - 1차 66–67 s; 2차 161–281 s.
+
+[현재 포스트버클링 BC - 요약]
+  - `PAPER_MATCH=True` 기본: `Step-GlobalTension`이 최종 스텝이며 `Step-Postbuckle`은
+    모델에서 삭제된다(HF는 GlobalTension 마지막 프레임에서 hf/DN).
+  - Initial부터 세 자유변 `All_Edges_NoClamp`에 `BC_Edges_Only_Z`(u3=0). 현재
+    `CLAMP_EXCL_R=0.0`이라 제외 노드는 없다.
+  - Top 케이블 바깥 끝 `BC_Anchor` 완전 고정; Right/Left 케이블 끝은 u3+회전 고정,
+    in-plane `Disp_Control_*` 고정(paper cable_stress는 변위 0).
+  - 클램프: 패치 RP-Coupling, 케이블 Tie, 케이블 initial stress
+    `CLAMP_PRESTRESS=d_c*CABLE_PRESTRESS`; 바깥 끝 u3=0, in-plane 고정.
+  - 내부 막은 u3 자유(주름 발생); 외부 SRP 압력은 solve에 없고 후처리에서만 작용.
