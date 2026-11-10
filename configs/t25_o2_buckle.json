@@ -1,0 +1,7 @@
+{
+  "CASE": "paper",
+  "PAPER_MATCH": true,
+  "MESH_ORDER": 2,
+  "THICKNESS": 2.5e-06,
+  "N_EIG_BUCKLE": 5
+}

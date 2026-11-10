@@ -1,0 +1,7 @@
+{
+  "_comment": "2.5 um, second-order HF postbuckling; 2 points",
+  "PAPER_MATCH": true,
+  "MESH_ORDER": 2,
+  "THICKNESS": 2.5e-06,
+  "SEED_DIV": 200.0
+}
