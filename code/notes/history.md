@@ -6126,3 +6126,41 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - C1은 1차 모드의 C1 보간이지 **2차 native 고유모드가 아니다**.
   - 50 µm 2차 모드와 1차 모드 MAC은 0.002 (§19.157). 따라서 "2차 native"라고 부를 수 없다.
   - C1 HF 1점만 실행. 25점 확장/재현은 아직.
+
+### 19.162 α/clock 0-solve 스윕 - α=0 유지, φ 무시 가능 (2026-11-10)
+
+[구현]
+  - `eval_abaqus.calc_thrust_loss(..., u_sun=None, ideal_coeff=None)`.
+    기본값은 기존 U_SUN=(0,0,-1), ideal=2R0+A0 이므로 기존 호출 결과 불변.
+    회귀 확인: x0.8/dc0.0001 hf=1.070232e-7 (기존과 동일).
+  - `sun_vector(α,φ) = (-sinα cosφ, -sinα sinφ, -cosα)`.
+  - `ideal_thrust_coeff(α) = A0 cosα + 2R0 cos²α`.
+  - `tools/alpha_sweep.py`: 26 ODB × 5α × 2φ = 260행, **44초**, 솔브 0.
+  - `tools/alpha_analyze.py`: spread, Spearman, clock, monotonic, SVG 4개.
+
+[결과 - |τ|]
+  | φ | α=0 P90/P50 | α=10 P90/P50 | α=0 IQR/median | α=10 IQR/median | Spearman vs 0 |
+  |---:|---:|---:|---:|---:|---:|
+  | 0 | 7.702 | 7.699 | 1.276 | 2.709 | 1.000 |
+  | 90 | 7.702 | 7.991 | 1.276 | 3.872 | 0.968 |
+
+  - **G-A**: spread(10)/spread(0) = 0.9996 (φ0) / 1.037 (φ90). **<1.5 → 미통과**.
+  - **G-B**: Spearman(α0,α10)=1.000 (φ0) / 0.968 (φ90). **>0.7 → 미통과**.
+  - clock: Spearman(φ0,φ90)=0.968 (α10), median τ ratio=0.9976.
+  - **G-C**: monotonic 20/26 decreasing, 3/26 increasing, 3/26 non (φ0);
+    φ90 20/26 decreasing, 2/26 increasing, 4/26 non. **위반**.
+  - IQR/median은 커진다(α가 중간 50%의 상대 폭을 키운다). P90/P50은 그대로다.
+  - **hf 설계 대비는 α=10에서 붕괴**:
+    hf median/P90 = 3.36e-7 / 3.96e-6 (α0), 0.014602 / 0.014606 (α10).
+    즉 α10 hf는 거의 모두 입사각 공통손실이고 설계 차이는 1.0002배 수준.
+
+[결정]
+  - **S2는 α=0, φ=0 단일점 유지** (G-A/G-B 미통과, hf 대비 붕괴).
+  - φ는 등방에 가까워 3D 스윕 불필요. 필요하면 논문에 0/90 대조만 각주.
+  - G-C 비단조 3-4점은 저토크 설계의 부호/분해 문제 후보. 상위 순위는 안정하므로 S2를 막지 않음.
+  - α=10은 목적함수 축으로 채택하지 않음. off-nominal 평균/최악은 후속 민감도로만.
+
+[산출물]
+  - `results/alpha_sweep/alpha_sweep.csv` (260행)
+  - `results/alpha_sweep/alpha_summary.json`
+  - `results/alpha_sweep/alpha_spread.svg`, `alpha_rank.svg`, `alpha_clock.svg`, `alpha_tau.svg`

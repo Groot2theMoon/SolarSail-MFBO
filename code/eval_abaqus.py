@@ -54,7 +54,24 @@ R0 = 0.926256
 A0 = 0.073744
 U_SUN = np.array([0.0, 0.0, -1.0])  # 태양광 입사 방향
 # 이상적인 평판의 추력 계수 (2*R0 + A0)
-IDEAL_THRUST_COEFF = 2.0 * R0 + A0 
+IDEAL_THRUST_COEFF = 2.0 * R0 + A0
+
+
+def sun_vector(alpha_deg, clock_deg=0.0):
+    """Unit sun vector for incidence alpha and in-plane clock phi (degrees).
+
+    alpha=0, phi=0 -> (0, 0, -1), which is the legacy default.
+    """
+    a = np.deg2rad(float(alpha_deg))
+    p = np.deg2rad(float(clock_deg))
+    return np.array([-np.sin(a) * np.cos(p), -np.sin(a) * np.sin(p), -np.cos(a)],
+                    dtype=np.float64)
+
+
+def ideal_thrust_coeff(alpha_deg):
+    """Flat-plate ideal thrust coefficient at incidence alpha: A0 cos + 2R0 cos^2."""
+    c = float(np.cos(np.deg2rad(float(alpha_deg))))
+    return A0 * c + 2.0 * R0 * c * c
 
 # ---------------------------------------------------------------------------
 # LF 상태 스텝 선택 (2026-10-21)
@@ -919,13 +936,17 @@ _TORQUE_CENTRE = np.array([10.0, 10.0 / 3.0, 0.0])
 
 def _calc_thrust_loss_second_order(frame, instance, connectivity, max_node_label,
                                    area_ref=None, flip_normals=True,
-                                   extra_out=None, diag=None):
+                                   extra_out=None, diag=None,
+                                   u_sun=None, ideal_coeff=None):
     """S8R5/STRI65: integrate the quadratic element as corner/mid-side facets.
 
     The old corner-only path ignored mid-side curvature.  Here each S8R5 is split
     into four sub-quads and each STRI65 into four sub-triangles (corner+mid-side
     center).  First-order elements are handled as one facet per element.
     """
+    _u_sun = U_SUN if u_sun is None else np.asarray(u_sun, dtype=np.float64)
+    _ideal = (IDEAL_THRUST_COEFF if ideal_coeff is None
+              else float(ideal_coeff))
     coord_field = frame.fieldOutputs['COORD']
     node_coords = np.zeros((max_node_label + 1, 3), dtype=np.float64)
     for block in coord_field.bulkDataBlocks:
@@ -957,12 +978,12 @@ def _calc_thrust_loss_second_order(frame, instance, connectivity, max_node_label
                 extra_out['area_backward'] += area
         if flip_normals and n[2] < 0.0:
             n = -n
-        cos_t = float(np.clip(np.dot(n, -U_SUN), 0.0, 1.0))
-        f_abs = A0 * cos_t * area * U_SUN
+        cos_t = float(np.clip(np.dot(n, -_u_sun), 0.0, 1.0))
+        f_abs = A0 * cos_t * area * _u_sun
         f_refl = 2.0 * R0 * (cos_t ** 2) * area * (-n)
         f = f_abs + f_refl
-        actual = float(np.dot(f, U_SUN))
-        loss_sum += area * IDEAL_THRUST_COEFF - actual
+        actual = float(np.dot(f, _u_sun))
+        loss_sum += area * _ideal - actual
         ideal_area_sum += area
         c = p.mean(axis=0) - _TORQUE_CENTRE
         torque_vec[:] += np.cross(c, f)
@@ -989,14 +1010,20 @@ def _calc_thrust_loss_second_order(frame, instance, connectivity, max_node_label
             add_facet([p[0], p[1], p[2]])
 
     den = area_ref if (area_ref and area_ref > 0.0) else ideal_area_sum
-    if den > 0.0 and IDEAL_THRUST_COEFF > 0.0:
-        signed = loss_sum / (den * IDEAL_THRUST_COEFF)
+    if den > 0.0 and _ideal > 0.0:
+        signed = loss_sum / (den * _ideal)
         if diag is not None:
             fm2 = float(np.dot(force_tot, force_tot))
             cp = (np.cross(force_tot, torque_vec) / fm2) if fm2 > 0.0 else np.zeros(3)
             diag['hf_signed'] = signed
             diag['force_magnitude_n'] = float(np.linalg.norm(force_tot))
+            diag['force_x_n'] = float(force_tot[0])
+            diag['force_y_n'] = float(force_tot[1])
+            diag['force_z_n'] = float(force_tot[2])
             diag['torque_nm'] = float(np.linalg.norm(torque_vec))
+            diag['tau_x_nm'] = float(torque_vec[0])
+            diag['tau_y_nm'] = float(torque_vec[1])
+            diag['tau_z_nm'] = float(torque_vec[2])
             diag['cp_offset_m'] = float(np.linalg.norm(cp))
             diag['cp_x_m'] = float(cp[0])
             diag['cp_y_m'] = float(cp[1])
@@ -1005,16 +1032,22 @@ def _calc_thrust_loss_second_order(frame, instance, connectivity, max_node_label
 
 
 def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=None,
-                     flip_normals=True, extra_out=None, diag=None):
+                     flip_normals=True, extra_out=None, diag=None,
+                     u_sun=None, ideal_coeff=None):
     """
     메쉬의 각 요소 법선 벡터를 계산하고,
     SRP 모델을 적용하여 실제 추력 벡터를 적분, 이상적 추력과의 차이를 계산함.
     
     run_abaqus.py 에서 사각형+삼각형 메쉬의 조합으로 생성하기 때문에, 메쉬 형태에 따라 계산을 분기했음.
 
-    Abaqus python api에서 모든 메쉬 전체에 대해 루프를 돌리면 계산시간이 메쉬의 수에 따라 크게 영향받으므로
+    Abaqus python api에서 모든 메쉬 전체에 대해 루프를 돌리면 계산시간이 메쉬의 수에 크게 영향받으므로
     bulkDataBlocks를 통해 좌표 데이터를 통으로 가져온 뒤, Numpy 벡터연산으로 계산속도를 개선함
+
+    u_sun/ideal_coeff 를 생략하면 현행 α=0 기본값(U_SUN, 2R0+A0)이다.
     """
+    _u_sun = U_SUN if u_sun is None else np.asarray(u_sun, dtype=np.float64)
+    _ideal = (IDEAL_THRUST_COEFF if ideal_coeff is None
+              else float(ideal_coeff))
     # 절점 좌표 추출 (Vectorized)
     coord_field = frame.fieldOutputs['COORD']
 
@@ -1028,7 +1061,8 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
     if any(len(c) in (6, 8) for c in connectivity):
         return _calc_thrust_loss_second_order(
             frame, instance, connectivity, max_node_label, area_ref=area_ref,
-            flip_normals=flip_normals, extra_out=extra_out, diag=diag)
+            flip_normals=flip_normals, extra_out=extra_out, diag=diag,
+            u_sun=_u_sun, ideal_coeff=_ideal)
 
     loss_sum = 0.0
     ideal_area_sum = 0.0
@@ -1063,17 +1097,17 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
             normals[normals[:, 2] < 0.0] *= -1.0
         
         # SRP 계산
-        cos_theta = np.clip(np.dot(normals, -U_SUN), 0.0, 1.0)
-        f_abs = A0 * cos_theta[:, np.newaxis] * areas[:, np.newaxis] * U_SUN
+        cos_theta = np.clip(np.dot(normals, -_u_sun), 0.0, 1.0)
+        f_abs = A0 * cos_theta[:, np.newaxis] * areas[:, np.newaxis] * _u_sun
         f_refl = 2.0 * R0 * (cos_theta**2)[:, np.newaxis] * areas[:, np.newaxis] * (-normals)
         _ftot = f_abs + f_refl
-        actual_thrust = np.dot(np.sum(_ftot, axis=0), U_SUN)
+        actual_thrust = np.dot(np.sum(_ftot, axis=0), _u_sun)
         #   [2026-11-04] cp/cm 오프셋용 z-모멘트: 요소 중심 × 요소 힘.
         _cent = 0.25 * (v0 + v1 + v2 + v3) - _TORQUE_CENTRE
         torque_vec += np.sum(np.cross(_cent, _ftot), axis=0)
         force_tot += np.sum(_ftot, axis=0)
 
-        loss_sum += (np.sum(areas) * IDEAL_THRUST_COEFF - actual_thrust)
+        loss_sum += (np.sum(areas) * _ideal - actual_thrust)
         ideal_area_sum += np.sum(areas)
 
     # 3절점 요소 (Tri) 필터링
@@ -1101,16 +1135,16 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
         if flip_normals:
             normals[normals[:, 2] < 0.0] *= -1.0
         
-        cos_theta = np.clip(np.dot(normals, -U_SUN), 0.0, 1.0)
-        f_abs = A0 * cos_theta[:, np.newaxis] * areas[:, np.newaxis] * U_SUN
+        cos_theta = np.clip(np.dot(normals, -_u_sun), 0.0, 1.0)
+        f_abs = A0 * cos_theta[:, np.newaxis] * areas[:, np.newaxis] * _u_sun
         f_refl = 2.0 * R0 * (cos_theta**2)[:, np.newaxis] * areas[:, np.newaxis] * (-normals)
         _ftot = f_abs + f_refl
-        actual_thrust = np.dot(np.sum(_ftot, axis=0), U_SUN)
+        actual_thrust = np.dot(np.sum(_ftot, axis=0), _u_sun)
         _cent = (v0 + v1 + v2) / 3.0 - _TORQUE_CENTRE
         torque_vec += np.sum(np.cross(_cent, _ftot), axis=0)
         force_tot += np.sum(_ftot, axis=0)
 
-        loss_sum += (np.sum(areas) * IDEAL_THRUST_COEFF - actual_thrust)
+        loss_sum += (np.sum(areas) * _ideal - actual_thrust)
         ideal_area_sum += np.sum(areas)
 
     #   [§19.82] **상대** 손실로 반환한다.
@@ -1123,15 +1157,21 @@ def calc_thrust_loss(frame, instance, connectivity, max_node_label, area_ref=Non
     #     원형 평면적을 기준으로 고정하면 `hf` 가 "원형 평면 대비 성능 손실률"로 정의되어
     #     설계 간 비교가 정합해진다. area_ref 를 못 구하면 종전 동작으로 폴백한다.
     _den_area = area_ref if (area_ref and area_ref > 0.0) else ideal_area_sum
-    if _den_area > 0.0 and IDEAL_THRUST_COEFF > 0.0:
-        _signed = loss_sum / (_den_area * IDEAL_THRUST_COEFF)
+    if _den_area > 0.0 and _ideal > 0.0:
+        _signed = loss_sum / (_den_area * _ideal)
         if diag is not None:
             #   [2026-11-04] hf 는 max(...,0) 로 **센서링**된다(음수=이득). 원값과 토크를 함께 남긴다.
             _fm2 = float(np.dot(force_tot, force_tot))
             _cp = (np.cross(force_tot, torque_vec) / _fm2) if _fm2 > 0.0 else np.zeros(3)
             diag['hf_signed'] = _signed
             diag['force_magnitude_n'] = float(np.linalg.norm(force_tot))
+            diag['force_x_n'] = float(force_tot[0])
+            diag['force_y_n'] = float(force_tot[1])
+            diag['force_z_n'] = float(force_tot[2])
             diag['torque_nm'] = float(np.linalg.norm(torque_vec))
+            diag['tau_x_nm'] = float(torque_vec[0])
+            diag['tau_y_nm'] = float(torque_vec[1])
+            diag['tau_z_nm'] = float(torque_vec[2])
             diag['cp_offset_m'] = float(np.linalg.norm(_cp))
             diag['cp_x_m'] = float(_cp[0])
             diag['cp_y_m'] = float(_cp[1])
