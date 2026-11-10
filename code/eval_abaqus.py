@@ -69,9 +69,13 @@ def sun_vector(alpha_deg, clock_deg=0.0):
 
 
 def ideal_thrust_coeff(alpha_deg):
-    """Flat-plate ideal thrust coefficient at incidence alpha: A0 cos + 2R0 cos^2."""
+    """Flat-plate ideal thrust coefficient at incidence alpha.
+
+    Reflection term is 2R0*cos^3(alpha): the reflected force is 2R0 cos^2 n,
+    and its projection on U_SUN contributes another cos(alpha).
+    """
     c = float(np.cos(np.deg2rad(float(alpha_deg))))
-    return A0 * c + 2.0 * R0 * c * c
+    return c * (A0 + 2.0 * R0 * c * c)
 
 # ---------------------------------------------------------------------------
 # LF 상태 스텝 선택 (2026-10-21)

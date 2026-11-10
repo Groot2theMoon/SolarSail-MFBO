@@ -108,7 +108,9 @@ def main():
             r1, r2, n = pct_spread(vals)
             summary['spread'].setdefault(str(phi), {})[str(alpha)] = {
                 'p90_over_p50': r1, 'iqr_over_p50': r2, 'n': n,
+                'p25_tau': float(np.percentile(vals, 25)) if vals else None,
                 'median_tau': float(np.median(vals)) if vals else None,
+                'p75_tau': float(np.percentile(vals, 75)) if vals else None,
                 'p90_tau': float(np.percentile(vals, 90)) if vals else None}
             spread_rows.append((phi, alpha, r1, r2, n))
         s0 = summary['spread'][str(phi)].get(str(alphas[0]), {})
@@ -201,10 +203,16 @@ def main():
         vals = [summary['spread'][str(phi)][str(a)] for a in alphas]
         axs[0].plot(alphas, [v['p90_over_p50'] for v in vals], 'o-', label='phi=%g' % phi,
                     color=colors.get(phi))
-        axs[1].plot(alphas, [v['iqr_over_p50'] for v in vals], 'o-', label='phi=%g' % phi,
-                    color=colors.get(phi))
+        p25 = [v['p25_tau'] for v in vals]
+        p50 = [v['median_tau'] for v in vals]
+        p75 = [v['p75_tau'] for v in vals]
+        p90 = [v['p90_tau'] for v in vals]
+        axs[1].fill_between(alphas, p25, p75, color=colors.get(phi), alpha=0.15)
+        axs[1].plot(alphas, p50, 'o-', label='phi=%g median' % phi, color=colors.get(phi))
+        axs[1].plot(alphas, p25, ':', color=colors.get(phi), lw=1)
+        axs[1].plot(alphas, p90, '--', color=colors.get(phi), lw=1)
     axs[0].set_xlabel('alpha [deg]'); axs[0].set_ylabel('P90/P50 tau')
-    axs[1].set_xlabel('alpha [deg]'); axs[1].set_ylabel('IQR/median tau')
+    axs[1].set_xlabel('alpha [deg]'); axs[1].set_ylabel('|tau| [N m] (P25/P50/P90)')
     for ax in axs:
         ax.grid(alpha=0.3)
         ax.legend()
