@@ -38,7 +38,7 @@ def main():
             x = float(r['x_c']); d = float(r['d_c']); seed = int(r['seed'])
         except Exception:
             continue
-        key = (r['kind'], x, d)
+        key = (r.get('kind', 'clamp'), x, d)
         hf = val(r['results'], 'hf') if r.get('results') else None
         cp = val(r['results'], 'cp_offset_m') if r.get('results') else None
         tau = val(r['results'], 'torque_nm') if r.get('results') else None
