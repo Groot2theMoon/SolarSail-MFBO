@@ -6164,3 +6164,29 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - `results/alpha_sweep/alpha_sweep.csv` (260행)
   - `results/alpha_sweep/alpha_summary.json`
   - `results/alpha_sweep/alpha_spread.svg`, `alpha_rank.svg`, `alpha_clock.svg`, `alpha_tau.svg`
+
+### 19.163 α 스윕 정정 - 25점+baseline 기준 (2026-11-10)
+
+[정정]
+  - §19.162의 26 ODB는 `results/odb`의 25점 + `xc0p2_dc1`(그리드 밖)이었다.
+  - 이번 재실행은 **25점 + clamp-free baseline** 26개, 260행, 43초.
+
+[|τ| 결과]
+  | φ | P90/P50 α0 | P90/P50 α10 | IQR/med α0 | IQR/med α10 | Spearman@10 |
+  |---:|---:|---:|---:|---:|---:|
+  | 0 | 6.751 | 6.745 | 1.128 | 2.200 | 0.9993 |
+  | 90 | 6.751 | 7.220 | 1.128 | 3.137 | 0.9617 |
+
+  - G-A: spread(10)/spread(0)=**0.999** (φ0) / **1.069** (φ90) < 1.5 → 미통과.
+  - G-B: Spearman=**0.999** (φ0) / **0.962** (φ90) > 0.7 → 미통과.
+  - clock: Spearman(φ0,φ90)=**0.956**, median ratio=**0.9976** (α10). φ 무시 가능.
+  - G-C: φ0 19 decrease / 3 increase / 4 non; φ90 21 / 2 / 3. 비단조 3-4점.
+  - IQR/median은 α와 함께 커진다(2.0–2.8배). P90/P50은 안정.
+  - **hf 설계 대비 붕괴**: hf median/P90 = 3.108e-7 / 1.595e-6 (α0),
+    0.014602 / 0.014604 (α10). α10에서는 설계차가 사실상 사라진다.
+
+[결정]
+  - **S2는 α=0, φ=0 유지.** G-A/G-B 미통과 + hf 대비 붕괴.
+  - φ=90은 0.9976 배율/순위 0.956 → 3D 스윕 불필요.
+  - G-C 비단조는 저토크 설계의 부호/분해 문제 후보. 상위 순위 안정이라 S2 비차단.
+  - 도구 `tools/alpha_sweep.py`, `tools/alpha_analyze.py`; 산출물 `results/alpha_sweep/`.
