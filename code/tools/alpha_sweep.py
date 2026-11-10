@@ -139,9 +139,14 @@ def main():
     ap.add_argument('--alphas', default=','.join('%.1f' % x for x in DEFAULT_ALPHAS))
     ap.add_argument('--phis', default=','.join('%.1f' % x for x in DEFAULT_PHIS))
     ap.add_argument('--limit', type=int, default=0)
+    ap.add_argument('--exclude', default='',
+                    help='comma-separated tag substrings to drop from results/odb')
     a = ap.parse_args()
 
     paths = ([a.odb] if a.odb else sorted(glob.glob(os.path.join(_HERE, 'results', 'odb', 'HF_*.odb'))))
+    if a.exclude:
+        drops = [x.strip() for x in a.exclude.split(',') if x.strip()]
+        paths = [p for p in paths if not any(d in parse_tag(p) for d in drops)]
     if a.baseline and os.path.exists(a.baseline):
         paths.append(a.baseline)
     if a.limit > 0:
@@ -163,9 +168,11 @@ def main():
               'n_backward_frac', 'odb_sha1')
     rows = []
     for pi, path in enumerate(paths):
-        tag = parse_tag(path)
-        case = 'baseline' if ('baseline' in path.lower() or 'noclamp' in path.lower()) else 'clamp'
-        sc = sidecar(tag)
+        base_tag = parse_tag(path)
+        is_base = bool(a.baseline and os.path.abspath(path) == os.path.abspath(a.baseline))
+        tag = ('baseline_' + base_tag) if is_base else base_tag
+        case = 'baseline' if (is_base or 'baseline' in path.lower() or 'noclamp' in path.lower()) else 'clamp'
+        sc = sidecar(base_tag)
         cfg = sc.get('config_sha1', '')
         lfp = sc.get('lf_model_fp', '')
         oh = sha1(path)

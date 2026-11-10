@@ -46,11 +46,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--src', default='seeds/modes_xc0p2.txt')
     ap.add_argument('--div', type=int, default=400)
+    ap.add_argument('--order', type=int, default=1, choices=(1, 2))
     ap.add_argument('--out', required=True)
     a = ap.parse_args()
 
     src_nodes, _, _ = aba_grid_mesh.generate_grid(BASE, HEIGHT, 200.0)
-    dst_nodes, _, _ = aba_grid_mesh.generate_grid(BASE, HEIGHT, float(a.div))
+    dst_nodes, _s4, _s3 = aba_grid_mesh.generate_grid(BASE, HEIGHT, float(a.div))
+    if a.order == 2:
+        dst_nodes, _s8, _s6 = aba_grid_mesh._second_order(dst_nodes, _s4, _s3)
     src_xy = np.asarray(src_nodes, dtype=np.float64)
     dst_xy = np.asarray(dst_nodes, dtype=np.float64)
     header, modes = read_table(a.src)
@@ -73,7 +76,7 @@ def main():
             f.write('MODE %d\n' % m)
             for i, v in enumerate(out):
                 f.write('%d %.10e\n' % (i + 1, v))
-    print('wrote %s: %d nodes, div=%d' % (a.out, len(dst_nodes), a.div))
+    print('wrote %s: %d nodes, div=%d order=%d' % (a.out, len(dst_nodes), a.div, a.order))
 
 
 if __name__ == '__main__':
