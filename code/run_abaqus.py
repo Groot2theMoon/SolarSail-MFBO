@@ -1231,7 +1231,7 @@ my_model.StaticStep(
     stabilizationMethod=DISSIPATED_ENERGY_FRACTION,
     initialInc=((0.001 if _IS_HF_RUN else 0.01) if PAPER_MATCH else 0.0001),
     minInc=1e-8,
-    maxInc=0.01,
+    maxInc=0.005,
     maxNumInc=(10000 if _IS_HF_RUN else 1000)
     #   [paper-match] 초기응력은 스텝 시작에 전부 들어간다(램프 없음) -> 첫 증분이 너무 작으면
     #     큰 잔차를 작은 증분으로 풀다 컷백이 반복된다. 논문 모드에서는 0.001(HF)/0.01(LF) 로 시작한다.
