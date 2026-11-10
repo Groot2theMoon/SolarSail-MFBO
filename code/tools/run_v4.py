@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VAR = os.path.join(HERE, 'results', 'variants', 'v4')
@@ -46,10 +47,12 @@ def run(tag, xc, dc, order):
         cmd += ' --config configs/o2_0p1.json'
     print(tag, cmd)
     log = os.path.join(VAR, 'run_%s.log' % tag)
+    t0 = time.time()
     with io.open(log, 'w', encoding='utf-8', errors='replace') as lf:
         p = subprocess.Popen(cmd, cwd=HERE, env=env, shell=True,
                              stdout=lf, stderr=subprocess.STDOUT)
         rc = p.wait()
+    wall_s = time.time() - t0
     src_odb = os.path.join(ODB, 'HF_xc%s_dc%s_u3free.odb'
                            % (('%g' % xc).replace('.', 'p'), ('%g' % dc).replace('.', 'p')))
     src_res = os.path.join(RES, 'results_xc%s_dc%s.txt'
@@ -62,6 +65,7 @@ def run(tag, xc, dc, order):
     if os.path.exists(src_res):
         shutil.copy2(src_res, copy_res)
     return {'tag': tag, 'order': order, 'x_c': xc, 'd_c': dc, 'rc': rc,
+            'wall_s': wall_s,
             'hf': d.get('hf'), 'torque_nm': d.get('torque_nm'),
             'cp_offset_m': d.get('cp_offset_m'), 'tau_x_nm': d.get('tau_x_nm'),
             'tau_y_nm': d.get('tau_y_nm'), 'odb': copy_odb, 'results': copy_res}
