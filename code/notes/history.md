@@ -6491,3 +6491,24 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
     `modes_t25_o2_x0p2.txt` / `x0p8.txt`를 만들었다. 모드 벡터는 2.5 µm ODB에서 추출한 값이다.
   - buckle은 `CASE=paper`(클램프 없음)이고 postbuckling은 기본 clamp 포함 모델이다.
     즉 모드 소스와 postbuckling 하드웨어가 완전히 같은 모델은 아니다.
+
+### 19.174 2.5 µm centre 응력 - 7000은 minP가 아니라 von Mises (2026-11-11)
+
+[base_state_probe, R=1 m centre]
+  | 모델 | centre minP | centre Mises | minP/Mises |
+  |---|---:|---:|---:|
+  | 5 µm 2차 x0.2 | 1196.2 | 6892.2 | **0.174** |
+  | 2.5 µm 2차 x0.2 | 1205.1 | 6975.4 | **0.173** |
+  | 2.5 µm 2차 x0.8 | 1227.3 | 7736.8 | **0.159** |
+
+  - 2.5 µm x0.2 **centre Mises ≈ 6975 Pa** → Galhofo 7000 Pa와 거의 일치.
+  - minP는 1.2 kPa로 7000과 거리가 멀다.
+  - 따라서 **(b) 7000=minP 가설은 기각**, **(a) 7000=von Mises**가 지지된다.
+  - minP/Mises는 0.159–0.174; 제안된 0.32와 다르다.
+
+[주의]
+  - 현재 `CABLE_PRESTRESS=1.71e7 Pa` 기준. 2.5/5 µm centre Mises가 거의 같아
+    단순 두께 2배 스케일링은 이 모델에서 성립하지 않는다(케이블 초기응력/하중 경로 영향).
+  - 2.69e7로 올리면 centre Mises가 7000을 넘을 것으로 예상되므로, minP 가설을 근거로
+    운용점을 2.69e7로 바꾸면 안 된다.
+  - Galhofo 7000은 von Mises(1 psi)로 유지하는 것이 현재 데이터와 정합.
