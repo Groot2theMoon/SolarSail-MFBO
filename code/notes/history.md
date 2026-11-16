@@ -6512,3 +6512,28 @@ HF 를 3-tendon 으로 돌리면 모드는 여전히 Top 완전고정(2-tendon) 
   - 2.69e7로 올리면 centre Mises가 7000을 넘을 것으로 예상되므로, minP 가설을 근거로
     운용점을 2.69e7로 바꾸면 안 된다.
   - Galhofo 7000은 von Mises(1 psi)로 유지하는 것이 현재 데이터와 정합.
+
+### 19.175 §19.35 정정 - Galhofo 비선형 로딩은 케이블 초기장응력 (2026-11-16)
+
+[정정]
+  - §19.35의 "Galhofo 절차 = 꼭짓점 지정변위(Static) -> Buckle"은 **좌굴 모델 (a)**에만 해당한다.
+  - 원문 3단 구조:
+    ① perfect membrane: external cable nodes fixed + predefined initial field stress on cables
+       -> centre stress ≈7000 Pa (Fig. 11)
+    ② model (a) buckling: membrane **without cables**, prescribed displacement at 3 vertices (Fig. 12)
+    ③ model (b) nonlinear: membrane **with attached cables**, pre-tensioning as in ① (Fig. 11)
+  - 따라서 비선형 해석의 프리텐션은 **케이블 초기장응력**이고, 변위 구동이 아니다.
+  - 우리 현재 paper HF와 로딩 방식은 이와 **같다** (`CABLE_PRESTRESS` initial condition,
+    `_DISP_PRE=0`, NLGEOM 증분).
+  - W&P Step III(에지 변위 증분)는 Galhofo 재현 조건이 **아니다**. W&P의 방법론이다.
+
+[남는 실제 차이]
+  - 임퍼펙션 모드 수: 4개 vs Galhofo "many eigenvectors" (주름 개수/분기 폭의 유력 원인).
+  - 모드 소스: buckle `CASE=paper`(클램프 없음) vs postbuckling 기본(클램프 포함).
+  - λ: 2.5 µm 모드가 **음수**(-2.08e-5 등) → 모드 형상만 사용, λ 인용 금지.
+  - Galhofo nonlinear은 케이블은 있지만 클램프 하드웨어는 없다(우리는 클램프 포함).
+  - Fig. 17의 step time 0→1은 하중 램프가 아니라 수치 증분이며, 초기장응력으로도 주름이 형성된다.
+
+[다음]
+  - 주름 개수/진폭을 같은 모델(no-clamp 5PCS)에서 측정.
+  - 모드 4 → 10–20개로 늘린 1런.
