@@ -1,5 +1,6 @@
 """Portable optics regressions and fabricated, no-ODB export checks."""
 
+from copy import deepcopy
 import hashlib
 import io
 import json
@@ -517,31 +518,25 @@ class CommandTests(unittest.TestCase):
                 self.assertIsNone(row['physical'])
         self.assertEqual(result['completion']['screen']['status'], 'not_complete')
 
-    def test_named_present_odb_is_not_read_and_cannot_qualify(self):
+    def test_present_initial_odb_is_hashed_but_cannot_qualify_without_evidence(self):
         _, initial = write_verification_inputs(self.root / 'inputs')
         manifest = _read(initial)
-        (initial.parent / 'fake.odb').write_bytes(b'fabricated sentinel, not an ODB')
-        manifest['cases']['usable']['odb_path'] = 'fake.odb'
-        manifest['cases']['bad']['odb_path'] = '.'  # A directory is not a readable candidate file.
-        _json(initial, manifest)
-        result = _read(self._run('evaluate', initial, 'out') / 'evidence.json')
         fake = initial.parent / 'fake.odb'
-        real_open = Path.open
-
-        def refuse_odb_read(path, *args, **kwargs):
-            if path.resolve() == fake.resolve():
-                raise AssertionError('path-only intake must not open the fabricated ODB')
-            return real_open(path, *args, **kwargs)
-
-        with patch.object(Path, 'open', refuse_odb_read):
-            self.assertEqual(optics.main(['inventory', '--manifest', str(initial),
-                                          '--out-dir', str(self.root / 'stat-only')]), 0)
-        self.assertEqual(result, _read(self.root / 'stat-only' / 'evidence.json'))
-        for case_id, reason in (('usable', 'phase_c_not_available'), ('bad', 'source_unreadable')):
-            case = result['cases'][case_id]
-            self.assertEqual(case['status'], 'unverified')
-            self.assertEqual(case['checked_files'], [])
-            self.assertIn({'code': reason, 'target': f'{case_id}.odb_path'}, case['reasons'])
+        fake.write_bytes(b'fabricated sentinel, not an ODB')
+        manifest['cases']['usable']['odb_path'] = 'fake.odb'
+        manifest['cases']['bad']['odb_path'] = '.'
+        _json(initial, manifest)
+        inv = self._run('inventory', initial, 'inv')
+        ev = self._run('evaluate', initial, 'ev')
+        result = _read(inv / 'evidence.json')
+        self.assertEqual(result, _read(ev / 'evidence.json'))
+        usable, bad = (result['cases'][k] for k in ('usable', 'bad'))
+        self.assertEqual(usable['status'], 'unverified')
+        self.assertEqual(usable['checked_files'], [{'path': str(fake.resolve()), 'sha256': _digest(fake)}])
+        self.assertIn({'code': 'export_missing', 'target': 'usable.geometry'}, usable['reasons'])
+        self.assertEqual(bad['status'], 'unverified')
+        self.assertEqual(bad['checked_files'], [])
+        self.assertEqual(bad['reasons'], [{'code': 'source_unreadable', 'target': 'bad.odb_path'}])
 
     def test_invalid_studies_exit_two_without_artifacts(self):
         path = self.root / 'study.json'
@@ -812,6 +807,270 @@ class ExportTests(unittest.TestCase):
         _, message = self.invoke(code=1, out='no-vendor', supports_vendor=False)
         self.assertIn('no vendor', message)
         self.open.assert_not_called()
+
+
+def _review(value, *records):
+    return {'value': value, 'refs': [{'record_id': record, 'locator': 'fabricated test facts'} for record in records]}
+
+
+def _basis_digest(basis):
+    return hashlib.sha256(json.dumps(basis, sort_keys=True, separators=(',', ':')).encode('ascii')).hexdigest()
+
+
+def _support(node, dof=3, kind='membrane_node'):
+    return {'target_kind': kind, 'target': node, 'step': 'Initial', 'dof': dof, 'law': 'fixed',
+            'parameters': {'value_m': {'value': '0', 'unit': 'm'}}}
+
+
+def _fabricated_real(root, *, copy_high=False):
+    """Exercise the ODB contract with explicitly fabricated bytes; no vendor API."""
+    root.mkdir()
+    refmesh = root / 'fabricated-reference.txt'
+    refmesh.write_bytes(b'fabricated reference mesh with labels 11, 18 and 25')
+    mesh = _digest(refmesh)
+    cases = {}
+    for key, vertices, ratio, stress in (('control', _PANEL, None, None), ('low', _CONTROL, '0.01', '1.71'),
+                                        ('high', _SMALL, '0.02', '3.42')):
+        odb = root / (key + '.odb')
+        odb.write_bytes(b'fabricated opaque product ' + key.encode())
+        deck = root / (key + '.inp')
+        deck.write_bytes(b'fabricated submitted deck ' + key.encode())
+        record = root / (key + '-run.txt')
+        record.write_bytes(b'fabricated job, attempt, field, and copy facts ' + key.encode())
+        case = _initial_case('control' if ratio is None else 'clamped', odb.name)
+        case['attempt_id'] = key + '-1'
+        run = {'job_id': key + '-job', 'attempt_id': case['attempt_id'], 'driver_revision': 'fixture-rev',
+               'modified_source': None, 'submitted_deck': 'deck', 'completed': True, 'instance': 'M-1',
+               'terminal_step': 'Finish', 'step_duration': 1, 'frame_index': 2}
+        case['records'] = {'deck': _ref(root, deck), 'job': _ref(root, record), 'reference': _ref(root, refmesh)}
+        case['run'] = _review(run, 'deck', 'job')
+        current_file = _ref(root, odb)
+        product = {'job_id': run['job_id'], 'attempt_id': run['attempt_id'], 'product_id': 'product',
+                   'product_sha256': current_file['sha256'], 'current_id': 'product',
+                   'current_file': current_file, 'copies': []}
+        if key == 'high' and copy_high:
+            product.update(product_sha256=None, current_id='final', copies=[
+                {'from_id':'product','to_id':'backup','sha256':None,'refs':_review(None,'job')['refs']},
+                {'from_id':'backup','to_id':'final','sha256':current_file['sha256'],'refs':_review(None,'job')['refs']}])
+        case['producer'] = _review(product, 'job')
+        basis = {'units': 'm', 'R': np.eye(3, dtype=int).tolist(), 't_m': [0,0,0],
+                 'anchors': [{'node_label': n, 'odb_xyz_m': list(p), 'panel_xyz_m': list(p)}
+                             for n,p in zip((11,18,25),_PANEL)], 'sides': {'101': 'SPOS'}}
+        exp = {'odb': {**current_file, 'path': '../'+odb.name}, 'job_id': run['job_id'],
+               'attempt_id': run['attempt_id'], 'instance': run['instance'], 'step': run['terminal_step'],
+               'step_duration': 1, 'frame_index': 2, 'frame_value': 1, 'coord_precision': 'single',
+               'runtime': {'abaqus':'fixture','python':'fixture','numpy':'fixture'},
+               'adapter_sha256': 'c'*64, 'basis_sha256': _basis_digest(basis)}
+        case['geometry'] = _bundle(root, key, vertices, source_kind='odb', export=exp)['geometry']
+        receipt = root / key / 'export_verification.json'
+        checks = {name: {'status': 'passed', 'evidence': [{'file': {**_ref(root, record), 'path': '../'+record.name},
+                 'locator':'fabricated verification proof'}]} for name in ('terminal_frame','anchors','coordinates',
+                 'topology','face_signs','portable_readback','odb_unchanged','negative_inputs')}
+        _json(receipt, {'schema_version':1, 'geometry':{**case['geometry'],'path':'geometry.json'},
+                        'mapping_kind':'identity','node_count':3,'element_counts':{'S3':1},
+                        'status':'passed','unexercised':[], 'checks':checks,
+                        **{k:v for k,v in exp.items() if k not in ('job_id','attempt_id','basis_sha256')}})
+        case['records']['roundtrip'] = _ref(root, receipt)
+        case['geometry_basis'] = _review(basis, 'reference', 'roundtrip')
+        clamp = 'absent' if ratio is None else {'x_c':'0.7','d_c':ratio,'corner_initial_pa':'171.00',
+                 'clamp_initial_pa':stress,'hardware':{'left':{'cable':'cl'},'right':{'cable':'cr'}},
+                 'connections':{'left':{'reference_point':'CL'},'right':{'reference_point':'CR'}}}
+        supports = {'common': [_support(18), _support(25)] + ([_support(11)] if ratio is None else []),
+                    'replaced_common': [] if ratio is None else [_support(11)],
+                    'attachment': [] if ratio is None else [_support('CL', kind='reference_point')],
+                    'attachment_patch': [] if ratio is None else [11]}
+        settings = {'membrane': {'reference_mesh_sha256':mesh,'node_labels':[11,18,25],
+                                 'material':{'id':'fixture'},'thickness_m':'0.000005'},
+                    'clamp': clamp, 'supports': supports,
+                    'load': {'mode':'cable_stress','corner_initial_pa':dict.fromkeys(('apex','first_base','second_base'),'171'),
+                             'shared_steps':[{'name':'Finish','controls':{'period':{'value':'1.0','unit':'s'}}}]},
+                    'solver': {'shared_options':{'nlgeom':True}, 'applied_stabilization_by_step':{'Finish':{'value':'0.0002','unit':'1'}}},
+                    'perturbation': {'reference_mesh_sha256':mesh,'frame':'panel_local_m','node_map':[[n,n] for n in (11,18,25)],
+                                     'delta_m':[[11,'0','0','0.00010'],[18,'0','-0','0'],[25,'0','0','0']],
+                                     'precision':{'encoding':'exact_decimal','basis':'fabricated exact input coordinates'}}}
+        case['settings'] = {k:_review(v,'job', 'reference') for k,v in settings.items()}
+        cases[key] = case
+    return _study(cases, {k:{'case_id':k,'control_id':'control'} for k in ('low','high')}, source_kind='odb')
+
+
+def _freeze_real(root, study):
+    initial = deepcopy(study)
+    for case in initial['cases'].values():
+        case['geometry'] = None
+    parent = _json(root/'study.initial.json', initial)
+    return _json(root/'study.linked.json', {**study, 'parent': _ref(root, parent)})
+
+
+class RealEvidenceTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+
+    def commands(self, path):
+        for command in ('inventory', 'evaluate'):
+            result = _cli(command, path, path.parent / command)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        evidence = _read(path.parent/'inventory'/'evidence.json')
+        self.assertEqual(evidence, _read(path.parent/'evaluate'/'evidence.json'))
+        return evidence, _read(path.parent/'evaluate'/'optical_results.json')
+
+    def test_real_contract_direct_and_documented_copy_chain(self):
+        root = self.root/'valid'
+        study = _fabricated_real(root, copy_high=True)
+        study['cases']['high']['settings']['perturbation']['value']['delta_m'].reverse()
+        study['cases']['high']['settings']['load']['value']['corner_initial_pa']['apex'] = '1.71e2'
+        evidence, result = self.commands(_freeze_real(root, study))
+        self.assertEqual([r['status'] for r in evidence['cases'].values()], ['qualified'] * 3)
+        self.assertEqual(evidence['screen']['status'], 'eligible')
+        self.assertEqual(result['completion']['screen']['status'], 'complete')
+        self.assertEqual(result['source_kind'], 'odb')
+        self.assertIsNone(result['pressure_pa'])
+        load = result['loads']['low']['normal']
+        np.testing.assert_allclose(load['normalized']['force'], [0,0,-100*(.073744+2*.926256)], atol=4e-10, rtol=0)
+        self.assertIsNone(load['physical'])
+        self.assertEqual(evidence['cases']['low']['diagnostics']['status'], 'unresolved')
+
+    def test_broken_producer_chain_isolated_even_when_current_digest_matches(self):
+        root = self.root/'broken'
+        study = _fabricated_real(root, copy_high=True)
+        study['cases']['high']['producer']['value']['copies'][1]['from_id'] = 'wrong-intermediate'
+        (root/'low-run.txt').write_bytes(b'changed supporting record')
+        e,r = self.commands(_freeze_real(root, study))
+        self.assertEqual(e['cases']['control']['status'], 'qualified')
+        self.assertEqual(e['cases']['high']['status'], 'unverified')
+        self.assertIn({'code':'producer_unresolved','target':'high.producer'}, e['cases']['high']['reasons'])
+        self.assertIn({'code':'record_conflict','target':'low.run.job'}, e['cases']['low']['reasons'])
+        self.assertEqual(r['loads']['high']['normal']['validation'], 'not_attempted')
+
+    def test_final_digest_without_origin_and_altered_odb_do_not_qualify(self):
+        root = self.root/'no-origin'
+        study = _fabricated_real(root)
+        high = study['cases']['high']
+        high['records']['final_only'] = high['producer']['value']['current_file']
+        high['producer']['refs'] = _review(None,'final_only')['refs']
+        (root/'low.odb').write_bytes(b'other current opaque bytes')
+        e,_ = self.commands(_freeze_real(root,study))
+        self.assertIn({'code':'producer_unresolved','target':'high.producer'}, e['cases']['high']['reasons'])
+        self.assertIn({'code':'record_conflict','target':'low.producer'}, e['cases']['low']['reasons'])
+
+    def test_real_export_rejects_conflicting_frame_attempt_basis_and_face_rows(self):
+        def change_export(root, case, **values):
+            p = root / case['geometry']['path']
+            doc = _read(p)
+            doc['export'].update(values)
+            _json(p,doc)
+            case['geometry'] = _ref(root,p)
+        for field,value in [('frame_index',1),('frame_value',.9),('attempt_id','other'),('basis_sha256','1'*64)]:
+            with self.subTest(field=field):
+                root = self.root/field
+                study = _fabricated_real(root)
+                change_export(root,study['cases']['high'],**{field:value})
+                low = study['cases']['low']
+                basis = low['geometry_basis']['value']
+                basis['sides']['101'] = 'SNEG'
+                change_export(root,low,basis_sha256=_basis_digest(basis))
+                e,r = self.commands(_freeze_real(root,study))
+                self.assertEqual(e['cases']['control']['status'], 'qualified')
+                self.assertEqual(e['cases']['high']['status'], 'unverified')
+                self.assertIn({'code':'record_conflict','target':'low.geometry_basis.sides'},e['cases']['low']['reasons'])
+                self.assertIsNone(r['loads']['high']['normal']['normalized'])
+
+    def test_invalid_mapping_and_uncovered_native_precision_withhold_loads(self):
+        root = self.root/'coverage'
+        study = _fabricated_real(root)
+        study['cases']['high']['geometry_basis']['value']['R'][2][2] = -1
+        low = study['cases']['low']
+        p = root/low['records']['roundtrip']['path']
+        _json(p,{**_read(p),'coord_precision':'double'})
+        low['records']['roundtrip'] = _ref(root,p)
+        e,_ = self.commands(_freeze_real(root,study))
+        self.assertIn({'code':'record_conflict','target':'low.export_verification'}, e['cases']['low']['reasons'])
+        self.assertIn({'code':'record_conflict','target':'high.geometry_basis'}, e['cases']['high']['reasons'])
+
+    def test_unknown_field_or_restraint_and_known_difference_preserve_other_pair(self):
+        for mode in ('unknown','field','support','outside_patch'):
+            with self.subTest(mode=mode):
+                root = self.root/mode
+                study = _fabricated_real(root)
+                high = study['cases']['high']['settings']
+                if mode == 'field':
+                    high['perturbation']['value']['delta_m'][0][-1] = '0.00010000000000000000001'
+                    high['solver'] = None
+                elif mode == 'support':
+                    high['supports']['value']['common'].pop()
+                    high['perturbation'] = None
+                elif mode == 'outside_patch':
+                    high['supports']['value']['replaced_common'] = [_support(25)]
+                    high['supports']['value']['common'].pop()
+                else:
+                    high['perturbation']['value']['node_map'].pop()
+                e,r = self.commands(_freeze_real(root,study))
+                self.assertEqual(e['cases']['high']['status'], 'qualified')
+                self.assertEqual(e['contrasts']['high']['status'], 'unmatched' if mode in ('field','support') else 'blocked')
+                self.assertEqual(e['contrasts']['low']['status'], 'eligible')
+                self.assertEqual(r['completion']['contrasts']['low']['status'], 'complete')
+                self.assertEqual(r['completion']['screen']['status'], 'partial')
+                for row in r['comparisons']['high'].values():
+                    self.assertIsNone(row['control']['normalized'])
+                    self.assertIsNotNone(row['flat']['normalized'])
+
+    def test_two_complete_pairs_do_not_imply_eligible_screen(self):
+        root = self.root/'different-clamp'
+        study = _fabricated_real(root)
+        settings = study['cases']['high']['settings']
+        settings['clamp']['value']['hardware']['left']['cable'] = 'other'
+        settings['supports']['value']['attachment'][0]['dof'] = 2
+        e,r = self.commands(_freeze_real(root,study))
+        self.assertEqual(e['screen']['status'], 'unmatched')
+        self.assertEqual({n['target'] for n in e['screen']['reasons']},
+                         {'screen.clamp.hardware','screen.attachment'})
+        self.assertTrue(all(x['status']=='complete' for x in r['completion']['contrasts'].values()))
+        self.assertEqual(r['completion']['screen']['status'], 'partial')
+
+    def test_eligible_pair_requires_passing_operands_at_every_attitude(self):
+        root = self.root/'failed-load'
+        path = _freeze_real(root,_fabricated_real(root))
+        inv, ev = root/'inventory', root/'evaluate'
+        self.assertEqual(_cli('inventory',path,inv).returncode,0)
+        route = optics._route
+        def fail_one(facets, ray, *args, direct):
+            load = route(facets,ray,*args,direct=direct)
+            if direct and np.max(facets.xyz[:,:,0]) == 10 and ray[0] < 0 and ray[1] == 0:
+                load[0,0,2] += 1
+            return load
+        with patch.object(optics,'_route',side_effect=fail_one):
+            self.assertEqual(optics.main(['evaluate','--manifest',str(path),'--out-dir',str(ev)]),0)
+        self.assertEqual(_read(inv/'evidence.json'),_read(ev/'evidence.json'))
+        r = _read(ev/'optical_results.json')
+        self.assertEqual(r['loads']['low']['alpha5_phi0']['validation'], 'failed')
+        self.assertIsNone(r['comparisons']['low']['alpha5_phi0']['control']['normalized'])
+        self.assertIsNotNone(r['comparisons']['low']['alpha5_phi45']['control']['normalized'])
+        self.assertEqual(r['completion']['contrasts']['high']['status'], 'complete')
+        self.assertEqual(r['completion']['contrasts']['low']['status'], 'not_complete')
+        self.assertIn('route_mismatch',{n['code'] for n in r['completion']['contrasts']['low']['reasons']})
+
+    def test_initial_parent_digest_and_resolved_selection_must_agree(self):
+        root = self.root/'parent'
+        p = _freeze_real(root,_fabricated_real(root))
+        linked = _read(p)
+        linked['cases']['high']['producer']['value']['current_file']['path'] = str(root/'high.odb')
+        _json(p,linked)
+        e,_ = self.commands(p)
+        self.assertEqual(e['screen']['status'], 'eligible')
+        linked['cases']['high']['attempt_id'] = 'substituted'
+        _json(p,linked)
+        out = root/'changed-selection'
+        actual = _cli('inventory',p,out)
+        self.assertEqual(actual.returncode,2)
+        self.assertIn('frozen initial selection',actual.stderr)
+        self.assertFalse(out.exists())
+        (root/'study.initial.json').write_bytes(b'not the originally approved bytes')
+        out = root/'bad-parent-digest'
+        actual = _cli('evaluate',p,out)
+        self.assertEqual(actual.returncode,2)
+        self.assertIn('parent digest mismatch',actual.stderr)
+        self.assertFalse(out.exists())
 
 
 if __name__ == '__main__':
