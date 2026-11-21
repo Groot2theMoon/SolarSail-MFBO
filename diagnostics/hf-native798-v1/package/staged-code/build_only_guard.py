@@ -8,8 +8,8 @@ from pathlib import Path
 import struct
 import sys
 
-ATTEMPT = 'hf-edge-native798-v1'
-JOB = 'SailState2_HF_Native798_Q2_01'
+ATTEMPT = 'hf-edge-native798-v1-rpfix1'
+JOB = 'SailState2_HF_Native798_Q2_RPFIX1'
 INSTANCE = 'MEMBRANE-1'
 FRAME = {'R': [[1,0,0],[0,1,0],[0,0,1]], 't_m': [0,0,0], 'units': 'm'}
 CHANGED = [5018, 5160, 5302, 5440, *range(30357, 30365)]
@@ -324,6 +324,18 @@ def require_xy_mirror(grid, left, right):
                 for array in xy), 'Unavailable or invalid clamp XY')
     ok, reason = grid.patch_nodes_mirror_ok(*xy,axis=10.,tol=1e-6)
     require(ok, f'Clamp XY mirror check failed: {reason}')
+
+
+def attachment_rp(assembly, control, alias, feature, expected):
+    """Record Feature provenance and set placement; deck node identity is separate."""
+    for name in (control, alias):
+        require(name in assembly.sets, f'Missing RP set: {name}')
+        points = assembly.sets[name].referencePoints
+        require(len(points) == 1, f'Not a singleton RP set: {name}')
+        xyz = tuple(map(float, assembly.getCoordinates(entity=points[0])))
+        require(xyz == expected, f'Unexpected RP placement: {name}')
+    return dict(instance=None, label=None, feature_id=int(feature.id), xyz_m=xyz,
+                alias_identity='verify_written_node')
 
 
 def prepare_patch(path):

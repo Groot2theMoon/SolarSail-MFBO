@@ -239,9 +239,9 @@ function Get-BuildDisposition([string]$Root, [string]$ApprovedDigest, [string]$A
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$Root = 'C:\Users\user\AppData\Local\Temp\sail-hf-edge-native798-v1'
-$Attempt = 'hf-edge-native798-v1'
-$Job = 'SailState2_HF_Native798_Q2_01'
+$Root = 'C:\Users\user\AppData\Local\Temp\sail-hf-edge-native798-v1-rpfix1'
+$Attempt = 'hf-edge-native798-v1-rpfix1'
+$Job = 'SailState2_HF_Native798_Q2_RPFIX1'
 $Prior = 'C:\Users\user\AppData\Local\Temp\sail-state2-q2-OFEMpg0D-r1\run-approved.ps1'
 $Launcher = 'C:\Program Files\SIMULIA\Commands\abaqus.bat'
 $Stage = Join-Path $Root 'staged-code'

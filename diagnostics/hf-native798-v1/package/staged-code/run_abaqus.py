@@ -2061,26 +2061,22 @@ elif fidelity == 'HF':
             return dict(instance=instance,label=label,xyz_m=xyz)
 
         rows = []
-        for name,cable,point,dofs,stress in (
-            ('Top','Cable_Top',V1,[1,2,3,4,5,6],CABLE_PRESTRESS),
-            ('Right','Cable_Right',V2,[1,2,3,4,5,6],CABLE_PRESTRESS),
-            ('Left','Cable_Left',V3,[1,2,3,4,5,6],CABLE_PRESTRESS),
-            ('CL','cable_CL',V_CL,[1,2,3],CLAMP_PRESTRESS),
-            ('CR','cable_CR',V_CR,[1,2,3],CLAMP_PRESTRESS),
+        for name,cable,point,feature,dofs,stress in (
+            ('Top','Cable_Top',V1,rp1_obj,[1,2,3,4,5,6],CABLE_PRESTRESS),
+            ('Right','Cable_Right',V2,rp2_obj,[1,2,3,4,5,6],CABLE_PRESTRESS),
+            ('Left','Cable_Left',V3,rp3_obj,[1,2,3,4,5,6],CABLE_PRESTRESS),
+            ('CL','cable_CL',V_CL,rp_cl_obj,[1,2,3],CLAMP_PRESTRESS),
+            ('CR','cable_CR',V_CR,rp_cr_obj,[1,2,3],CLAMP_PRESTRESS),
         ):
             control,alias = name+'_RP_Set','RP_'+name+'_Set'
-            rp, tied_rp = (a.sets[key].referencePoints for key in (control,alias))
-            _build_only.require(len(rp)==len(tied_rp)==1 and rp[0].id==tied_rp[0].id,
-                                f'RP alias or control mismatch: {name}')
-            xyz = tuple(map(float,a.getCoordinates(entity=rp[0])))
-            _build_only.require(xyz == point,f'Unexpected RP placement: {name}')
+            rp = _build_only.attachment_rp(a,control,alias,feature,point)
             instance = 'Inst_'+cable
             start_name,end_name = cable.upper()+'_STARTSET',cable.upper()+'_ENDSET'
             rows.append(dict(key=_build_only.CLOUD_NAMES[name],cloud_set=name+'_Nodes',
                 control=control,alias=alias,
                 coupling=dict(name=name+'_Coupling',kind='DISTRIBUTING',radius='WHOLE_SURFACE',
                               weighting='UNIFORM',dofs=[1,2,3,4,5,6]),
-                rp=dict(instance=None,label=None,feature_id=int(rp[0].id),xyz_m=xyz),
+                rp=rp,
                 start=endpoint(start_name,instance),end=endpoint(end_name,instance),
                 tie=dict(name='Tie_'+name,main=alias,secondary=start_name,
                          position_tolerance='COMPUTED',adjust=None),
