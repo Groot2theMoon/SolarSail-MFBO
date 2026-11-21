@@ -1,0 +1,313 @@
+# -*- coding: utf-8 -*-
+r"""
+Step-Postbuckle 을 Riks 스텝으로 바꾼 입력파일을 만든다 (원본은 건드리지 않는다).
+
+  python riks_patch_input.py [원본.inp] [출력.inp] [스텝이름]
+
+기본값: aba\HF_Postbuckle.inp -> aba\HF_Riks.inp, 스텝 Step-Postbuckle
+
+바꾸는 것 (딱 3줄):
+  1) *Step 줄의 inc=1000 -> inc=10000            (최대 증분 수; 리크스에서는 아크길이 증분 수)
+  2) *Static, stabilize=..., allsdtol=..., continue=NO  ->  *Static, riks
+     (STABILIZE/FACTOR 는 RIKS 와 함께 쓸 수 없다 - 키워드 문서)
+  3) 그 데이터 줄 -> 리크스 8항목 중 앞 5개:
+     dl_in, l_period, dl_min, dl_max, lpf_end
+       0.05,   1.0,    1e-05, 0.1,    1.0
+     lpf_end=1.0 이므로 BC 가 '스텝에서 지정한 최종값'(= 설계 운용점)에 닿으면 스텝이 끝난다.
+     노드/dof/값(6~8항목)은 쓰지 않는다.
+
+검증: v7 프로브에서 확인된 사실만 쓴다.
+  - lambda 는 prescribed displacement 의 '값'도 스케일한다 (스텝 중 BC 값 변경이 실제로 진행됨)
+  - 리크스 데이터 라인 순서는 dl_in, l_period, dl_min, dl_max, lambda_end, node, dof, value
+    (lambda_end 를 3번째에 두면 min/max 로 읽혀 입력단계에서 거부된다)
+"""
+import io
+import os
+import sys
+
+BUILD = '2026-10-05c (ti-merge+i0ir)'
+KNOWN_FLAGS = ('--line-search', '--riks',
+               '--speed-discont', '--speed-iter')
+KNOWN_PREFIX = ('--tstop=', '--lpf=', '--arc=', '--arc-max=', '--inc=',
+               '--nls=', '--slsmin=', '--ia=', '--ran=', '--can=',
+               '--i0=', '--ir=')
+# --relax-corr 제거(2026-10-05) - 유일한 기능이 field 게이트였고, 지금은 --can=/--ran= 이 자동으로
+#   켠다. 게이트만 켜고 값을 안 주면 Cαn=1.0(기본의 100배 느슨)을 조용히 넣었다(§12).
+if '--relax-corr' in sys.argv[1:]:
+    print('[중단] --relax-corr 는 제거되었습니다.')
+    print('       유일한 기능이던 field 블록 게이트는 이제 --can= / --ran= 이 자동으로 켭니다.')
+    print('       게이트만 켜고 값을 비우면 Cαn 이 1.0(기본 1e-2 의 100배 느슨)이 되어')
+    print('       문서 기본값과 다른 상태가 조용히 만들어지므로 그 경로를 없앴습니다.')
+    print('       => 보정 기준은 --can=<값> (기본 1e-2), 잔차 기준은 --ran=<값> (기본 5e-3).')
+    sys.exit(2)
+for _a in sys.argv[1:]:
+    if _a.startswith('--') and not (_a in KNOWN_FLAGS or _a.startswith(KNOWN_PREFIX)):
+        print('[중단] 알 수 없는 옵션입니다: %r' % _a)
+        print('  아는 플래그: %s' % ', '.join(KNOWN_FLAGS))
+        print('  아는 값옵션: %s' % ', '.join(p + '<값>' for p in KNOWN_PREFIX))
+        print('  (구버전 패처로 --arc 를 주면 이 검사가 없어 조용히 기본값으로 돌아갑니다)')
+        sys.exit(2)
+print('[패처] build %s' % BUILD)
+_argv = [a for a in sys.argv[1:] if not a.startswith('--')]
+v = _argv
+LPF = None
+LS = ('--line-search' in sys.argv[1:])   # [2026-10-05 복구] 슬라이스 실수로 지워졌던 줄
+# field 블록 게이트 - Rαn/Cαn 은 field 데이터 줄에만 들어가므로 게이트가 꺼져 있으면 --ran=/--can= 이
+#   조용히 사라진다. 둘 중 하나라도 주면 자동으로 켜고, 아무것도 안 주면 Abaqus 기본값을 쓴다(§12).
+RC = ('--can=' in ' '.join(sys.argv[1:])) or ('--ran=' in ' '.join(sys.argv[1:]))
+FORCE_RIKS = ('--riks' in sys.argv[1:])
+SPD_DISCONT = ('--speed-discont' in sys.argv[1:])   # 속도: 컷백 감소(문서 ANALYSIS=DISCONTINUOUS)
+SPD_ITER = ('--speed-iter' in sys.argv[1:])   # [2026-10-05 복구] 슬라이스 실수로 덮어써졌던 줄
+ARC = None                      # --arc=<dl_in>: 아크길이 직접 지정(문서 기본인 '상한 없음' 동반)
+ARC_MAX = None                  # --arc-max=<v>: 굳이 상한을 걸고 싶을 때만
+# 수렴 레버 - *CONTROLS 문서(2017 KEYRefMap simakey-r-controls) 근거(§12).
+#   FIELD: Rαn(최대잔차/평균플럭스, 기본 5e-3) / Cαn(최대보정/최대증분, 기본 1e-2).
+#   LINE SEARCH: Nls(최대 반복, Newton 기본 0=비활성, 권장 5).  IA: 증분당 최대 시도(기본 5).
+NLS = None                      # --nls=<N>
+SLSMIN = None                   # --slsmin=<V>
+IA = None                       # --ia=<N>
+I0 = None                       # --i0=<N>: 잔차 증가(발산) 검사 시작 반복 (문서 기본 4)
+IR = None                       # --ir=<N>: 대수 수렴률 검사 시작 반복 (문서 기본 8)
+RAN = None                      # --ran=<V>
+# --can=<V> : Cαn = '최대 해 보정 / 최대 증분해' 수렴 기준(기본 1e-2).
+#   현재 덱은 `, 1.0, ,` 로 Cαn=1.0 (기본의 100배 느슨)이다. 이 값이 느슨하면 큰 증분에서
+#   각 증분이 덜 수렴된 채 통과해 누적되고, IG 상향과 결합하면 다른 평형해로 갈 수 있다
+#   (실측: IG=8 + Cαn=1.0 -> u_z,ave +32%, RF -27%, eval_abaqus FAIL).
+CAN = None                      # --can=<V>
+INC_LIMIT = None                # --inc=<N>: 증분 수 상한. 스크리닝용 - 시간축을 건드리지 않는다
+TSTOP = None                     # --tstop=<step time>: *Static 의 timePeriod(2번째 항목) 를 줄여 조기 종료
+for _a in sys.argv[1:]:
+    if _a.startswith('--tstop='):
+        try:
+            TSTOP = float(_a.split('=', 1)[1])
+        except ValueError:
+            print('[중단] --tstop= 뒤에는 숫자(step time)가 와야 합니다: %r' % _a)
+            sys.exit(2)
+if TSTOP is not None and FORCE_RIKS:
+    print("[중단] --tstop 과 --riks 는 함께 쓸 수 없습니다 (Riks 는 timePeriod 대신 아크길이를 받습니다).")
+    sys.exit(2)
+for a in sys.argv[1:]:
+    if a.startswith('--lpf='):
+        LPF = float(a.split('=', 1)[1])
+    elif a.startswith('--arc='):
+        ARC = float(a.split('=', 1)[1])
+    elif a.startswith('--nls='):
+        NLS = float(a.split('=', 1)[1])
+    elif a.startswith('--slsmin='):
+        SLSMIN = float(a.split('=', 1)[1])
+    elif a.startswith('--i0='):
+        I0 = int(a.split('=', 1)[1])
+    elif a.startswith('--ir='):
+        IR = int(a.split('=', 1)[1])
+    elif a.startswith('--ia='):
+        IA = int(float(a.split('=', 1)[1]))
+    elif a.startswith('--ran='):
+        RAN = float(a.split('=', 1)[1])
+    elif a.startswith('--can='):
+        CAN = float(a.split('=', 1)[1])
+    elif a.startswith('--arc-max='):
+        ARC_MAX = float(a.split('=', 1)[1])
+    elif a.startswith('--inc='):
+        INC_LIMIT = int(a.split('=', 1)[1])
+SRC = _argv[0] if len(_argv) > 0 else os.path.join('aba', 'HF_Postbuckle.inp')
+DST = _argv[1] if len(_argv) > 1 else os.path.join('aba', 'HF_Riks.inp')
+STEP = _argv[2] if len(_argv) > 2 else 'Step-Postbuckle'
+
+RIKS_STATIC = '*Static, riks'
+RIKS_DATA = '0.05, 1.0, 1e-05, 0.1, %s'   # 마지막 항목 = lpf_end (기본 1.0)
+
+
+def riks_data(lpf, arc=None, arc_max=None):
+    """리크스 데이터 라인: dl_in, l_period, dl_min, dl_max, lambda_end.
+
+    아바쿠스 *STATIC 키워드 문서(2017, Data line for the Riks method) 기준:
+      1항 dl_in   : 0/미지정이면 '스텝의 총 아크길이' 가 기본 = 첫 증분에서 스텝 전체.
+      2항 lperiod : 기본 1.0. 첫 증분의 lambda 증가는 dlambda_in = dl_in / lperiod.
+      3항 dl_min  : 0이면 min(제안 dl_in, 1e-5 x 총 아크길이) 가 기본.
+      4항 dl_max  : **미지정이면 상한 없음**(no upper limit is imposed).
+      5항 lpf_end : lambda 상한.
+
+    => 그래서 dl_max 를 지정하는 것은 자동 증분이 아크길이를 '늘릴' 여지를 잘라먹는다.
+       이전 실패 런들은 dl_max 를 0.1 / 0.025 로 조여놓았고, 더 좁게 조인 쪽(V1)이 더 못 갔다.
+       문서 기본(상한 없음)으로 되돌리려면 4항을 비운다.
+    """
+    if lpf is None:
+        lpf = 1.0
+    if arc is not None:
+        dl_in = arc
+        dl_min = 1e-06
+        dl_max_s = '' if arc_max is None else ('%.6g' % arc_max)
+    else:
+        dl_in = min(0.05, max(0.001, lpf / 5.0))
+        dl_min = 1e-07
+        dl_max_s = '%.6g' % (arc_max if arc_max is not None
+                             else min(0.1, max(0.002, lpf / 2.0)))
+    return '%.6g, 1.0, %.6g, %s, %.6g' % (dl_in, dl_min, dl_max_s, lpf)
+NEW_INC = INC_LIMIT if INC_LIMIT else 10000
+
+if not os.path.exists(SRC):
+    sys.exit('ERROR: 원본을 찾지 못했습니다: %s' % SRC)
+
+lines = io.open(SRC, 'r', encoding='utf-8', errors='replace').read().splitlines()
+
+# 1) 대상 *Step 줄
+si = None
+for i, l in enumerate(lines):
+    ls = l.strip().lower()
+    if ls.startswith('*step') and ('name=' + STEP).lower() in ls:
+        si = i
+        break
+if si is None:
+    sys.exit('ERROR: *Step, name=%s 를 찾지 못했습니다' % STEP)
+
+# 2) 그 스텝 안의 *Static 줄 (+다음 줄이 데이터 줄)
+sidx = None
+for j in range(si, min(si + 60, len(lines))):
+    if lines[j].strip().lower().startswith('*static'):
+        sidx = j
+        break
+if sidx is None or sidx + 1 >= len(lines):
+    sys.exit('ERROR: %s 스텝 안에서 *Static + 데이터 줄을 찾지 못했습니다' % STEP)
+
+print('[찾음] line %d: %s' % (si + 1, lines[si]))
+print('[찾음] line %d: %s' % (sidx + 1, lines[sidx]))
+print('[찾음] line %d: %s' % (sidx + 2, lines[sidx + 1]))
+
+if lines[sidx].strip().lower().replace(' ', '').startswith('*static,riks'):
+    print('[안내] 이미 Riks 스텝입니다 - 그대로 복사합니다.')
+
+# 데이터 줄 형식 확인 (예상: initialInc, timePeriod, minInc, maxInc = 4항목)
+old_data = [x.strip() for x in lines[sidx + 1].split(',')]
+print('[확인] 기존 데이터 항목 수 = %d (%s)' % (len(old_data), lines[sidx + 1].strip()))
+if len(old_data) > 4 and old_data[0] != '':
+    print('[경고] 항목이 4개를 넘습니다 - 이 스텝이 정말 일반 Static 인지 확인하세요.')
+
+# --tstop: *Static 데이터 줄 = initialInc, timePeriod, minInc, maxInc. timePeriod 를 줄여 조기 종료한다(§12).
+if TSTOP is not None:
+    if len(old_data) < 2:
+        print('[중단] 데이터 줄에 timePeriod 항목이 없습니다: %r' % lines[sidx + 1])
+        sys.exit(2)
+    # 함정 - *Static 의 initialInc/minInc/maxInc 는 스텝타임 단위다. timePeriod 만 줄이면 같은 값이
+    #   램프 기준으로 20배 큰 증분이 되어 보정검정이 깨진다. 세 값을 같은 비율로 스케일해 보존한다(§12).
+    _old_tp = float(old_data[1]) if len(old_data) > 1 else 1.0
+    _ratio = (TSTOP / _old_tp) if _old_tp else 1.0
+    for _k in (0, 2, 3):
+        if len(old_data) > _k:
+            try:
+                old_data[_k] = '%g' % (float(old_data[_k]) * _ratio)
+            except ValueError:
+                pass
+    old_data[1] = '%g' % TSTOP
+    lines[sidx + 1] = ', '.join(old_data)
+    print('[진단] timePeriod %g -> %g, 증분 파라미터 x%g (물리적 증분 이력 보존)'
+          % (_old_tp, TSTOP, _ratio))
+
+# 3) 세 줄 교체
+new_step = lines[si]
+if 'inc=' in new_step.lower():
+    import re
+    new_step = re.sub(r'inc=\s*\d+', 'inc=%d' % NEW_INC, new_step, flags=re.I)
+    print('[교체] *Step: %s' % new_step)
+
+out = list(lines)
+out[si] = new_step
+if LS:
+    # line search 의 표적 - attempt 1 에서 보정이 부호를 바꾸며 커지고 'DISP. CORRECTION TOO LARGE'
+    #   -> 'APPEARS TO BE DIVERGING' 이 된다. 정적 해석·기존 안정화는 그대로 두고 삽입만 한다(§12).
+    _nls = int(NLS) if NLS is not None else 5
+    # fields: Nls, slsmax, slsmin  (뒤는 기본값)
+    _lsdata = '%d,' % _nls
+    if SLSMIN is not None:
+        _lsdata = '%d, , %.6g,' % (_nls, SLSMIN)
+    out.insert(sidx + 2, _lsdata)
+    out.insert(sidx + 2, '*Controls, parameters=line search')
+if RC and (CAN is None):
+    print('[경고] --ran 만 주면 Cαn 칸이 비어 **Abaqus 기본 1e-2** 가 쓰인다(field 데이터 줄의 2번째 칸).')
+    print('       실측: 이 런의 보정/증분 비는 0.19% 로 기본 1e-2(1%%) 를 만족했다.')
+    print('       => 기본값을 의도한 것이면 그대로 두고, 명시하려면 --can=1e-2 를 함께 준다.')
+    print('       (과거처럼 1.0 으로 끄려면 --can=1.0 - 문서가 허용하나 정확도 손실이 있다)')
+if RC:
+    # Cαn 이 필요한 이유 - 잔차는 통과하는데 'DISP. CORRECTION TOO LARGE COMPARED TO DISP. INCREMENT'
+    #   로 실패한다. 증분이 작아지면 보정/증분 비가 만족될 수 없다(컷백 함정).
+    #   문서가 'set Cαn to 1' 을 허용한다. 잔차 기준 Rαn 은 건드리지 않는다(평형 정확성 유지, §12).
+    _ran_s = ('%.6g' % RAN) if RAN is not None else ''
+    _can_s = ('%.6g' % CAN) if CAN is not None else ''
+    if RAN is not None or CAN is not None:
+        out.insert(sidx + 2, '%s, %s, ,' % (_ran_s, _can_s))
+        if CAN is not None:
+            print('[주의] Cαn=%.6g 로 지정 (기본 1e-2). 1 미만이면 수렴이 엄격해진다.' % CAN)
+    # (삭제) 과거 `else: out.insert(sidx+2, ', 1.0, ,')` 분기.
+    #   RC 가 값옵션(--ran/--can)으로만 켜지므로 이 분기는 도달 불가다. 이 분기가
+    #   '플래그만 주면 Cαn=1.0' 이라는 조용한 기본값 변경의 원인이었다.
+    out.insert(sidx + 2, '*Controls, parameters=field, field=displacement')
+# TIME INCREMENTATION 은 한 블록으로 병합한다 - 데이터 줄은 필드 '위치'로만 의미를 갖고,
+#   블록이 2개면 뒤 블록의 빈 칸이 앞을 덮는지가 문서에 없다. I0/IR 은 ANALYSIS=DISCONTINUOUS
+#   없이 직접 필드로 지정한다(문서가 overrides 라고 명시). 우리 모델엔 severe discontinuity 가 없다(§12).
+_ti = [''] * 11                       # I0, IR, IP, IC, IL, IG, IS, IA, IJ, IT, IcS
+_ti_used = False
+if I0 is not None:
+    # 문서: 잔차가 '두 반복 연속 증가'하는지 검사하기 시작하는 반복. 최소 3, 기본 4.
+    _ti[0] = '%d' % I0; _ti_used = True
+if IR is not None:
+    # 문서: 대수 수렴률 검사 시작 반복. 기본 8.
+    #   "Sometimes it is useful to increase both I0 and IR ... to avoid premature cutbacks"
+    _ti[1] = '%d' % IR; _ti_used = True
+if SPD_ITER:
+    # [2026-10-01] 증분 증가 조건: IC=16, IL=14, IG=8 (문서 순서 4,5,6)
+    #   실측: 증분 3.771e-04 -> 1.410e-03 (3.74배), wall 5828 -> 1706 s. 단 그 런은 다른 해였다.
+    _ti[3], _ti[4], _ti[5] = '16', '14', '8'; _ti_used = True
+if IA is not None:
+    # [2026-10-02] 증분당 최대 시도. 실측 서명 'TOO MANY ATTEMPTS MADE FOR THIS INCREMENT'.
+    _ti[7] = '%d' % IA; _ti_used = True
+if _ti_used:
+    while _ti and _ti[-1] == '':
+        _ti.pop()                     # 뒤쪽 빈 칸 제거 -> 생성 문자열이 기존 검증값과 동일해진다
+    out.insert(sidx + 2, ', '.join(_ti))
+    out.insert(sidx + 2, '*Controls, parameters=time incrementation')
+if SPD_DISCONT:
+    # 속도 개선 - 문서: "Sometimes it is useful to increase both I0 and IR ... to avoid premature cutbacks".
+    #   ANALYSIS=DISCONTINUOUS 는 I0=8/IR=10 을 자동 설정한다. 우리 런은 컷백 20.5%(203/990)라
+    #   조기 컷백을 줄이는 것이 목적이다(§12).
+    out.insert(sidx + 2, '*Controls, analysis=discontinuous')
+# 리크스 전환 판정: 옵션을 주지 않으면 리크스(기존 기본), --riks 를 주면 옵션과 무관하게 리크스.
+#   이렇게 해야 '리크스 + C_n^a 완화' 라는 공정한 조합을 만들 수 있다.
+DO_RIKS = ('--riks' in sys.argv[1:]) or (not (LS or RC or (TSTOP is not None)
+                                                or SPD_DISCONT or SPD_ITER
+                                                or (NLS is not None) or (SLSMIN is not None)
+                                                or (IA is not None) or (RAN is not None)
+                                                or (CAN is not None)
+                                                or (I0 is not None) or (IR is not None)))
+if DO_RIKS:
+    out[sidx] = RIKS_STATIC
+    out[sidx + 1] = riks_data(LPF, ARC, ARC_MAX)
+if DO_RIKS and (SPD_DISCONT or SPD_ITER):
+    print('[경고] 리크스 스텝에는 *Controls 를 넣어도 실효가 없다(문서에 Riks 언급 없음,')
+    print('       line search 도 평가 0회로 실측). 속도 옵션은 정적 스텝에서만 쓰세요.')
+if TSTOP is not None:
+    print('[경고] --tstop 은 스텝의 timePeriod 를 줄입니다. 증분 파라미터를 비율 스케일해 첫 증분은')
+    print('       맞추지만, 이후 자동 증분은 압축된 시간축에서 결정되므로 로그의 증분값을 완주 런과')
+    print('       직접 비교할 수 없습니다(실측: 증분당 람다가 6.2배 작아짐).')
+    print('       스크리닝에는 --inc=<N> 을 쓰세요: 스텝핑을 그대로 두고 증분 수만 자릅니다.')
+if LPF is not None:
+    print('[진단] lpf_end = %g -> 램프의 %g%% 지점에서 스텝을 끝낸다' % (LPF, LPF * 100))
+
+_raw = io.open(SRC, 'rb').read()
+_nl = '\r\n' if b'\r\n' in _raw else '\n'
+# 가드 - 리크스 스텝은 데이터 덱의 마지막이어야 한다. 아니면 입력단계에서 즉시 죽으므로 중단한다(§12).
+_tail = [] if not DO_RIKS else [(sidx + 3 + k, l) for k, l in enumerate(out[sidx + 2:])
+         if l.strip().lower().startswith('*step')]
+if _tail:
+    print('ERROR: %s 뒤에 스텝이 더 있습니다 - 리크스 스텝은 마지막이어야 합니다.' % STEP)
+    for ln, txt in _tail[:5]:
+        print('   line %d: %s' % (ln, txt.strip()))
+    print('   -> 원본이 최신 HF 입력(aba\\HF_Postbuckle.inp)이 맞는지 확인하세요.')
+    print('   -> 스텝을 지우거나, 리크스 스텝을 덱의 끝으로 옮긴 뒤 다시 실행하세요. 쓰지 않았습니다.')
+    sys.exit(2)
+
+io.open(DST, 'w', encoding='ascii', errors='replace', newline=_nl).write(_nl.join(out) + _nl)
+print('[줄바꿈] %s' % ('CRLF' if _nl == '\r\n' else 'LF'))
+print('[저장] %s (%d 줄)' % (DST, len(out)))
+print('--- 새 스텝 블록 (앞 7줄, *Controls 포함) ---')
+for l in out[si:si + 7]:
+    print('   ', l)
+print('[다음] abaqus job=%s interactive' % os.path.splitext(os.path.basename(DST))[0])
