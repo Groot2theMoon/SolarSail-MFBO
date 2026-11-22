@@ -71,28 +71,40 @@ class _SinglePrecisionMismatch(ValueError):
         super().__init__(f"{detail['field']}: value contradicts native single precision")
 
 
+def _binary32_exact(bits64):
+    """Test IEEE binary32 representability from the bits of a Python float."""
+    magnitude = bits64 & ((1 << 63) - 1)
+    if not magnitude:
+        return True  # Both signs of zero.
+    exponent = (magnitude >> 52) - 1023
+    if not -149 <= exponent <= 127:
+        return False  # Also excludes binary64 subnormals and nonfinite values.
+    # Binary32 normals have 23 fraction bits. Subnormals instead lie on the
+    # fixed 2**-149 lattice; one binary64 significand bit weighs 2**(exponent-52).
+    discarded = 29 if exponent >= -126 else -97 - exponent
+    return not magnitude & ((1 << discarded) - 1)
+
+
 def _check_single(raw, picked, use, components, *, field, instance, position, label,
                   precision, accessor):
-    # Compare a temporary round trip. The accessor value is not replaced by it.
-    restored=tuple(np.asarray(picked,dtype='float32').astype('float64'))
-    if restored==picked:
-        return
-    slot=next(j for j,(value,trial) in enumerate(zip(picked,restored)) if value!=trial)
-    i=use[slot]
-    value=raw[i]
-    raise _SinglePrecisionMismatch({
-        'instance':instance,'field':field,'requested_position':'NODAL','returned_position':position,
-        'node_label':label,'component':components[i],'accessor_component_index':i,
-        'native_precision':precision,'accessor':accessor,
-        'accessor_value_repr':repr(value),
-        'accessor_value_type':f'{type(value).__module__}.{type(value).__qualname__}',
-        'checked_python_float_hex':picked[slot].hex(),
-        'binary32_roundtrip_float_hex':float(restored[slot]).hex(),
-        'binary32_roundtrip_value_repr':repr(float(restored[slot])),
-        'operation_order':['read native accessor result','convert scalar to Python float',
-                           'select component by label','cast temporary to binary32 and promote to binary64 for exact comparison'],
-        'coordinate_transform_before_check':False,
-    })
+    for slot, scalar in enumerate(picked):
+        bits64, = struct.unpack('>Q', struct.pack('>d', scalar))
+        if _binary32_exact(bits64):
+            continue
+        i = use[slot]
+        value = raw[i]
+        raise _SinglePrecisionMismatch({
+            'instance':instance,'field':field,'requested_position':'NODAL','returned_position':position,
+            'node_label':label,'component':components[i],'accessor_component_index':i,
+            'native_precision':precision,'accessor':accessor,
+            'accessor_value_repr':repr(value),
+            'accessor_value_type':f'{type(value).__module__}.{type(value).__qualname__}',
+            'checked_python_float_hex':scalar.hex(),
+            'checked_binary64_bits':f'0x{bits64:016x}',
+            'operation_order':['read native accessor result','convert scalar to Python float',
+                               'select component by label','test exact binary32 representability with integer bit operations'],
+            'coordinate_transform_before_check':False,
+        })
 
 
 def extract_field(frame,name,instance,labels,nodal):
@@ -271,6 +283,11 @@ def with_odb(open_odb,path,fn):
         obj.close()
 
 
+def _write_native_fields(path, arrays):
+    with path.open('xb') as f:
+        np.savez_compressed(f, **arrays)
+
+
 def _save_probe(out, case, before, run, result):
     after={k:identity(case[k]['path']) for k in before}
     out.mkdir()
@@ -320,8 +337,7 @@ def main():
         raise
     a.out.mkdir()
     raw=a.out/'native-fields.npz'
-    with raw.open('xb') as f:
-        np.savez_compressed(f,**arrays)
+    _write_native_fields(raw, arrays)
     del arrays
     with np.load(raw,allow_pickle=False) as b:
         verified=with_odb(odbAccess.openOdb,before['odb']['path'],lambda x:recheck(x,c,{k:b[k] for k in b.files},metadata))

@@ -4,6 +4,8 @@ import json
 import math
 from pathlib import Path
 from types import SimpleNamespace as NS
+import struct
+import sys
 import tempfile
 import unittest
 
@@ -35,6 +37,15 @@ class Value:
     def dataDouble(self):
         if self.precision=='SINGLE_PRECISION':raise AssertionError('dataDouble on SINGLE')
         return self.val
+
+
+# Fixed IEEE encodings, independent of narrowing or the production predicate.
+SINGLE_FIXTURES = (
+    (0x00000001, '0x1p-149'), (0x80000001, '-0x1p-149'), (0x007fffff, '0x1.fffffcp-127'),
+    (0x807fffff, '-0x1.fffffcp-127'), (0x00800000, '0x1p-126'), (0x80800000, '-0x1p-126'),
+    (0x00800001, '0x1.000002p-126'), (0x80800001, '-0x1.000002p-126'), (0x7f7fffff, '0x1.fffffep+127'),
+    (0xff7fffff, '-0x1.fffffep+127'), (0x00000000, '0x0p+0'), (0x80000000, '-0x0p+0'),
+)
 
 
 class AuditTests(unittest.TestCase):
@@ -97,6 +108,69 @@ class AuditTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'signed-zero'):
             n.recheck(odb,case,{**arrays,'terminal_COORD_xyz':np.abs(arrays['terminal_COORD_xyz'])},fact)
 
+    def test_native_accessor_array_npz_and_independent_readback_preserve_ieee_bits(self):
+        codes, hexfloats = zip(*SINGLE_FIXTURES)
+        backing = np.array(codes, dtype=np.uint32)
+        accessors = backing.view(np.float32).reshape(-1, 3)
+        expected = [struct.unpack('>Q', struct.pack('>d', float.fromhex(h)))[0] for h in hexfloats]
+        labels = [7, 11, 20, 25]
+        i = NS(name='MEM', nodes=[NS(label=k, coordinates=(0.,1.,2.)) for k in labels], elements=[])
+        values = [Value(i,k,32,row) for k,row in zip(labels,accessors)]
+        raw = [scalar for v in values for scalar in v.data]
+        self.assertTrue(all(isinstance(s, np.float32) for s in raw))
+        self.assertEqual([struct.pack('>d', float(s)).hex() for s in raw], [f'{b:016x}' for b in expected])
+        terminal = NS(frameValue=1.,incrementNumber=7,
+                      fieldOutputs={'COORD':Field(('COOR1','COOR2','COOR3'),list(reversed(values)))})
+        initial = NS(frameValue=0.,incrementNumber=0,fieldOutputs={})
+        step = NS(frames=[initial,terminal])
+        odb = NS(steps={'S':step},rootAssembly=NS(instances={'MEM':i}))
+        case = {'step':'S','instance':'MEM','frame':1,'increment':7}
+        fields, fact = n._frame_fields(step,terminal,case,i,labels,'NODAL',keep=True)
+        arrays = {'node_labels':np.array(labels),'mesh_reference_xyz':np.array([(0.,1.,2.)]*len(labels)),
+                  'element_labels_S8R5':np.array([],dtype='int64'),'connectivity_S8R5':np.empty((0,8),dtype='int64'),
+                  'element_labels_STRI65':np.array([],dtype='int64'),'connectivity_STRI65':np.empty((0,6),dtype='int64'),
+                  **fields}
+        key = 'terminal_COORD_xyz'
+        self.assertEqual(arrays[key].dtype,np.dtype('float64'))
+        self.assertEqual(arrays[key].view(np.uint64).ravel().tolist(),expected)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp)/'native-fields.npz'
+            n._write_native_fields(path,arrays)
+            with np.load(path,allow_pickle=False) as archive:
+                loaded = dict(archive)
+            self.assertEqual(loaded[key].dtype,np.dtype('float64'))
+            actual = loaded[key].view(np.uint64).ravel().tolist()
+            self.assertEqual(actual,expected)
+            readback = n.recheck(odb,case,loaded,{'fields':fact})
+            self.assertEqual(readback['fields']['terminal_COORD']['components'],len(codes))
+            corrupted = loaded[key].copy()
+            corrupted.view(np.uint64)[0,0] = 0
+            with self.assertRaisesRegex(ValueError,'readback disagree|bits disagree'):
+                n.recheck(odb,case,{**loaded,key:corrupted},{'fields':fact})
+        self.assertEqual(backing.tolist(),list(codes))
+        print('ACCESSOR_BINARY32_TO_RELOADED_BINARY64 '+json.dumps(
+            [[f'{src:08x}',f'{dst:016x}'] for src,dst in zip(codes,actual)]),flush=True)
+
+    def test_binary64_only_values_rejected_at_single_precision_gate(self):
+        # Between binary32 values, below the subnormal lattice, and above max finite.
+        only_double = ('0x1.0000000000001p+0','-0x1.0000000000001p+0',
+                       '0x1p-150','-0x1.000002p-149','0x1.fffffep-127',
+                       '0x1.fffffe0000001p+127','0x1p+128','0x0.0000000000001p-1022')
+        i = NS(name='MEM')
+        for h in only_double:
+            with self.subTest(value=h):
+                value = (struct.unpack('>d',bytes.fromhex('0000000000000001'))[0]
+                         if h.startswith('0x0.') else float.fromhex(h))
+                def field(precision):
+                    return NS(fieldOutputs={'COORD':Field(('COOR1','COOR2','COOR3'),
+                                                          [Value(i,7,precision,(0.,0.,value))])})
+                with self.assertRaises(n._SinglePrecisionMismatch) as caught:
+                    n.extract_field(field(32),'COORD',i,[7],'NODAL')
+                self.assertEqual(caught.exception.detail['checked_python_float_hex'], value.hex())
+                rows,_ = n.extract_field(field(64),'COORD',i,[7],'NODAL')
+                self.assertEqual(rows['COORD_xyz'].view(np.uint64)[0,2],
+                                 struct.unpack('>Q',struct.pack('>d',value))[0])
+
     def test_first_mismatch_identifies_frame_component_and_unmodified_accessor(self):
         class RawFloat(float):
             def __repr__(self):
@@ -124,8 +198,7 @@ class AuditTests(unittest.TestCase):
                 self.assertEqual(d['accessor_value_repr'],repr(bad))
                 self.assertTrue(d['accessor_value_type'].endswith('.RawFloat'))
                 self.assertEqual(d['checked_python_float_hex'],float(bad).hex())
-                self.assertEqual(d['binary32_roundtrip_float_hex'],(1.).hex())
-                self.assertEqual(d['binary32_roundtrip_value_repr'],'1.0')
+                self.assertEqual(d['checked_binary64_bits'],'0x3ff0000008000000')
                 self.assertFalse(d['coordinate_transform_before_check'])
 
     def test_single_precision_gate_checks_accessor_not_a_transformed_coordinate(self):
@@ -156,7 +229,8 @@ class AuditTests(unittest.TestCase):
             fields={'COORD':Field(('COOR1','COOR2','COOR3'),values),'U':never}
         else:
             fields={'COORD':Field(('COOR1','COOR2','COOR3'),
-                                 [Value(i,k,32,(1.,2.,-0.)) for k in range(1,count+1)])}
+                                 [Value(i,1,32,(1.,2.,np.array([1],dtype=np.uint32).view(np.float32)[0]))]+
+                                 [Value(i,k,32,(1.,2.,-0.)) for k in range(2,count+1)])}
         terminal=NS(frameValue=1.,incrementNumber=5,fieldOutputs=fields)
         initial=NS(frameValue=0.,incrementNumber=0,fieldOutputs={})
         step=NS(domain='TIME',timePeriod=1.,frames=[initial,terminal])
@@ -194,4 +268,23 @@ class AuditTests(unittest.TestCase):
                 self.assertNotIn('first_mismatch',d)
 
 if __name__=='__main__':
+    if sys.argv[1:] == ['--no-odb']:
+        import odbAccess
+
+        attempts = []
+        def forbid_open(*args, **kwargs):
+            attempts.append(1)
+            raise AssertionError('native openOdb is forbidden during fabricated tests')
+
+        odbAccess.openOdb = forbid_open
+        if odbAccess.openOdb is not forbid_open:
+            raise RuntimeError('could not guard native openOdb')
+        print('NATIVE_TEST_RUNTIME '+json.dumps(
+            {'executable':sys.executable,'python':sys.version.split()[0],'numpy':np.__version__,
+             'odbAccess':odbAccess.__file__}),flush=True)
+        result = unittest.main(argv=[sys.argv[0]],verbosity=2,exit=False).result
+        passed = result.wasSuccessful() and not attempts
+        print(f'NO_ODB_TESTS {"PASS" if passed else "FAIL"} tests={result.testsRun} native_open_attempts={len(attempts)}',
+              flush=True)
+        sys.exit(0 if passed else 1)
     unittest.main()
