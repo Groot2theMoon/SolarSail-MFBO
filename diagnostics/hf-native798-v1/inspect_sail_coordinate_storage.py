@@ -65,7 +65,41 @@ def get_system(v,accessor):
     return 2, a
 
 
+class _SinglePrecisionMismatch(ValueError):
+    def __init__(self, detail):
+        self.detail=detail
+        super().__init__(f"{detail['field']}: value contradicts native single precision")
+
+
+def _check_single(raw, picked, use, components, *, field, instance, position, label,
+                  precision, accessor):
+    # Compare a temporary round trip. The accessor value is not replaced by it.
+    restored=tuple(np.asarray(picked,dtype='float32').astype('float64'))
+    if restored==picked:
+        return
+    slot=next(j for j,(value,trial) in enumerate(zip(picked,restored)) if value!=trial)
+    i=use[slot]
+    value=raw[i]
+    raise _SinglePrecisionMismatch({
+        'instance':instance,'field':field,'requested_position':'NODAL','returned_position':position,
+        'node_label':label,'component':components[i],'accessor_component_index':i,
+        'native_precision':precision,'accessor':accessor,
+        'accessor_value_repr':repr(value),
+        'accessor_value_type':f'{type(value).__module__}.{type(value).__qualname__}',
+        'checked_python_float_hex':picked[slot].hex(),
+        'binary32_roundtrip_float_hex':float(restored[slot]).hex(),
+        'binary32_roundtrip_value_repr':repr(float(restored[slot])),
+        'operation_order':['read native accessor result','convert scalar to Python float',
+                           'select component by label','cast temporary to binary32 and promote to binary64 for exact comparison'],
+        'coordinate_transform_before_check':False,
+    })
+
+
 def extract_field(frame,name,instance,labels,nodal):
+    return _extract_field(frame,name,instance,labels,nodal,keep=True)
+
+
+def _extract_field(frame,name,instance,labels,nodal,*,keep):
     if name not in frame.fieldOutputs:
         return {}, {'status':'missing','reason':'field not in this frame'}
     field=frame.fieldOutputs[name]
@@ -77,15 +111,18 @@ def extract_field(frame,name,instance,labels,nodal):
         key=int(v.nodeLabel); precision=str(v.precision)
         require(key not in got and key in labels and precision in PREC,f'{name}: duplicate/foreign label or unknown precision')
         bits,accessor,coord_access=PREC[precision]
-        full=tuple(float(q) for q in getattr(v,accessor))
+        raw=tuple(getattr(v,accessor))
+        full=tuple(float(q) for q in raw)
         require(len(full)==len(comp) and all(map(math.isfinite,full)),f'{name}: invalid components')
         picked=tuple(full[i] for i in use)
         if bits==32:
-            require(tuple(np.asarray(picked,dtype='float32').astype('float64'))==picked,
-                    f'{name}: value contradicts native single precision')
+            _check_single(raw,picked,use,comp,field=name,instance=instance.name,
+                          position=str(v.position),label=key,precision=precision,accessor=accessor)
         sc,sm=get_system(v,coord_access)
-        got[key]=(picked,bits,sc,sm)
+        got[key]=(picked,bits,sc,sm) if keep else None
     require(got.keys()==set(labels),f'{name}: incomplete nodal coverage ({len(got)} vs {len(labels)})')
+    if not keep:
+        return {}, {'status':'complete','checked_nodes':len(got)}
     rows=[got[i] for i in labels]
     systems=[k for k,r in enumerate(rows) if r[2]==2]
     output={name+'_xyz':np.asarray([r[0] for r in rows],dtype='float64'),
@@ -110,6 +147,38 @@ def terminal(odb,c):
     return step,I,t
 
 
+def _frame_fields(step, terminal_frame, case, instance, labels, nodal, *, keep):
+    fields={}
+    out={}
+    for which,index,frame in (('terminal',case['frame'],terminal_frame),('initial_frame',0,step.frames[0])):
+        if which=='initial_frame' and (frame.frameValue!=0 or frame.incrementNumber!=0):
+            fields[which]={'status':'unavailable','reason':'first saved frame is not zero-time increment zero'}
+            continue
+        meta={}
+        for name in FIELDS:
+            try:
+                data,info=_extract_field(frame,name,instance,labels,nodal,keep=keep)
+            except _SinglePrecisionMismatch as ex:
+                ex.detail.update(step=case['step'],frame_role=which,frame_index=index,
+                                 frame_time=float(frame.frameValue),increment=int(frame.incrementNumber))
+                raise
+            if keep:
+                out.update({which+'_'+k:v for k,v in data.items()})
+            meta[name]=info
+        fields[which]={'all_field_names':list(frame.fieldOutputs.keys()),'time':float(frame.frameValue),
+                       'increment':int(frame.incrementNumber),'fields':meta}
+    return out,fields
+
+
+def _probe_fields(odb,case,nodal):
+    s,instance,t=terminal(odb,case)
+    labels={int(n.label) for n in instance.nodes}
+    require(len(labels)==len(instance.nodes)==30501,'invalid membrane node coverage')
+    require('COORD' in t.fieldOutputs,'terminal nodal COORD missing; cannot replay precision check')
+    _,fields=_frame_fields(s,t,case,instance,labels,nodal,keep=False)
+    return fields
+
+
 def extract(odb,c,nodal):
     s,I,t=terminal(odb,c)
     nodes=duplicate_free((int(n.label),(tuple(map(float,n.coordinates)),str(getattr(n,'precision',None)))) for n in I.nodes)
@@ -124,17 +193,8 @@ def extract(odb,c,nodal):
         out['element_labels_'+typ]=np.asarray([k for k,_ in v],dtype='int64')
         out['connectivity_'+typ]=np.asarray([n for _,n in v],dtype='int64')
     require(len(topo)==10100,'unexpected membrane element type')
-    fields={}
-    for which,frame in (('terminal',t),('initial_frame',s.frames[0])):
-        if which=='initial_frame' and (frame.frameValue!=0 or frame.incrementNumber!=0):
-            fields[which]={'status':'unavailable','reason':'first saved frame is not zero-time increment zero'}
-            continue
-        meta={}
-        for name in FIELDS:
-            a,info=extract_field(frame,name,I,labels,nodal)
-            out.update({which+'_'+k:v for k,v in a.items()});meta[name]=info
-        fields[which]={'all_field_names':list(frame.fieldOutputs.keys()),'time':float(frame.frameValue),
-                       'increment':int(frame.incrementNumber),'fields':meta}
+    arrays,fields=_frame_fields(s,t,c,I,labels,nodal,keep=True)
+    out.update(arrays)
     return out,{'fields':fields,'mesh_api_precision':dict(Counter(v[1] for v in nodes.values())),
          'job_data':{k:str(getattr(odb.jobData,k,None)) for k in ('analysisCode','version','precision')}}
 
@@ -211,9 +271,33 @@ def with_odb(open_odb,path,fn):
         obj.close()
 
 
+def _save_probe(out, case, before, run, result):
+    after={k:identity(case[k]['path']) for k in before}
+    out.mkdir()
+    receipt={**run,**result,'before':before,'after':after,'inputs_unchanged':before==after,
+             'readOnly':True,'handle_closed':True,'geometry_or_raw_bundle_written':False}
+    with (out/'precision-probe.json').open('x',encoding='utf-8',newline='\n') as f:
+        json.dump(receipt,f,indent=2,allow_nan=False)
+        f.write('\n')
+    require(before==after,'input or ODB identity changed')
+
+
+def _run_probe(open_odb,nodal,out,case,before,run):
+    try:
+        fields=with_odb(open_odb,before['odb']['path'],lambda odb:_probe_fields(odb,case,nodal))
+    except _SinglePrecisionMismatch as ex:
+        _save_probe(out,case,before,run,{'status':'precision_mismatch','first_mismatch':ex.detail})
+        print(ex,file=sys.stderr)
+        return 1
+    _save_probe(out,case,before,run,{'status':'not_reproduced','inspected_fields':fields})
+    return 0
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--request',type=Path,required=True);p.add_argument('--out',type=Path,required=True)
+    p.add_argument('--first-mismatch-only',action='store_true',
+                   help='read one pinned ODB once, stop at the first precision mismatch, and write only a diagnostic receipt')
     a=p.parse_args();c=json.loads(a.request.read_bytes(),object_pairs_hook=duplicate_free)
     require(not a.out.exists() and not a.out.is_symlink(),'new output required')
     before={k:identity(c[k]['path']) for k in ('input','odb')}
@@ -225,7 +309,15 @@ def main():
             'not installed Abaqus Python')
     rt={'abaqus':parts[-5],'python':sys.version.split()[0],'numpy':np.__version__}
     require(rt==c['runtime'],'unexpected runtime')
-    arrays,metadata=with_odb(odbAccess.openOdb,before['odb']['path'],lambda x:extract(x,c,NODAL))
+    run={'case':c['case'],'request':identity(a.request),'helper':identity(__file__),'runtime':rt,
+         'odbAccess':identity(odbAccess.__file__)}
+    if a.first_mismatch_only:
+        return _run_probe(odbAccess.openOdb,NODAL,a.out,c,before,run)
+    try:
+        arrays,metadata=with_odb(odbAccess.openOdb,before['odb']['path'],lambda x:extract(x,c,NODAL))
+    except _SinglePrecisionMismatch as ex:
+        _save_probe(a.out,c,before,run,{'status':'precision_mismatch','first_mismatch':ex.detail})
+        raise
     a.out.mkdir()
     raw=a.out/'native-fields.npz'
     with raw.open('xb') as f:
@@ -235,7 +327,7 @@ def main():
         verified=with_odb(odbAccess.openOdb,before['odb']['path'],lambda x:recheck(x,c,{k:b[k] for k in b.files},metadata))
     after={k:identity(c[k]['path']) for k in before}
     require(before==after,'input or ODB identity changed')
-    result={'case':c['case'],'request':identity(a.request),'helper':identity(__file__),'runtime':rt,'odbAccess':identity(odbAccess.__file__),
+    result={**run,
             'instance':c['instance'],'step':c['step'],'frame_index':c['frame'],'terminal_increment':c['increment'],
             'before':before,'after':after,'readOnly':True,'closed_both_handles':True,'native_arrays':identity(raw),
             **metadata,'independent_readback':verified}
@@ -245,4 +337,4 @@ def main():
 
 
 if __name__=='__main__':
-    main()
+    sys.exit(main())
