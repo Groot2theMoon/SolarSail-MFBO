@@ -36,6 +36,26 @@ class HighPreloadTests(unittest.TestCase):
         self.assertEqual(b, expected)
         self.assertEqual(set(verify_delta(a, b)), {'Inst_cable_CL', 'Inst_cable_CR'})
 
+    def test_explicit_initial_stresses_below_and_above_original(self):
+        a = fixture()
+        for val in (123000, 456000):
+            with self.subTest(clamp_pa=val):
+                b = derive(a, clamp_pa=val)
+                expected = a
+                for target in (b'CL', b'CR'):
+                    prefix = b'Inst_cable_' + target + b'.All_Elem, '
+                    expected = expected.replace(prefix + b'171000.,', prefix + str(val).encode() + b'.,')
+                self.assertEqual(b, expected)
+                self.assertEqual(set(verify_delta(a, b, clamp_pa=val)), {'Inst_cable_CL', 'Inst_cable_CR'})
+                with self.assertRaisesRegex(ValueError, 'unapproved byte change'):
+                    verify_delta(a, b, clamp_pa=val+1)
+
+    def test_explicit_stress_rejects_non_values_and_baseline_no_op(self):
+        a = fixture()
+        for val in (0, -1, 171000, 2.5, True):
+            with self.subTest(clamp_pa=val), self.assertRaisesRegex(ValueError, 'positive changed integer'):
+                derive(a, clamp_pa=val)
+
     def test_wrong_target_or_instance_binding_is_rejected(self):
         a = fixture()
         for before, after in ((b'CL.All_Elem', b'CL.WrongSet'), (b'part=Cable_CL', b'part=Cable_Top'),

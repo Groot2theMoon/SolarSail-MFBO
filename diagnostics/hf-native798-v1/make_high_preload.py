@@ -18,14 +18,22 @@ CABLES = {
     'inst_cable_top': ('cable_top', '1.71e+07'),
 }
 CLAMPS = ('inst_cable_cl', 'inst_cable_cr')
-NEW_TOKEN = b'8550000.'
+DEFAULT_CLAMP_PA = 8_550_000
+CORNER_PA = 17_100_000
 
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def derive(source):
+def _clamp_token(clamp_pa):
+    require(type(clamp_pa) is int and clamp_pa > 0 and clamp_pa != 171_000,
+            'replacement clamp stress must be a positive changed integer in Pa')
+    return f'{clamp_pa}.'.encode('ascii')
+
+
+def derive(source, *, clamp_pa=DEFAULT_CLAMP_PA):
+    replacement = _clamp_token(clamp_pa)
     lines = source.splitlines(keepends=True)
     parsed = list(cards(lines))
     parts, instances = {}, {}
@@ -60,14 +68,15 @@ def derive(source):
             if instance in CLAMPS:
                 fields = lines[i].split(b',')
                 require(fields[1] == b' 171000.', f'unexpected clamp token: {target}')
-                fields[1] = b' ' + NEW_TOKEN
+                fields[1] = b' ' + replacement
                 lines[i] = b','.join(fields)
     require(assignments == {'membrane-1.all_elem', *(x + '.all_elem' for x in CABLES)}, 'missing initial stress assignment')
     return b''.join(lines)
 
 
-def verify_delta(source, candidate):
+def verify_delta(source, candidate, *, clamp_pa=DEFAULT_CLAMP_PA):
     """Compare every byte outside two independently specified authored rows."""
+    replacement = _clamp_token(clamp_pa)
     old = source.splitlines(keepends=True)
     new = candidate.splitlines(keepends=True)
     require(len(old) == len(new), 'changed line count')
@@ -77,7 +86,7 @@ def verify_delta(source, candidate):
         if a == b:
             continue
         row = pattern.fullmatch(a)
-        require(row is not None and b == row[1] + b'8550000.' + row[2], f'unapproved byte change at line {i}')
+        require(row is not None and b == row[1] + replacement + row[2], f'unapproved byte change at line {i}')
         name = row[1].decode('ascii').split('.')[0]
         require(name not in seen and i > 1 and old[i - 2].strip().lower() == b'*initial conditions, type=stress',
                 f'duplicate or out-of-card stress edit at line {i}')
@@ -99,14 +108,15 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     for name in ('source', 'control'):
         parser.add_argument('--' + name + '-sha256', required=True)
+    parser.add_argument('--clamp-pa', type=int, default=DEFAULT_CLAMP_PA)
     a = parser.parse_args()
     outputs = (a.out, a.diff, a.receipt)
     require(len({p.resolve() for p in outputs}) == len(outputs) and not any(p.exists() for p in outputs),
             'all outputs must be fresh and distinct')
     source, control = a.source.read_bytes(), a.control.read_bytes()
     require(digest(source) == a.source_sha256 and digest(control) == a.control_sha256, 'pinned input digest differs')
-    candidate = derive(source)
-    changes = verify_delta(source, candidate)
+    candidate = derive(source, clamp_pa=a.clamp_pa)
+    changes = verify_delta(source, candidate, clamp_pa=a.clamp_pa)
     baseline_nodes, baseline_elements = membrane(a.source, 'MEMBRANE-1')
     control_nodes, control_elements = membrane(a.control, 'MEMBRANE-1')
     nodes = raw_node_rows(source)
@@ -116,14 +126,14 @@ def main():
         out.write(candidate)
     with a.diff.open('xb') as out:
         out.writelines(difflib.diff_bytes(difflib.unified_diff, source.splitlines(keepends=True),
-                      candidate.splitlines(keepends=True), b'DIRECT01', b'HIGH05'))
+                      candidate.splitlines(keepends=True), b'DIRECT01', f'clamp-{a.clamp_pa}-Pa'.encode('ascii')))
     with a.receipt.open('x', encoding='utf-8') as out:
         json.dump({'source_sha256': digest(source), 'control_sha256': digest(control), 'candidate_sha256': digest(candidate),
                    'candidate_bytes': len(candidate), 'changed_source_lines': changes, 'other_bytes_unchanged': True,
                    'shared_applied_membrane': {'node_count': len(baseline_nodes), 'element_count': len(baseline_elements),
                                                'ordered_node_rows_sha256': digest(nodes), 'byte_identical': True},
-                   'x_c': 0.7, 'd_c_lower': 0.01, 'd_c_higher': 0.5,
-                   'axial_stress_pa': {'clamp_original': 171000, 'clamp_applied': 8550000, 'corner_retained': 17100000}},
+                   'x_c': 0.7, 'd_c_lower': 0.01, 'd_c_higher': a.clamp_pa / CORNER_PA,
+                   'axial_stress_pa': {'clamp_original': 171000, 'clamp_applied': a.clamp_pa, 'corner_retained': CORNER_PA}},
                   out, indent=2)
         out.write('\n')
 
