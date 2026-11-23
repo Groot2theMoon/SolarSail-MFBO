@@ -13,9 +13,11 @@ ENERGIES = ('ALLSD', 'ALLIE', 'ALLSE')
 
 
 def save(path, value):
-    with path.open('w', encoding='utf-8') as f:
+    temporary = path.with_suffix('.tmp')
+    with temporary.open('w', encoding='utf-8') as f:
         json.dump(value, f, indent=2, allow_nan=False)
         f.write('\n')
+    temporary.replace(path)
 
 
 def data(v):
@@ -209,8 +211,9 @@ def extract(odb, request, out):
     for name, inst in odb.rootAssembly.instances.items():
         if 'CABLE' not in name.upper():
             continue
-        detail = {'reference_nodes': [[n.label, list(n.coordinates)] for n in inst.nodes],
-                  'elements': [[e.label, e.type, list(e.connectivity)] for e in inst.elements], 'fields': {}}
+        detail = {'reference_nodes': [[int(n.label), [scalar(v) for v in n.coordinates]] for n in inst.nodes],
+                  'elements': [[int(e.label), str(e.type), list(map(int, e.connectivity))] for e in inst.elements],
+                  'fields': {}}
         for kind in ('S', 'SF', 'NFORC', 'EVOL', 'COORD'):
             if kind not in terminal.fieldOutputs:
                 continue
