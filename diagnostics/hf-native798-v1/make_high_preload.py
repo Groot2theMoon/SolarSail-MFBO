@@ -109,7 +109,10 @@ def main():
     for name in ('source', 'control'):
         parser.add_argument('--' + name + '-sha256', required=True)
     parser.add_argument('--clamp-pa', type=int, default=DEFAULT_CLAMP_PA)
+    parser.add_argument('--x-c', type=float, default=0.7,
+                        help='recorded source clamp position (metadata only; no relocation)')
     a = parser.parse_args()
+    require(0 < a.x_c < 1, 'source clamp position must be strictly between 0 and 1')
     outputs = (a.out, a.diff, a.receipt)
     require(len({p.resolve() for p in outputs}) == len(outputs) and not any(p.exists() for p in outputs),
             'all outputs must be fresh and distinct')
@@ -126,13 +129,13 @@ def main():
         out.write(candidate)
     with a.diff.open('xb') as out:
         out.writelines(difflib.diff_bytes(difflib.unified_diff, source.splitlines(keepends=True),
-                      candidate.splitlines(keepends=True), b'DIRECT01', f'clamp-{a.clamp_pa}-Pa'.encode('ascii')))
+                      candidate.splitlines(keepends=True), a.source.name.encode('utf-8'), f'clamp-{a.clamp_pa}-Pa'.encode('ascii')))
     with a.receipt.open('x', encoding='utf-8') as out:
         json.dump({'source_sha256': digest(source), 'control_sha256': digest(control), 'candidate_sha256': digest(candidate),
                    'candidate_bytes': len(candidate), 'changed_source_lines': changes, 'other_bytes_unchanged': True,
                    'shared_applied_membrane': {'node_count': len(baseline_nodes), 'element_count': len(baseline_elements),
                                                'ordered_node_rows_sha256': digest(nodes), 'byte_identical': True},
-                   'x_c': 0.7, 'd_c_lower': 0.01, 'd_c_higher': a.clamp_pa / CORNER_PA,
+                   'x_c': a.x_c, 'd_c_lower': 0.01, 'd_c_higher': a.clamp_pa / CORNER_PA,
                    'axial_stress_pa': {'clamp_original': 171000, 'clamp_applied': a.clamp_pa, 'corner_retained': CORNER_PA}},
                   out, indent=2)
         out.write('\n')

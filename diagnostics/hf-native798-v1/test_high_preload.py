@@ -38,7 +38,7 @@ class HighPreloadTests(unittest.TestCase):
 
     def test_explicit_initial_stresses_below_and_above_original(self):
         a = fixture()
-        for val in (123000, 456000):
+        for val in (123000, 342000, 855000):
             with self.subTest(clamp_pa=val):
                 b = derive(a, clamp_pa=val)
                 expected = a
